@@ -121,7 +121,7 @@ Process and analyze the annotated data using the annotation analysis notebook:
   - Generates statistics about annotated intents
   - Outputs a cleaned parquet file
 
-**Note:** A pre-processed parquet file is available at [Jazhyc/wildguard-annotated-intents](https://huggingface.co/datasets/Jazhyc/wildguard-annotated-intents) on Hugging Face.
+**Note:** A processed parquet file is available at [Jazhyc/wildguard-annotated-intents](https://huggingface.co/datasets/Jazhyc/wildguard-annotated-intents) on Hugging Face.
 
 ### 5. Intent Clustering
 
@@ -134,7 +134,22 @@ Analyze how intents are clustered using semantic embeddings:
   - Caches embeddings for efficient recomputation
   - Produces a topic-label mapping saved as JSON
 
-### 6. Additional Analysis
+### 6. Inter-Annotator Disagreement Analysis
+
+Analyze how consistently human annotators label and describe intents:
+
+- **Notebook:** `notebooks/disagreement_analysis.ipynb`
+- **Functionality:**
+  - Measures annotator agreement using label entropy, majority fraction, and score range
+  - Computes intent paraphrase similarity using TF-IDF and cosine similarity
+  - Identifies four types of prompts based on agreement patterns:
+    - **High similarity, low disagreement:** Clear and uncontroversial examples
+    - **High similarity, high disagreement:** Agreed intent, different harm assessments
+    - **Low similarity, high disagreement:** Ambiguous prompts with different interpretations
+    - **Low similarity, low disagreement:** Diverse phrasings with consistent harm judgment
+  - Provides concrete examples of each disagreement pattern
+
+### 7. Additional Analysis
 
 For detailed findings and insights from each step, refer to the `notes/` folder which documents:
 - Dataset analysis and statistics
