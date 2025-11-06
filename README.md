@@ -1,12 +1,12 @@
 # Intention Jailbreak
 
-Research project for intention analysis and jailbreak studies.
+Research project for using verbalized intention analysis to improve jailbreak mitigation in large language models.
 
 ## Installation
 
 This project uses [uv](https://github.com/astral-sh/uv) for Python package management.
 
-1. Install Python 3.12, create a virtual environment, and install the project in editable mode with all dependencies:
+1. Run the following command to create a virtual environment and install the project along with all dependencies:
 
 ```bash
 uv sync
@@ -14,68 +14,146 @@ uv sync
 
 This will install the `intention_jailbreak` package in editable mode, so changes to the source code are immediately reflected.
 
-2. (Optional) Install the vllm dependency:
-
-```bash
-uv sync --extra vllm
-```
-
-3. Activate the virtual environment:
+2. Activate the virtual environment:
 
 ```bash
 source .venv/bin/activate
 ```
 
-Alternatively, you can run commands directly with uv without activating:
+Alternatively, you can run commands directly with uv without activating the environment:
 
 ```bash
 uv run python your_script.py
 ```
 
-For faster training, install flash attention
+For faster training, it is strongly recommended to install flash attention when using ModernBERT. The pre-installed wheels can be found [here](https://github.com/Dao-AILab/flash-attention/releases/tag/v2.8.3).
 
 ## Project Structure
 
 ```
 intention-jailbreak/
-├── configs/                      # Hydra configuration files
-│   ├── train_config.yaml        # Training configuration
-│   └── sweep_config.yaml        # Hyperparameter sweep config
-├── data/                         # Data directory (gitignored)
-├── logs/                         # Training logs (gitignored)
+├── configs/                      # Hydra configuration
+│   ├── train_config.yaml
+│   └── sweep_config.yaml
+│
+├── data/                         # Data (gitignored)
+│   ├── annotations/
+│   ├── embeddings/
+│   ├── cache/
+│   └── test_predictions/
+│
+├── logs/                         # Logs (gitignored)
+│   ├── hydra/
+│   └── wandb/
+│
 ├── models/                       # Trained models (gitignored)
-├── notebooks/                    # Jupyter notebooks for analysis
-├── notes/                        # Markdown documentation
-├── scripts/                      # Training scripts
-│   ├── train.py                 # Main training script
-│   └── run_sweep.py             # Sweep helper
-├── src/intention_jailbreak/      # Main Python library
-│   ├── dataset/                 # Dataset utilities
-│   └── training/                # Training utilities
-├── tests/                        # Test scripts
-└── pyproject.toml               # Project dependencies
+│   ├── modernbert-classifier/
+│   └── modernbert-ensemble/
+│
+├── notebooks/                    # Analysis notebooks
+│   ├── clustering_analysis.ipynb
+│   ├── annotation_analysis.ipynb
+│   ├── test_results_analysis.ipynb
+│   └── wildguardmix_analysis.ipynb
+│
+├── notes/                        # Documentation
+├── scripts/                      # Training and evaluation
+├── src/intention_jailbreak/      # Main library
+└── tests/                        # Test scripts
 ```
 
-## Quick Start
+## Workflow
 
-### Data Analysis
+This project follows a multi-stage pipeline for training and analyzing intent classification models:
+
+### 1. Training
+
+Train the model using the main training script:
+
 ```bash
-jupyter notebook notebooks/wildguardmix_analysis.ipynb
-```
-
-### Training
-```bash
-# Test setup first
-python tests/test_train_setup.py
-
-# Train with default config
 python scripts/train.py
 
-# Override config
+# Override config parameters as needed
 python scripts/train.py training.per_device_train_batch_size=128
-
-# Hyperparameter sweep
-python scripts/train.py --multirun training.learning_rate=5e-5,1e-4,2e-4
 ```
 
-See `scripts/README.md` and `tests/README.md` for more details.
+**Important Configuration Options** (edit in `configs/train_config.yaml`):
+- `ensemble.enabled`: Enable/disable ensemble mode (multiple models)
+- `ensemble.num_models`: Number of models in the ensemble
+- `model.context_window`: Model context window size
+- `training.learning_rate`: Learning rate
+- `training.num_epochs`: Number of training epochs
+
+**Logging:**
+- Training and validation results are logged to Weights & Biases (W&B)
+- Configure W&B settings in `configs/train_config.yaml` to run in offline mode if desired
+- Results are saved to `logs/` and `models/` directories
+
+**Note:** You might get graph breaks when using torch.compile. These can be safely ignored.
+
+### 2. Test Set Evaluation
+
+Evaluate the trained model on the test set using the test results analysis notebook. Open it with your preferred notebook software (Jupyter, VS Code, etc.):
+
+- **Notebook:** `notebooks/test_results_analysis.ipynb`
+- **Functionality:**
+  - Generates predictions on the test set
+  - Produces statistics on the annotation set and examines uncertain samples for annotation by sweeping the model's confidence intervals
+  - Exports results as a JSON file with the desired confidence interval
+
+### 3. Annotation with Label Studio
+
+Use the JSON output from step 2 to annotate uncertain predictions:
+
+1. Install and host a [Label Studio](https://labelstud.io/) instance
+2. Import the JSON file from step 2 into Label Studio
+3. Annotate the samples following your labeling guidelines
+4. Export the annotated data and save to `data/annotations/`
+
+### 4. Annotation Analysis
+
+Process and analyze the annotated data using the annotation analysis notebook:
+
+- **Notebook:** `notebooks/annotation_analysis.ipynb`
+- **Functionality:**
+  - Converts Label Studio JSON output to parquet format
+  - Applies data filtering by removing flagged samples
+  - Generates statistics about annotated intents
+  - Outputs a cleaned parquet file
+
+**Note:** A processed parquet file is available at [Jazhyc/wildguard-annotated-intents](https://huggingface.co/datasets/Jazhyc/wildguard-annotated-intents) on Hugging Face.
+
+### 5. Intent Clustering
+
+Analyze how intents are clustered using semantic embeddings:
+
+- **Notebook:** `notebooks/clustering_analysis.ipynb`
+- **Functionality:**
+  - Uses BERTopic for automatic topic discovery
+  - Provides an interactive interface for manual topic labeling
+  - Caches embeddings for efficient recomputation
+  - Produces a topic-label mapping saved as JSON
+
+### 6. Inter-Annotator Disagreement Analysis
+
+Analyze how consistently human annotators label and describe intents:
+
+- **Notebook:** `notebooks/disagreement_analysis.ipynb`
+- **Functionality:**
+  - Measures annotator agreement using label entropy, majority fraction, and score range
+  - Computes intent paraphrase similarity using TF-IDF and cosine similarity
+  - Identifies four types of prompts based on agreement patterns:
+    - **High similarity, low disagreement:** Clear and uncontroversial examples
+    - **High similarity, high disagreement:** Agreed intent, different harm assessments
+    - **Low similarity, high disagreement:** Ambiguous prompts with different interpretations
+    - **Low similarity, low disagreement:** Diverse phrasings with consistent harm judgment
+  - Provides concrete examples of each disagreement pattern
+
+### 7. Additional Analysis
+
+For detailed findings and insights from each step, refer to the `notes/` folder which documents:
+- Dataset analysis and statistics
+- Training and Hyperparameter setup
+- Intent Annotation Protocol
+- Analysis on the annotated intents
+- And more detailed technical explorations
