@@ -12,37 +12,55 @@ from ..common import STRATIFICATION_COLUMNS
 
 def prepare_classification_data(
     train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
+    test_df: Optional[pd.DataFrame] = None,
     val_size: float = 0.1,
+    test_size: float = 0.0,
     label_column: str = 'prompt_harm_label',
     text_column: str = 'prompt',
     positive_label: str = 'harmful',
     random_state: int = 42
-) -> Tuple[Dataset, Dataset, pd.DataFrame, pd.DataFrame]:
+):
     """
-    Prepare data for binary classification (train and val only, no test).
+    Prepare data for binary classification with train, validation, and optional test splits.
     
     Uses stratified split on STRATIFICATION_COLUMNS to maintain the same 
-    distribution in train and validation sets.
+    distribution in train, validation, and test sets.
     
     Args:
         train_df: Training dataframe
-        test_df: Test dataframe (not used, kept for compatibility)
+        test_df: Test dataframe (deprecated, kept for compatibility)
         val_size: Fraction of training data to use for validation
+        test_size: Fraction of training data to use for test (default 0.0 for no test split)
         label_column: Name of the column containing labels
         text_column: Name of the column containing text
         positive_label: Label value that should be encoded as 1 (positive class)
         random_state: Random state for reproducibility
     
     Returns:
-        Tuple of (train_dataset, val_dataset, train_df, val_df) where datasets are HuggingFace Datasets
-        and dataframes are pandas DataFrames with all original columns plus 'label'
+        If test_size > 0: Tuple of (train_dataset, val_dataset, test_dataset, train_df, val_df, test_df)
+        If test_size == 0: Tuple of (train_dataset, val_dataset, train_df, val_df)
+        where datasets are HuggingFace Datasets and dataframes are pandas DataFrames with all original columns plus 'label'
     """
     # Create combined stratification key using shared columns
     stratify_key = train_df[STRATIFICATION_COLUMNS].astype(str).agg('_'.join, axis=1)
     
+    # First split off test set if requested
+    if test_size > 0:
+        train_val_df, test_df = train_test_split(
+            train_df,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=stratify_key
+        )
+        # Update stratification key for remaining data
+        stratify_key = train_val_df[STRATIFICATION_COLUMNS].astype(str).agg('_'.join, axis=1)
+    else:
+        train_val_df = train_df
+        test_df = None
+    
+    # Split train/val from remaining data
     train_df, val_df = train_test_split(
-        train_df,
+        train_val_df,
         test_size=val_size,
         random_state=random_state,
         stratify=stratify_key
@@ -50,6 +68,8 @@ def prepare_classification_data(
     
     print(f"Train: {len(train_df)} examples")
     print(f"Validation: {len(val_df)} examples")
+    if test_df is not None:
+        print(f"Test: {len(test_df)} examples")
     
     def add_binary_labels(df):
         df = df.copy()
@@ -59,14 +79,22 @@ def prepare_classification_data(
     train_df = add_binary_labels(train_df)
     val_df = add_binary_labels(val_df)
     
-    print(f"Positive class ({positive_label}): Train {train_df['label'].mean()*100:.1f}%, Val {val_df['label'].mean()*100:.1f}%")
+    if test_df is not None:
+        test_df = add_binary_labels(test_df)
+        print(f"Positive class ({positive_label}): Train {train_df['label'].mean()*100:.1f}%, Val {val_df['label'].mean()*100:.1f}%, Test {test_df['label'].mean()*100:.1f}%")
+    else:
+        print(f"Positive class ({positive_label}): Train {train_df['label'].mean()*100:.1f}%, Val {val_df['label'].mean()*100:.1f}%")
     
     # Keep only necessary columns for dataset (text and label)
     # Note: We'll add 'weight' column later if class weighting is enabled
     train_dataset = Dataset.from_pandas(train_df[[text_column, 'label']].reset_index(drop=True))
     val_dataset = Dataset.from_pandas(val_df[[text_column, 'label']].reset_index(drop=True))
     
-    return train_dataset, val_dataset, train_df, val_df
+    if test_df is not None:
+        test_dataset = Dataset.from_pandas(test_df[[text_column, 'label']].reset_index(drop=True))
+        return train_dataset, val_dataset, test_dataset, train_df, val_df, test_df
+    else:
+        return train_dataset, val_dataset, train_df, val_df
 
 
 def tokenize_dataset(dataset: Dataset, tokenizer, max_length: int, text_column: str = 'prompt', num_proc: int = 1):

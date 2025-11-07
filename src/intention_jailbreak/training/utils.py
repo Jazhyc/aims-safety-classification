@@ -5,6 +5,8 @@ import torch
 from typing import Dict, Optional
 from transformers import set_seed, Trainer
 
+from intention_jailbreak.ensemble.deepensembleclassifier import DeepEnsembleClassifier
+
 torch.set_float32_matmul_precision('high')
 
 def set_all_seeds(seed: int):

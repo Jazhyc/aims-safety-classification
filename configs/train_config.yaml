@@ -13,21 +13,28 @@ model:
 # Dataset Configuration
 dataset:
   subset: "wildguardtrain"
-  test_size: 0.8
-  val_size: 0.1
+  test_size: 0.9  # 90% for annotation set (10% for training)
+  val_size: 0.1  # 10% of training split for validation
+  test_size_from_train: 0.1  # 10% of training split for test
   random_state: *seed
   label_column: "prompt_harm_label"
   text_column: "prompt"
   positive_label: "harmful"
   num_proc: 8  # Number of workers for tokenization
+  filter_english: true  # Filter to keep only English texts (uses fast-langdetect with caching)
+  language_cache_dir: "data/cache"  # Directory for language detection cache
   use_label_weights: true  # Weight by harm label frequency (harmful vs unharmful)
   use_subcategory_weights: false  # Weight by subcategory frequency
   class_weight_column: "subcategory"  # Column to compute subcategory weights from
 
+ensemble:
+  enabled: True
+  num_models: 3
+
 # Training Arguments (passed directly to TrainingArguments)
 training:
-  output_dir: "models/modernbert-classifier"
-  num_train_epochs: 3
+  output_dir: "models/modernbert-ensemble"
+  num_train_epochs: 5
   per_device_train_batch_size: 48
   per_device_eval_batch_size: 48
   learning_rate: 1e-4
@@ -67,13 +74,14 @@ training:
 # WandB Configuration
 wandb:
   entity: "intention-analysis"
-  project: "classifier-training"
+  project: "classifier-ensemble"
   dir: "logs/wandb"
   run_name: null
   tags:
     - "modernbert"
     - "wildguardmix"
     - "binary-classification"
+  mode: "online"  # Set to "offline" for local logging only
 
 # Hydra Configuration
 hydra:

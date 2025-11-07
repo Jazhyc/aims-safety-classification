@@ -39,7 +39,10 @@ def load(subset: str = 'wildguardtrain') -> pd.DataFrame:
 def load_and_split(
     subset: str = 'wildguardtrain',
     test_size: float = 0.2,
-    random_state: int = 42
+    random_state: int = 42,
+    filter_english: bool = False,
+    text_column: str = 'prompt',
+    language_cache_dir: str = 'data/cache'
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Load the WildGuardMix dataset and create a stratified train/test split.
@@ -48,11 +51,30 @@ def load_and_split(
         subset: The subset to load (default: 'wildguardtrain').
         test_size: Proportion for test set (default: 0.4 for 60:40 split).
         random_state: Random state for reproducibility (default: 42).
+        filter_english: Whether to filter for English texts only (default: False).
+        text_column: Name of the text column for language filtering (default: 'prompt').
+        language_cache_dir: Directory for language detection cache (default: 'data/cache').
     
     Returns:
         Tuple of (train_df, test_df).
     """
     df = load(subset)
+    
+    # Filter for English texts if requested (before splitting)
+    if filter_english:
+        from .language_filter import filter_english_texts
+        print(f"\n=== Filtering dataset for English texts (before split) ===")
+        print(f"Original dataset size: {len(df)}")
+        df, _ = filter_english_texts(
+            df,
+            text_column=text_column,
+            use_cache=True,
+            cache_dir=language_cache_dir,
+            show_progress=True
+        )
+        print(f"Filtered dataset size: {len(df)}")
+        print("=== English filtering complete ===\n")
+    
     train_df, test_df = create_stratified_split(df, test_size, random_state)
     
     return train_df, test_df

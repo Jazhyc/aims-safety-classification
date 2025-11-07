@@ -1,0 +1,301 @@
+# Obtained from https://github.com/mvaldenegro/keras-uncertainty/blob/master/keras_uncertainty/utils/calibration.py
+# Some modifications were made to account for a newer python version
+
+# Utils to estimate uncertainty calibration
+
+import os
+import matplotlib.pyplot as plt
+import wandb
+import numpy as np
+import numpy as np
+from itertools import tee
+
+EPSILON = 1e-5
+
+def accuracy(y_true, y_pred):
+    """
+        Simple categorical accuracy.
+    """
+    return np.mean(y_true == y_pred)
+
+# From itertools recipes
+def pairwise(iterable):
+    "s -> (s0,s1), (s1,s2), (s2, s3), ..."
+    a, b = tee(iterable)
+    next(b, None)
+    return zip(a, b)
+
+
+def validate_calibration_data(y_pred, y_true, y_confidences):
+    if len(y_true.shape) > 2:
+        raise ValueError("y_true should be a 2D array, found shape {}".format(y_true.shape))
+
+    if len(y_true.shape) == 2 and y_true.shape[1] == 1:
+        y_true = y_true.flatten()
+
+    if len(y_pred.shape) > 2:
+        raise ValueError("y_true should be a 2D array, found shape {}".format(y_true.shape))
+
+    if len(y_pred.shape) == 2 and y_pred.shape[1] == 1:
+        y_pred = y_pred.flatten()
+
+    if len(y_confidences.shape) != 2:
+        raise ValueError(
+            "y_confidences should exactly be a 2D array (samples, probs), found shape {}".format(y_confidences.shape))
+
+    return y_pred, y_true, y_confidences
+
+
+def classifier_calibration_error(y_pred, y_true, y_confidences, metric="mae", num_bins=10, weighted=False):
+    """
+        Estimates calibration error for a classifier.
+        y_pred are the class predictions of the model (integers), while y_true is the ground truth labels (integers),
+        and y_confidences are confidences for each prediction (in the [0, 1] range).
+        All three arrays must have equal number of samples.
+    """
+
+    bin_edges = np.linspace(0.0, 1.0 + EPSILON, num_bins + 1)
+
+    errors = []
+    weights = []
+
+    for start, end in pairwise(bin_edges):
+        indices = np.where(np.logical_and(y_confidences >= start, y_confidences < end))[0]
+        filt_preds = y_pred[indices]
+        filt_classes = y_true[indices]
+        filt_confs = y_confidences[indices]
+
+        if len(filt_confs) > 0:
+            bin_acc = accuracy(filt_classes, filt_preds)
+            bin_conf = np.mean(filt_confs)
+
+            error = abs(bin_conf - bin_acc)
+            weight = len(filt_confs)
+
+            errors.append(error)
+            weights.append(weight)
+
+    errors = np.array(errors)
+    weights = np.array(weights) / sum(weights)
+
+    if weighted:
+        return sum(errors * weights)
+
+    return np.mean(errors)
+
+
+def classifier_calibration_curve(y_pred, y_true, y_confidences, metric="mae", num_bins=20):
+    """
+        Estimates the calibration plot for a classifier and returns the points in the plot.
+        y_pred are the class predictions of the model (integers), while y_true is the ground truth labels (integers),
+        and y_confidences are confidences for each prediction (in the [0, 1] range).
+        All three arrays must have equal number of samples.
+    """
+
+    bin_edges = np.linspace(0.0, 1.0 + EPSILON, num_bins + 1)
+    curve_conf = []
+    curve_acc = []
+
+    for start, end in pairwise(bin_edges):
+        indices = np.where(np.logical_and(y_confidences >= start, y_confidences < end))[0]  # Extract first element of tuple
+        filt_preds = y_pred[indices]
+        filt_classes = y_true[indices]
+        filt_confs = y_confidences[indices]
+
+        if len(filt_confs) > 0:
+            bin_acc = accuracy(filt_classes, filt_preds)
+            bin_conf = np.mean(filt_confs)
+
+            curve_conf.append(bin_conf)
+            curve_acc.append(bin_acc)
+        else:
+            p = np.mean([start, end])
+            curve_conf.append(p)
+            curve_acc.append(p)
+
+    return curve_conf, curve_acc
+
+
+def classifier_accuracy_confidence_curve(y_pred, y_true, y_confidences, num_points=20):
+    candidate_confs = np.linspace(0.0, 0.99, num=num_points)
+
+    out_confidences = []
+    out_accuracy = []
+
+    for confidence in candidate_confs:
+        examples_idx = np.where(y_confidences >= confidence)
+        filt_preds = y_pred[examples_idx]
+        filt_true = y_true[examples_idx]
+
+        acc = accuracy(filt_true, filt_preds)
+
+        out_confidences.append(confidence)
+        out_accuracy.append(acc)
+
+    return out_confidences, out_accuracy
+
+
+from scipy.stats import norm
+
+
+def confidence_interval_accuracy(y_intervals, y_true):
+    interval_min, interval_max = y_intervals
+    indicator = np.logical_and(y_true >= interval_min, y_true <= interval_max)
+
+    return np.mean(indicator)
+
+
+def regressor_calibration_curve(y_pred, y_true, y_std, num_points=20, distribution="gaussian"):
+    """
+    Computes the reliability plot for a regression prediction.
+    """
+    alphas = np.linspace(0.0 + EPSILON, 1.0 - EPSILON, num_points + 1)
+    curve_conf = []
+    curve_acc = []
+
+    for alpha in alphas:
+        # Create a copy and ensure standard deviations are positive
+        y_std_safe = np.maximum(y_std, EPSILON)
+        
+        alpha_intervals = norm.interval(alpha, y_pred, y_std_safe)
+        acc = confidence_interval_accuracy(alpha_intervals, y_true)
+
+        curve_conf.append(alpha)
+        curve_acc.append(acc)
+
+    return np.array(curve_conf), np.array(curve_acc)
+
+
+def regressor_calibration_error(y_pred=None, y_true=None, y_std=None, num_points=20, distribution="gaussian", error_metric="mae", 
+                                precomputed_conf=None, precomputed_acc=None):
+    """
+    Calculate calibration error for regression predictions.
+    
+    Args:
+        y_pred, y_true, y_std: Prediction data (not needed if precomputed values are provided)
+        num_points: Number of points for calibration curve (not needed if precomputed values are provided)
+        distribution: Distribution type (default: "gaussian")
+        error_metric: Error metric to use ("mae" or "max")
+        precomputed_conf: Precomputed confidence values from calibration curve
+        precomputed_acc: Precomputed accuracy values from calibration curve
+    
+    Returns:
+        Calibration error value
+    """
+    if precomputed_conf is not None and precomputed_acc is not None:
+        curve_conf, curve_acc = precomputed_conf, precomputed_acc
+    else:
+        if y_pred is None or y_true is None or y_std is None:
+            raise ValueError("Either prediction data or precomputed values must be provided")
+        curve_conf, curve_acc = regressor_calibration_curve(y_pred, y_true, y_std, num_points=num_points,
+                                                        distribution=distribution)
+    errors = np.abs(curve_conf - curve_acc)
+
+    if error_metric == "mae":
+        return np.mean(errors)
+    elif error_metric == "max":
+        return np.max(errors)
+
+    raise ValueError("Invalid metric {}".format(error_metric))
+
+
+def regressor_error_confidence_curve(y_pred, y_true, y_std, num_points=20, distribution="gaussian", error_metric="mae",
+                                     normalize_std=False):
+    min_conf = y_std.min()
+    max_conf = y_std.max()
+    candidate_confs = np.linspace(min_conf, max_conf, num=num_points)
+
+    out_confidences = []
+    out_errors = []
+
+    metric_fn = None
+
+    if error_metric == "mae":
+        metric_fn = lambda x, y: np.mean(np.abs(x - y))
+    elif error_metric == "mse":
+        metric_fn = lambda x, y: np.mean(np.square(x - y))
+    else:
+        raise ValueError("Uknown regression error metric {}".format(error_metric))
+
+    for confidence in candidate_confs:
+        examples_idx = np.where(y_std >= confidence)[0]
+        filt_preds = y_pred[examples_idx]
+        filt_true = y_true[examples_idx]
+
+        error = metric_fn(filt_true, filt_preds)
+
+        if normalize_std:
+            confidence = (confidence - min_conf) / (max_conf - min_conf)
+
+        out_confidences.append(confidence)
+        out_errors.append(error)
+
+    return np.array(out_confidences), np.array(out_errors)
+
+def plot_calibration_curve(conf, acc, y_label='Empirical Accuracy', title="Calibration Curve",
+                           relative_save_path='calibration_curve.png'):
+    """
+    Plot the calibration curve for binary classification as a reliability diagram.
+    
+    Args:
+        conf: Confidence values (x-axis) - mean predicted probabilities per bin
+        acc: Accuracy values (y-axis) - empirical accuracy per bin
+        y_label: Label for y-axis
+        title: Plot title
+        relative_save_path: Path to save the plot (can be absolute or relative)
+    """
+    plt.figure(figsize=(10, 8))
+
+    # Plot the ideal calibration line (diagonal)
+    plt.plot([0, 1], [0, 1], 'k--', linewidth=2, label="Perfect calibration")
+
+    # Calculate the width of bars based on number of bins
+    num_bins = len(conf)
+    if num_bins > 1:
+        bin_width = 1.0 / num_bins
+    else:
+        bin_width = 0.05
+
+    # Create evenly spaced bin positions
+    bin_positions = np.linspace(bin_width / 2, 1.0 - bin_width / 2, num_bins)
+    
+    # Plot bars at evenly spaced positions
+    plt.bar(bin_positions, acc, width=bin_width * 0.9, alpha=0.7,
+            edgecolor='black', linewidth=1.5, label="Model calibration", align='center')
+
+    # Plot line connecting bin centers
+    plt.plot(bin_positions, acc, 'ro-', linewidth=2, markersize=8, markeredgecolor='darkred', markeredgewidth=1.5)
+
+    plt.xlabel('Confidence', fontsize=12)
+    plt.ylabel(y_label, fontsize=12)
+    plt.title(title, fontsize=14, fontweight='bold')
+    plt.legend(loc='upper left', fontsize=11)
+    plt.grid(True, alpha=0.3, linestyle='--')
+
+    # Set limits to make the plot clearer
+    plt.ylim([0, 1.05])
+    plt.xlim([0, 1.0])
+    
+    # Add text showing number of bins
+    plt.text(0.98, 0.02, f'Bins: {num_bins}', 
+             transform=plt.gca().transAxes,
+             fontsize=10, verticalalignment='bottom', horizontalalignment='right',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    plt.tight_layout()
+
+    if relative_save_path:
+        # Use the path directly (can be absolute or relative)
+        save_path = str(relative_save_path)
+        
+        # Make parent directory if it doesn't exist
+        save_dir = os.path.dirname(save_path)
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        print(f"Saving calibration curve plot to: {save_path}")
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
+        wandb.log({"calibration_curve": wandb.Image(save_path)})
+    
+    plt.close()
