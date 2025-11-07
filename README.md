@@ -113,7 +113,7 @@ Use the JSON output from step 2 to annotate uncertain predictions:
 
 1. Install and host a [Label Studio](https://labelstud.io/) instance
 2. Import the JSON file from step 2 into Label Studio
-3. Annotate the samples following your labeling guidelines
+3. Annotate the samples following the labeling guidelines (see annotation protocol in `/notes`)
 4. Export the annotated data and save to `data/annotations/`
 
 ### 4. Annotation Analysis
@@ -155,11 +155,22 @@ Analyze how consistently human annotators label and describe intents:
     - **Low similarity, low disagreement:** Diverse phrasings with consistent harm judgment
   - Provides concrete examples of each disagreement pattern
 
-### 7. Additional Analysis
+### 7. Synthetic Intent Generation and Comparison to Human Annotators
+
+- **Script:** `scripts/synthetic_comparison.py` (more details in corresponding markdown file in `notes/`)
+- **Functionality:**
+  - Generate synthetic intents using an open source LLM
+  - Generate synthetic harm labels (completely harmful, uncertain harmful, uncertain safe, completely safe) using an open source LLM
+  - Apply BERTopic for automatic topic discovery on both the synthetic and human intents
+  - Visualize and compare human and synthetic intents
+  - Compute confusion matrix of synthetic harm labels w.r.t. human labels.
+
+### 8. Additional Analysis
 
 For detailed findings and insights from each step, refer to the `notes/` folder which documents:
 - Dataset analysis and statistics
 - Training and Hyperparameter setup
 - Intent Annotation Protocol
 - Analysis on the annotated intents
+- Comparison of synthetic intents to human annotated intents
 - And more detailed technical explorations
