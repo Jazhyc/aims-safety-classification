@@ -105,9 +105,9 @@ As an example
 From these results we can conclude that the intent description of the prompt are overall similar to the human annoated variants, but the harm label (completely harmful, uncertain harmful, uncertain safe, completely safe) can differ. See below for more details on the discovered topics.
 
 
-# Jailbreak Intent Topic Analysis
+## Jailbreak Intent Topic Analysis
 
-## Summary Statistics
+### Summary Statistics
 - **Total Intents**: 2,886
 - **Distinct Topics**: 41 (including outliers)
 - **Outliers (Topic -1)**: 1,151 (40%)
@@ -115,7 +115,7 @@ From these results we can conclude that the intent description of the prompt are
 
 ---
 
-## Topic Distribution
+### Topic Distribution
 
 | Topic ID | Count | Name | Top Keywords |
 |----------|-------|------|--------------|
@@ -164,7 +164,7 @@ From these results we can conclude that the intent description of the prompt are
 
 ---
 
-## Topic Size Distribution
+### Topic Size Distribution
 
 | Size Category | Topic Count | Example Topics |
 |--------------|-------------|----------------|
@@ -176,7 +176,7 @@ From these results we can conclude that the intent description of the prompt are
 
 ---
 
-## Cluster Quality Metrics
+### Cluster Quality Metrics
 
 - **40% Outlier Rate**: High proportion of intents don't fit cleanly into topics
 - **Highly Imbalanced**: Top 2 topics contain 72% of all intents
