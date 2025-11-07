@@ -28,11 +28,24 @@ The subcategory distribution motivates stratification — several subcategories 
 
 We stratified on a combined key made from `prompt_harm_label`, `adversarial`, and `subcategory` to preserve joint proportions across splits. This ensures rare subcategories and intersections (for example, adversarial-but-unharmful) are represented in train, validation and test.
 
+## Data Filtering
+
+We filtered to keep only English prompts by examining the first 80 characters of each prompt using [fast-langdetect](https://github.com/LlmKira/fast-langdetect). This ensures our model focuses on English-language jailbreak attempts.
+
 ## Splits
 
-- Training: 80% (~69k samples)
-- Test (held-out for annotation/evaluation): 20% (~17k samples)
-- Training set further split: Train=90% / Val=10% (used for limited hyper-parameter tuning)
+The full dataset is split into two stages:
+
+**Stage 1: Train vs Annotation set (90% / 10%)**
+- **Annotation set:** 10% of the full dataset — reserved for human annotation to build labeled examples for analysis
+- **Training set:** 90% of the full dataset — used for model training and evaluation
+
+**Stage 2: Within the training set (80% train / 10% val / 10% test)**
+- **Training:** 80% of the training set — used to train the model
+- **Validation:** 10% of the training set — used for evaluation during training and limited hyperparameter tuning
+- **Test:** 10% of the training set — held-out test set for evaluating final model performance
+
+This approach preserves most of the data for annotation while using a smaller clean split for training/validation/testing.
 
 ## Prompt length & adversarial prompts
 
@@ -41,7 +54,7 @@ Prompt lengths (in words) differ by label and adversarial status: harmful prompt
 ![Adversarial prompt length](../notes/imgs/adversarial_length.png)
 
 - Observation: harmful prompts trend longer; adversarial prompts are much longer.
-- Choice: max prompt length = **256 tokens** (≈192 words) assuming 1 word ≈ 1.33 tokens. 92% of prompts fit within this limit.
+- With a context window of 2048 tokens, we can cover all prompts without truncation.
 
 ## Response-related fields
 

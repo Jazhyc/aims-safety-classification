@@ -81,6 +81,7 @@ wandb:
     - "modernbert"
     - "wildguardmix"
     - "binary-classification"
+  mode: "online"  # Set to "offline" for local logging only
 
 # Hydra Configuration
 hydra:
