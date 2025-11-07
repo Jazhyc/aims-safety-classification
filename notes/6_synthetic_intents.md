@@ -37,7 +37,7 @@ The final wildguard-annotated-intents dataset is a curated subset of the **WildG
 
 For generating synthetic intents, we used [`RedHatAI/Qwen3-8B-quantized.w4a16`](https://huggingface.co/RedHatAI/Qwen3-8B-quantized.w4a16/blob/main/README.md) with `thinking_mode` disabled.
 
-We uses the following standardized hyperparameters:
+We uses the following sampling hyperparameters (see below for a full list):
 
 | Hyperparameter | Description                         | Value |
 |----------------|-------------------------------------|---------------|
@@ -45,6 +45,7 @@ We uses the following standardized hyperparameters:
 | `top_p`        | Controls the cumulative probability of the top tokens to conside          | 0.95           |
 | `max_tokens`   | Maximum tokens per generated intent | 1000           |
 | `top_k` | Controls the number of top tokens to consider | 20 |
+| `min_p` | Minimum probability for sampling | 0.0 |
 
 
 We are interesting in what way the human annotated, we first generated synthetic intents for each prompt using the following system prompt
@@ -179,3 +180,27 @@ From these results we can conclude that the intent description of the prompt are
 - **40% Outlier Rate**: High proportion of intents don't fit cleanly into topics
 - **Long Tail**: 21 topics have <20 intents each
 - **Diversity**: 40 distinct topical clusters identified
+
+
+## Detailed Hyperparameter List
+
+| Hyperparameter             | Description                                            | Default Value        |
+| -------------------------- | ------------------------------------------------------ | -------------------- |
+| `temperature`              | Sampling randomness for LLM generation/prediction      | 0                    |
+| `top_p`                    | Cumulative probability of top tokens considered        | 0.95                 |
+| `top_k`                    | Number of top tokens to consider                       | 20                   |
+| `max_tokens`               | Maximum tokens per generated intent / response         | 1000                 |
+| `min_p`                    | Minimum probability for sampling                       | 0                    |
+| `enable_thinking`          | Whether reasoning tags (`<think>`) are allowed         | False                |
+| `dataset_name`             | Name of the dataset to evaluate                        | None                 |
+| `split`                    | Dataset split                                          | "train"              |
+| `n_neighbors`              | Number of neighbors for UMAP                           | 15                   |
+| `n_components`             | Number of dimensions for UMAP                          | 5                    |
+| `min_dist`                 | Minimum distance between points in UMAP                | 0.0                  |
+| `metric`                   | Distance metric  | (UMAP: "cosine", HDBSCAN: "euclidean")      |
+| `min_cluster_size`         | Minimum cluster size for HDBSCAN                       | 15                   |
+| `min_samples`              | Minimum samples per cluster for HDBSCAN                | 5                    |
+| `cluster_selection_method` | Cluster selection algorithm for HDBSCAN                | "eom"                |
+| `prediction_data`          | Store cluster prediction data (HDBSCAN)                | True                 |
+| `nr_topics`                | Number of topics for BERTopic                          | "auto"               |
+

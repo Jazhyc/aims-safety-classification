@@ -15,40 +15,55 @@ logger = logging.getLogger(__name__)
 class ClusterComparator:
     """Compare clustering patterns between human and synthetic intents with visualization."""
     
-    def __init__(self, cache_dir: str = "../data/embeddings"):
+    def __init__(
+        self,
+        cache_dir: str = "../data/embeddings",
+        embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
+        umap_n_neighbors: int = 15,
+        umap_n_components: int = 5,
+        umap_min_dist: float = 0.0,
+        umap_metric: str = 'cosine',
+        hdbscan_min_cluster_size: int = 15,
+        hdbscan_min_samples: int = 5,
+        hdbscan_metric: str = 'euclidean',
+        hdbscan_cluster_selection_method: str = 'eom',
+        hdbscan_prediction_data: bool = True,
+        nr_topics: str = "auto",
+        verbose: bool = True
+    ):
         """Initialize comparator with BERTopic setup."""
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        
+
         umap_model = UMAP(
-            n_neighbors=15,
-            n_components=5,
-            min_dist=0.0,
-            metric='cosine',
+            n_neighbors=umap_n_neighbors,
+            n_components=umap_n_components,
+            min_dist=umap_min_dist,
+            metric=umap_metric,
             random_state=42
         )
-        
+
         hdbscan_model = HDBSCAN(
-            min_cluster_size=15,
-            min_samples=5,
-            metric='euclidean',
-            cluster_selection_method='eom',
-            prediction_data=True
+            min_cluster_size=hdbscan_min_cluster_size,
+            min_samples=hdbscan_min_samples,
+            metric=hdbscan_metric,
+            cluster_selection_method=hdbscan_cluster_selection_method,
+            prediction_data=hdbscan_prediction_data
         )
-        
+
         self.topic_wrapper = BERTopicModelWrapper(
             cache_dir=str(self.cache_dir),
-            embedding_model="Qwen/Qwen3-Embedding-0.6B",
+            embedding_model=embedding_model,
             umap_model=umap_model,
             hdbscan_model=hdbscan_model,
-            nr_topics="auto",
-            verbose=True
+            nr_topics=nr_topics,
+            verbose=verbose
         )
-        
+
         # Store embeddings and topic info for visualization
         self._current_embeddings = None
         self._current_topic_info = None
-        
+
     def cluster_intents(
         self, 
         intents: List[str], 
@@ -141,58 +156,59 @@ class ClusterComparator:
         return metrics
     
     def visualize_comparison_with_embeddings(
-            self, 
-            human_intents: List[str], 
-            synthetic_intents: List[str],
-            human_topics: np.ndarray, 
-            synthetic_topics: np.ndarray,
-            human_embeddings: np.ndarray,
-            synthetic_embeddings: np.ndarray,
-            output_dir: str
-        ) -> None:
-            """
-            Create comprehensive visualizations comparing human and synthetic intents
-            using pre-computed embeddings and topics.
-            
-            Args:
-                human_intents: List of human-generated intents
-                synthetic_intents: List of synthetic intents  
-                human_topics: Topic assignments for human intents
-                synthetic_topics: Topic assignments for synthetic intents
-                human_embeddings: Pre-computed embeddings for human intents
-                synthetic_embeddings: Pre-computed embeddings for synthetic intents
-                output_dir: Directory to save visualizations
-            """
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
-            
-            # Create individual cluster visualizations
-            logger.info("Creating human intents visualization")
-            human_fig = self._create_cluster_visualization(
-                human_intents, human_topics, human_embeddings, "Human-Generated Intents"
-            )
-            human_fig.write_html(output_path / "human_intents_clusters.html")
-            
-            logger.info("Creating synthetic intents visualization")
-            synthetic_fig = self._create_cluster_visualization(
-                synthetic_intents, synthetic_topics, synthetic_embeddings, "Synthetic Intents"
-            )
-            synthetic_fig.write_html(output_path / "synthetic_intents_clusters.html")
-            
-            # Create comparison visualization
-            logger.info("Creating comparison visualization")
-            comparison_fig = self._create_comparison_visualization(
-                human_intents, synthetic_intents, 
-                human_topics, synthetic_topics,
-                human_embeddings, synthetic_embeddings
-            )
-            comparison_fig.write_html(output_path / "intents_comparison.html")
-            
-            # Create topic distribution comparison
-            dist_fig = self._create_distribution_comparison(human_topics, synthetic_topics)
-            dist_fig.write_html(output_path / "topic_distribution_comparison.html")
-            
-            logger.info(f"Visualizations saved to {output_dir}")
+        self, 
+        human_intents: List[str], 
+        synthetic_intents: List[str],
+        human_topics: np.ndarray, 
+        synthetic_topics: np.ndarray,
+        human_embeddings: np.ndarray,
+        synthetic_embeddings: np.ndarray,
+        output_dir: str
+    ) -> None:
+        """
+        Create comprehensive visualizations comparing human and synthetic intents
+        using pre-computed embeddings and topics.
+
+        Args:
+            human_intents: List of human-generated intents
+            synthetic_intents: List of synthetic intents  
+            human_topics: Topic assignments for human intents
+            synthetic_topics: Topic assignments for synthetic intents
+            human_embeddings: Pre-computed embeddings for human intents
+            synthetic_embeddings: Pre-computed embeddings for synthetic intents
+            output_dir: Directory to save visualizations
+        """
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        # Create individual cluster visualizations
+        logger.info("Creating human intents visualization")
+        human_fig = self._create_cluster_visualization(
+            human_intents, human_topics, human_embeddings, "Human-Generated Intents"
+        )
+        human_fig.write_html(output_path / "human_intents_clusters.html")
+
+        logger.info("Creating synthetic intents visualization")
+        synthetic_fig = self._create_cluster_visualization(
+            synthetic_intents, synthetic_topics, synthetic_embeddings, "Synthetic Intents"
+        )
+        synthetic_fig.write_html(output_path / "synthetic_intents_clusters.html")
+
+        # Create comparison visualization
+        logger.info("Creating comparison visualization")
+        comparison_fig = self._create_comparison_visualization(
+            human_intents, synthetic_intents, 
+            human_topics, synthetic_topics,
+            human_embeddings, synthetic_embeddings
+        )
+        comparison_fig.write_html(output_path / "intents_comparison.html")
+
+        # Create topic distribution comparison
+        dist_fig = self._create_distribution_comparison(human_topics, synthetic_topics)
+        dist_fig.write_html(output_path / "topic_distribution_comparison.html")
+
+        logger.info(f"Visualizations saved to {output_dir}")
+
 
     def _create_cluster_visualization(
         self, 

@@ -13,26 +13,39 @@ logger = logging.getLogger(__name__)
 
 class SyntheticIntentGenerator:
     """Generate synthetic intents using vLLM."""
-    
-    def __init__(self, model_id: str):
+
+    def __init__(
+        self,
+        model_id: str,
+        temperature: float = 0.0,
+        top_p: float = 0.95,
+        top_k: int = 20,
+        max_tokens: int = 1000,
+        min_p: float = 0.0
+    ):
         """
         Initialize the synthetic intent generator.
-        
+
         Args:
             model_id: HuggingFace model ID for generation
+            temperature: Sampling temperature for generation
+            top_p: Top-p sampling parameter
+            top_k: Top-k sampling parameter
+            max_tokens: Maximum number of tokens to generate
+            min_p: Minimum probability for sampling
         """
         logger.info(f"Initializing generator with model: {model_id}")
         self.model_id = model_id
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
         self.llm = LLM(model=model_id)
         self.sampling_params = SamplingParams(
-            temperature=0,
-            top_p=0.95,
-            top_k=20,
-            max_tokens=1000,
-            min_p=0
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            min_p=min_p
         )
-        
+
     def generate_intents_for_prompt(self, prompt: str, num_variations: int = 1) -> List[str]:
         """
         Generate synthetic intent variations for a given prompt.

@@ -14,6 +14,9 @@ Usage:
         --split train \
         --output-dir ./outputs
 
+Note: For simplicity some relevant model hyperparameters like sampling hyperparameters are set using
+the class default arguments and can currently not be passed as argument to the script. Modify if needed.
+
 Optional flags:
     --skip-generation   Use existing synthetic intents from disk instead of generating new ones.
     --eval-harm         Run model harm evaluation (compute confusion matrix) instead of clustering comparison.
@@ -28,9 +31,9 @@ Outputs:
 import argparse
 from pathlib import Path
 import logging
+from typing import Optional
 import pandas as pd
 from datasets import load_dataset
-from transformers import Optional
 from intention_jailbreak.comparison.clusteringcompare import ClusterComparator
 from intention_jailbreak.comparison.syntheticintentgenerator import SyntheticIntentGenerator
 from intention_jailbreak.comparison.wildguardmodelharmannotator import WildGuardModelHarmAnnotator
@@ -83,8 +86,7 @@ def evaluate_harm_model(args: argparse.Namespace) -> None:
         split=args.split,
         max_samples=args.max_samples
     )
-    evaluator.evaluate_harm()
-
+    evaluator.evaluate_harm(args.output_dir)
 
 def generate_synthetic_intents(args: argparse.Namespace, df_human: pd.DataFrame, synthetic_path: Path) -> pd.DataFrame:
     if not args.skip_generation:
