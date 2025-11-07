@@ -1,4 +1,3 @@
-import pandas as pd
 from datasets import load_dataset
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
@@ -14,6 +13,7 @@ class WildGuardModelHarmAnnotator:
     """
     Simple class that takes in a model_id and performs comparison against human annotated intents and harm labels.
     Although you can specify a dataset name it is only really compatible with the modified WildGuard dataset.
+    Currently does not cache/save generated harm labels.
     """
     _harm_classes = ["completely harmful", "uncertain harmful", "uncertain safe", "completely safe"]
     

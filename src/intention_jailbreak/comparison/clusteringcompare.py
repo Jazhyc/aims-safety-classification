@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -7,7 +7,6 @@ import logging
 import plotly.express as px
 import plotly.graph_objects as go
 from umap import UMAP
-
 from intention_jailbreak.embeddings import BERTopicModelWrapper
 from hdbscan import HDBSCAN
 
@@ -194,69 +193,6 @@ class ClusterComparator:
             dist_fig.write_html(output_path / "topic_distribution_comparison.html")
             
             logger.info(f"Visualizations saved to {output_dir}")
-    
-    def visualize_comparison(
-        self, 
-        human_intents: List[str], 
-        synthetic_intents: List[str],
-        human_topics: np.ndarray, 
-        synthetic_topics: np.ndarray, 
-        output_dir: str
-    ) -> None:
-        """
-        Create comprehensive visualizations comparing human and synthetic intents.
-        
-        Args:
-            human_intents: List of human-generated intents
-            synthetic_intents: List of synthetic intents  
-            human_topics: Topic assignments for human intents
-            synthetic_topics: Topic assignments for synthetic intents
-            output_dir: Directory to save visualizations
-        """
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-        
-        # Get embeddings for both sets
-        human_embeddings = self._get_embeddings(human_intents, "human_viz")
-        synthetic_embeddings = self._get_embeddings(synthetic_intents, "synthetic_viz")
-        
-        # Create individual cluster visualizations
-        logger.info("Creating human intents visualization")
-        human_fig = self._create_cluster_visualization(
-            human_intents, human_topics, human_embeddings, "Human-Generated Intents"
-        )
-        human_fig.write_html(output_path / "human_intents_clusters.html")
-        
-        logger.info("Creating synthetic intents visualization")
-        synthetic_fig = self._create_cluster_visualization(
-            synthetic_intents, synthetic_topics, synthetic_embeddings, "Synthetic Intents"
-        )
-        synthetic_fig.write_html(output_path / "synthetic_intents_clusters.html")
-        
-        # Create comparison visualization
-        logger.info("Creating comparison visualization")
-        comparison_fig = self._create_comparison_visualization(
-            human_intents, synthetic_intents, 
-            human_topics, synthetic_topics,
-            human_embeddings, synthetic_embeddings
-        )
-        comparison_fig.write_html(output_path / "intents_comparison.html")
-        
-        # Create topic distribution comparison
-        dist_fig = self._create_distribution_comparison(human_topics, synthetic_topics)
-        dist_fig.write_html(output_path / "topic_distribution_comparison.html")
-        
-        logger.info(f"Visualizations saved to {output_dir}")
-
-    def _get_embeddings(self, intents: List[str], cache_prefix: str) -> np.ndarray:
-        """Get embeddings for visualization using the topic wrapper."""
-        # Use the topic wrapper to get embeddings with caching
-        _, _ = self.topic_wrapper.fit_transform(
-            intents,
-            use_cache=True,
-            cache_prefix=cache_prefix
-        )
-        return self.topic_wrapper.get_embeddings()
 
     def _create_cluster_visualization(
         self, 

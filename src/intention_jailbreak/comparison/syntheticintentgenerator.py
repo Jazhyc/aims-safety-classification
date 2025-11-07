@@ -2,14 +2,9 @@
 Generate synthetic intents using an open-source LLM and compare clustering patterns
 with human-annotated intents.
 """
-import argparse
-import json
 import logging
-from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List
 import pandas as pd
-import numpy as np
-from datasets import load_dataset
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 
@@ -29,14 +24,13 @@ class SyntheticIntentGenerator:
         logger.info(f"Initializing generator with model: {model_id}")
         self.model_id = model_id
         self.tokenizer = AutoTokenizer.from_pretrained(model_id)
-        self.llm = LLM(model=model_id) # , quantization="gptq", dtype="float16")
+        self.llm = LLM(model=model_id)
         self.sampling_params = SamplingParams(
             temperature=0,
             top_p=0.95,
             top_k=20,
             max_tokens=1000,
             min_p=0
-            # n=1
         )
         
     def generate_intents_for_prompt(self, prompt: str, num_variations: int = 1) -> List[str]:
@@ -101,7 +95,7 @@ class SyntheticIntentGenerator:
     def generate_synthetic_dataset(
         self, 
         prompts: List[str], 
-        num_variations: int = 5,
+        num_variations: int = 1,
         output_path: str = None
     ) -> pd.DataFrame:
         """

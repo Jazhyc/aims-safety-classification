@@ -95,8 +95,6 @@ Where prompt text is the prompt to estimate the harm label from.
 [Interactive UMAP Clustering Figure](imgs/intents_comparison.html)
 ![UMAP Clustering Figure](imgs/intents_comparison.png)
 
-As an example
-
 
 ![Topics](imgs/topic_distribution_comparison.png)
 
@@ -179,6 +177,5 @@ From these results we can conclude that the intent description of the prompt are
 ### Cluster Quality Metrics
 
 - **40% Outlier Rate**: High proportion of intents don't fit cleanly into topics
-- **Highly Imbalanced**: Top 2 topics contain 72% of all intents
 - **Long Tail**: 21 topics have <20 intents each
 - **Diversity**: 40 distinct topical clusters identified
