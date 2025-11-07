@@ -163,7 +163,7 @@ Analyze how consistently human annotators label and describe intents:
   - Generate synthetic harm labels (completely harmful, uncertain harmful, uncertain safe, completely safe) using an open source LLM
   - Apply BERTopic for automatic topic discovery on both the synthetic and human intents
   - Visualize and compare human and synthetic intents
-  - Compute confusion matrix of synthethic harm labels w.r.t. human labels.
+  - Compute confusion matrix of synthetic harm labels w.r.t. human labels.
 
 ### 8. Additional Analysis
 
