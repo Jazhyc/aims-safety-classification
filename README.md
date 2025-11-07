@@ -93,13 +93,19 @@ python scripts/train.py training.per_device_train_batch_size=128
 
 ### 2. Test Set Evaluation
 
-Evaluate the trained model on the test set using the test results analysis notebook. Open it with your preferred notebook software (Jupyter, VS Code, etc.):
+Evaluate the trained model on the test set using the test script and analysis notebook:
 
+- **Script:** `scripts/evaluate_test.py`
 - **Notebook:** `notebooks/test_results_analysis.ipynb`
 - **Functionality:**
   - Generates predictions on the test set
   - Produces statistics on the annotation set and examines uncertain samples for annotation by sweeping the model's confidence intervals
   - Exports results as a JSON file with the desired confidence interval
+
+**Model Calibration:**
+- The ensemble of 3 models was evaluated on the annotation set using a calibration curve
+- The model was found to be mostly **underconfident** (predicted probabilities lower than actual accuracy)
+- Calibration error: **0.27** (refer to `scripts/plot_calibration.py` for visualization)
 
 ### 3. Annotation with Label Studio
 
