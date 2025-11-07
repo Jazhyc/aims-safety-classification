@@ -81,25 +81,37 @@ def compare_clusters(df_human, df_synthetic, output_dir):
     comparator = ClusterComparator()
 
     human_intents = df_human['Intent'].tolist()
-    human_topics, _, human_topic_info = comparator.cluster_intents(
-        human_intents, cache_prefix="human_intents_filtered"
-    )
-
     synthetic_intents = df_synthetic['synthetic_intent'].tolist()
-    synthetic_topics, _, synthetic_topic_info = comparator.cluster_intents(
-        synthetic_intents, cache_prefix="synthetic_intents"
+    
+    # Combine all intents for unified clustering
+    all_intents = human_intents + synthetic_intents
+    logger.info(f"Clustering {len(human_intents)} human + {len(synthetic_intents)} synthetic intents together")
+    
+    all_topics, _, all_topic_info = comparator.cluster_intents(
+        all_intents, cache_prefix="combined_intents"
     )
+    
+    # Get the combined embeddings from the clustering
+    all_embeddings = comparator._current_embeddings
+    
+    # Split topics and embeddings back to human and synthetic
+    human_topics = all_topics[:len(human_intents)]
+    synthetic_topics = all_topics[len(human_intents):]
+    human_embeddings = all_embeddings[:len(human_intents)]
+    synthetic_embeddings = all_embeddings[len(human_intents):]
 
-    comparator.visualize_comparison(
+    # Visualize using the already-computed embeddings and topics
+    comparator.visualize_comparison_with_embeddings(
         human_intents,
         synthetic_intents,
         human_topics,
         synthetic_topics,
+        human_embeddings,
+        synthetic_embeddings,
         output_dir=str(output_dir / "comparison_results")
     )
 
-    human_topic_info.to_csv(output_dir / "human_topic_info.csv", index=False)
-    synthetic_topic_info.to_csv(output_dir / "synthetic_topic_info.csv", index=False)
+    all_topic_info.to_csv(output_dir / "combined_topic_info.csv", index=False)
 
     logger.info("=" * 80)
     logger.info("ANALYSIS COMPLETE")

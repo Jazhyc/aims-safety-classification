@@ -82,7 +82,7 @@ which was based on the human-annotation guidelines. Furthermore, to get syntheti
 ```
 Where prompt text is the prompt to estimate the harm label from.
 
- All human and synthetic intents are embedded into a high-dimensional vector space using the `Qwen/Qwen3-Embedding-0.6B` model. The embeddings are reduced to 2D using UMAP for visualization. We use BERTopic's pipeline for automatic topic discovery with the embeddings. For harm label evaluation, model-predicted labels are compared against human annotations. A standard confusion matrix is computed. 
+ All human and synthetic intents are embedded into a high-dimensional vector space using the [`Qwen/Qwen3-Embedding-0.6B`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) model. The embeddings are reduced to 2D using UMAP for visualization. We use [BERTopic](https://arxiv.org/abs/2203.05794)'s pipeline for automatic topic discovery with the embeddings. For harm label evaluation, model-predicted labels are compared against human annotations. A standard confusion matrix is computed. 
 
 
 
@@ -95,10 +95,90 @@ Where prompt text is the prompt to estimate the harm label from.
 [Interactive UMAP Clustering Figure](imgs/intents_comparison.html)
 ![UMAP Clustering Figure](imgs/intents_comparison.png)
 
+As an example
+
+
 ![Topics](imgs/topic_distribution_comparison.png)
 
 
 ## Conclusion
-From these results we can conclude that the intent description of the prompt are overall similar to the human annoated variants (with some outliers), but the harm label (completely harmful, uncertain harmful, uncertain safe, completely safe) can differ. The human annotated intents also appear to cover more topics.
+From these results we can conclude that the intent description of the prompt are overall similar to the human annoated variants, but the harm label (completely harmful, uncertain harmful, uncertain safe, completely safe) can differ. See below for more details on the discovered topics.
 
 
+# Jailbreak Intent Topic Analysis
+
+## Summary Statistics
+- **Total Intents**: 2,886
+- **Distinct Topics**: 41 (including outliers)
+- **Outliers (Topic -1)**: 1,151 (40%)
+- **Clustered Topics**: 40
+
+---
+
+## Topic Distribution
+
+| Topic ID | Count | Name | Top Keywords |
+|----------|-------|------|--------------|
+| -1 | 1,151 | Outliers | the, to, is, intent, and, of, generate, while, fictional, for |
+| 0 | 935 | Information | the, to, is, intent, information, of, and, fictional, that, about |
+| 1 | 146 | Sexual Content | story, explicit, sexual, write, romantic, between, two, emotional, content, generate |
+| 2 | 121 | Medical Misinformation | medical, health, misinformation, effects, substance, alternative, the, mental, of, on |
+| 3 | 72 | Animal Harm | animal, for, animals, seek, methods, venom, advice, childbirth, wildlife, spider |
+| 4 | 58 | Workplace Discrimination | hiring, women, job, pregnant, gender, against, in, practices, workforce, promotion |
+| 5 | 52 | Social Media | media, social, celebrity, engagement, comments, for, content, marketing, public, genuine |
+| 6 | 51 | Copyright | website, copyrighted, product, copyright, design, purchasing, mock, software, license, spotify |
+| 7 | 50 | Persuasion | others, persuasive, techniques, influencing, opinions, strategies, during, discussions, manipulate, seek |
+| 8 | 42 | Magical/Horror | magical, scene, injustice, ritual, describing, representations, symbolic, entities, horror, graphic |
+| 9 | 40 | Insults | insult, targeting, derogatory, characteristic, physical, remark, insults, someone, specific, criticism |
+| 10 | 39 | Substances | substance, substances, drugs, drug, illicit, illegal, step, guide, toxic, packaging |
+| 11 | 34 | Sexual Topics | sexual, addiction, information, reproductive, explicit, about, on, suggestive, human, sexually |
+| 12 | 32 | Cultural | cultural, african, cultures, practices, communities, culture, romanticized, of, analysis, ancient |
+| 13 | 27 | Fire | fire, simulating, participants, house, start, instructions, acknowledging, aspects, play, purposes |
+| 14 | 27 | Security | security, simulate, vulnerabilities, educate, cybersecurity, wi, assessment, measures, fi, training |
+| 15 | 25 | Environmental | environmental, economic, alternative, omitting, company, employment, electric, vehicles, promotional, that |
+| 16 | 25 | Cannabis | plant, cannabis, vinegar, grow, garden, cultivating, weeds, agricultural, using, allergy |
+| 17 | 24 | Vehicle | vehicle, car, mechanic, bmw, deactivating, dismantling, bus, starting, inspecting, rap |
+| 18 | 24 | AI Response | ai, response, provoke, system, assert, elicit, or, the, its, autonomy |
+| 19 | 22 | Rights | rights, sentient, speech, justification, entities, as, satirical, portals, nationalistic, freedom |
+| 20 | 21 | Code | code, python, project, outputs, tasks, request, coderbyte, soap, denver, mathematical |
+| 21 | 21 | Relationships | attention, partner, romantic, increasing, relationship, more, seek, time, advice, spend |
+| 22 | 21 | Diagnosis | diagnosis, dreams, child, psychological, leveraging, unconventional, role, professional, psychotic, disorder |
+| 23 | 20 | Female/Nude | female, description, image, nude, celebrities, woman, photos, attractive, tasteful, an |
+| 24 | 19 | Comic Strip | strip, comic, copyrighted, incremental, display, sharing, circumvents, simulated, standard, restrictions |
+| 25 | 19 | Factual | fact, factual, summary, statement, state, rephrase, document, presented, accuracy, conversation |
+| 26 | 19 | Game | game, fire, novice, fantasy, strategic, tactics, player, guide, actions, based |
+| 27 | 19 | PTSD Jokes | jokes, ptsd, humorous, symptoms, lighthearted, stand, emojis, joke, relatable, meme |
+| 28 | 19 | Gambling | gambling, lawful, journey, researcher, web, fictionalized, illegal, dark, account, online |
+| 29 | 19 | Nuclear | nuclear, control, earth, extraterrestrial, fiction, manipulation, storytelling, system, speculative, hypothetical |
+| 30 | 18 | Intimate/Animal | intimate, between, animal, human, horse, bond, interaction, creature, mythical, involving |
+| 31 | 18 | Tesla | tesla, unethical, elicit, inquiry, efficiency, battery, discussion, any, including, disliking |
+| 32 | 17 | Poison | poison, pokémon, attacks, maximizing, advice, bromethalin, spray, mice, paint, poisons |
+| 33 | 17 | Chemical | chemical, introduction, company, compound, article, industry, specific, located, in, contexts |
+| 34 | 17 | Lactation | lactation, biologically, implausible, older, statement, rationalizes, normalizes, breastfeeding, individuals, response |
+| 35 | 16 | Platform Policies | content, violate, suggestions, mechanisms, platform, request, tiktok, or, policies, order |
+| 36 | 16 | Biometric | biometric, data, palm, print, celebrity, emma, watson, frames, good, under |
+| 37 | 16 | Cooking | cooking, smoke, turkey, barbecue, meal, preparing, meat, holiday, literal, abundance |
+| 38 | 15 | Refugees | refugees, comedy, sketch, misdirection, endeavor, light, uses, hearted, playful, address |
+| 39 | 15 | Infrastructure | government, infrastructure, disabling, critical, conditions, resilience, systems, extreme, plan, hypothetical |
+| 40 | 15 | Athlete | williams, serena, gait, training, routine, athletes, credible, pseudoscientific, biomechanics, described |
+
+---
+
+## Topic Size Distribution
+
+| Size Category | Topic Count | Example Topics |
+|--------------|-------------|----------------|
+| Very Large (500+) | 2 | Outliers (-1), Information (0) |
+| Large (100-499) | 2 | Sexual Content (1), Medical Misinformation (2) |
+| Medium (50-99) | 3 | Animal Harm (3), Workplace Discrimination (4), Social Media (5) |
+| Small (20-49) | 13 | Topics 6-18 |
+| Very Small (<20) | 21 | Topics 19-40 |
+
+---
+
+## Cluster Quality Metrics
+
+- **40% Outlier Rate**: High proportion of intents don't fit cleanly into topics
+- **Highly Imbalanced**: Top 2 topics contain 72% of all intents
+- **Long Tail**: 21 topics have <20 intents each
+- **Diversity**: 40 distinct topical clusters identified
