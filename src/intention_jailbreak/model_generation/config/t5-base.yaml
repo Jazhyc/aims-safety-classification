@@ -1,0 +1,29 @@
+model:
+  name: "t5-base"
+  max_length_prompt: 512
+  max_length_intent: 64
+
+training:
+  epochs: 8
+  batch_size: 8
+  learning_rate: 5e-5
+  weight_decay: 0.01
+  gradient_accumulation: 1
+  fp16: false
+
+data:
+  test_size: 0.1
+  val_size: 0.1
+  seed: 22
+  plot_lengths: false
+
+paths:
+  output_dir: "train_results/seq2seq/t5-base"
+  logs_dir: "logs/seq2seq/t5-base"
+  model_save_dir: "trained_models/seq2seq/t5-base"
+  predictions_dir: "predictions/seq2seq/t5-base"
+
+generation:
+  num_beams: 4
+  max_length: 64
+  do_sample: false

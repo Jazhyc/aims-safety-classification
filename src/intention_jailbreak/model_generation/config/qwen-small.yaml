@@ -1,0 +1,28 @@
+model:
+  name: "Qwen/Qwen2-0.5B-Instruct"
+  max_length_causal: 128   
+
+training:
+  epochs: 1                
+  batch_size: 1            
+  learning_rate: 5e-5
+  weight_decay: 0.01
+  gradient_accumulation: 1 
+  fp16: true              
+
+data:
+  test_size: 0.1
+  val_size: 0.1
+  seed: 22
+  plot_lengths: false
+
+paths:
+  output_dir: "train_results/causal/qwen-small"
+  logs_dir: "logs_causal/causal/qwen-small"
+  model_save_dir: "trained_models/causal/qwen-small"
+  predictions_dir: "predictions/causal/qwen-small"
+
+generation:
+  max_new_tokens: 32  
+  num_beams: 1
+  do_sample: false
