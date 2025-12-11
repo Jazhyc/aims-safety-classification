@@ -1,9 +1,9 @@
 model:
   name: "Qwen/Qwen2-0.5B-Instruct"
-  max_length_causal: 128   
+  max_length_causal: 512   
 
 training:
-  epochs: 1                
+  epochs: 2                
   batch_size: 1            
   learning_rate: 5e-5
   weight_decay: 0.01
@@ -23,6 +23,6 @@ paths:
   predictions_dir: "predictions/causal/qwen-small"
 
 generation:
-  max_new_tokens: 32  
+  max_new_tokens: 64  
   num_beams: 1
   do_sample: false

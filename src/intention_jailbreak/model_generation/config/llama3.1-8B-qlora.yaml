@@ -1,0 +1,59 @@
+model:
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+  max_length_causal: 512
+  trust_remote_code: true
+
+training:
+  epochs: 1
+  batch_size: 1
+
+  learning_rate: 2e-4 
+  weight_decay: 0.01
+  gradient_accumulation: 8
+
+  fp16: false
+  bf16: true
+
+data:
+  test_size: 0.1
+  val_size: 0.1
+  seed: 22
+  plot_lengths: false
+
+paths:
+  # You can change these to whatever naming you like
+  output_dir: "train_results/causal/llama3.1-8b-qlora"
+  logs_dir: "logs_causal/causal/llama3.1-8b-qlora"
+  model_save_dir: "trained_models/causal/llama3.1-8b-qlora"
+  predictions_dir: "predictions/causal/llama3.1-8b-qlora"
+
+generation:
+  # How many new tokens to generate for the intent at eval time
+  max_new_tokens: 64
+  num_beams: 1
+  do_sample: false
+
+peft:
+  use_lora: true
+
+  # Standard-ish LoRA hyperparams for 8B models
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  bias: "none"
+
+  # If you omit this, causal.py uses ["q_proj", "k_proj", "v_proj", "o_proj"]
+  # target_modules:
+  #   - "q_proj"
+  #   - "k_proj"
+  #   - "v_proj"
+  #   - "o_proj"
+
+quantization:
+  # Turn on 4-bit loading (QLoRA)
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "bfloat16"
+
+  # Standard QLoRA settings
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true

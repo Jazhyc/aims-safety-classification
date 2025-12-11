@@ -1,7 +1,6 @@
 import argparse
 from transformers import AutoConfig
 from config_loader import load_config
-
 from seq2seq import run_seq2seq_flow
 from causal import run_causal_flow
 

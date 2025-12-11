@@ -8,7 +8,9 @@ dependencies = [
     "accelerate>=1.10.1",
     "bertopic>=0.17.3",
     "bitsandbytes>=0.48.1",
+    "bleurt",
     "datasets>=4.1.1",
+    "evaluate>=0.4.6",
     "fast-langdetect>=1.0.0",
     "hdbscan>=0.8.40",
     "hydra-core>=1.3.2",
@@ -16,6 +18,7 @@ dependencies = [
     "ipywidgets>=8.1.7",
     "jupyter>=1.1.1",
     "matplotlib>=3.10.6",
+    "peft>=0.18.0",
     "python-dotenv>=1.1.1",
     "scikit-learn>=1.7.2",
     "seaborn>=0.13.2",
@@ -42,3 +45,6 @@ packages = ["src/intention_jailbreak"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.uv.sources]
+bleurt = { git = "https://github.com/google-research/bleurt.git" }

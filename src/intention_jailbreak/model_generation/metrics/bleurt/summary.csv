@@ -1,0 +1,2 @@
+model,split,n,bleurt_mean,bleurt_median,bleurt_std
+t5-base,val,173,0.447615,0.438879,0.170896
