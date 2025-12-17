@@ -53,33 +53,69 @@ def compute_bleu_rouge(refs, preds):
             f"refs and preds length mismatch: {len(refs)} vs {len(preds)}"
         )
 
-    # Load metrics
+    # Load metrics once
     bleu_metric = evaluate.load("google_bleu")
     rouge_metric = evaluate.load("rouge")
 
+    # BLEU: must compute per-example as google_bleu doesn't return per-example scores
     bleu_scores = []
-    rouge1_scores = []
-    rouge2_scores = []
-    rougeL_scores = []
-
-    # Compute per-example scores
     for ref, pred in zip(refs, preds):
-        # Google BLEU expects references as list of lists
         bleu_result = bleu_metric.compute(predictions=[pred], references=[[ref]])
         bleu_scores.append(bleu_result["google_bleu"])
-        
-        # ROUGE
-        rouge_result = rouge_metric.compute(predictions=[pred], references=[ref])
-        rouge1_scores.append(rouge_result["rouge1"])
-        rouge2_scores.append(rouge_result["rouge2"])
-        rougeL_scores.append(rouge_result["rougeL"])
+    
+    # ROUGE: compute all at once (much faster)
+    rouge_result = rouge_metric.compute(
+        predictions=preds, 
+        references=refs,
+        use_aggregator=False  # Return per-example scores
+    )
 
     return {
         "bleu": bleu_scores,
-        "rouge1": rouge1_scores,
-        "rouge2": rouge2_scores,
-        "rougeL": rougeL_scores,
+        "rouge1": rouge_result["rouge1"],
+        "rouge2": rouge_result["rouge2"],
+        "rougeL": rouge_result["rougeL"],
     }
+
+
+def compute_and_log_metrics(refs, preds, split_name="val", wandb_log=True):
+    """
+    Compute BLEU and ROUGE scores and optionally log to wandb.
+    
+    Args:
+        refs: List of reference strings
+        preds: List of prediction strings
+        split_name: Name of the split (e.g., "val", "test")
+        wandb_log: Whether to log to wandb
+    
+    Returns:
+        dict: Mean metrics with keys like {split}_bleu, {split}_rouge1, etc.
+    """
+    scores = compute_bleu_rouge(refs, preds)
+    
+    # Calculate mean scores
+    metrics = {
+        f"{split_name}_bleu": sum(scores["bleu"]) / len(scores["bleu"]),
+        f"{split_name}_rouge1": sum(scores["rouge1"]) / len(scores["rouge1"]),
+        f"{split_name}_rouge2": sum(scores["rouge2"]) / len(scores["rouge2"]),
+        f"{split_name}_rougeL": sum(scores["rougeL"]) / len(scores["rougeL"]),
+    }
+    
+    # Print metrics
+    print(f"\n=== {split_name.capitalize()} Metrics ===")
+    for k, v in metrics.items():
+        print(f"{k}: {v:.4f}")
+    
+    # Log to wandb if available and requested
+    if wandb_log:
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.log(metrics)
+        except ImportError:
+            pass
+    
+    return metrics
 
 
 

@@ -6,13 +6,13 @@ from tqdm import tqdm
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
-    TrainingArguments,
     BitsAndBytesConfig,
 )
 from trl import SFTTrainer, SFTConfig
 
 from .preprocessing import preprocess_data
 from .data_utils import train_val_test_split, align_tokenizer_with_model
+from .evaluate_generations import compute_and_log_metrics
 
 try:
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -48,6 +48,10 @@ def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, co
     # Prepare batches
     examples = list(eval_dataset)
     batches = [examples[i:i + batch_size] for i in range(0, len(examples), batch_size)]
+    
+    # Collect all predictions and references for metric computation
+    all_preds = []
+    all_refs = []
 
     with open(full_path, "w", encoding="utf-8") as f:
         for batch in tqdm(batches, desc=f"Generating {split_name} predictions"):
@@ -96,6 +100,9 @@ def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, co
 
             # Process each sample in the batch
             for ex, generated_intent in zip(batch, generated_texts):
+                all_preds.append(generated_intent.strip())
+                all_refs.append(ex["intent"])
+                
                 json_line = {
                     "id": ex["id"],
                     "prompt": ex["prompt"],
@@ -105,6 +112,7 @@ def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, co
                 f.write(json.dumps(json_line, ensure_ascii=False) + "\n")
 
     print(f"Saved {split_name} predictions to {full_path}")
+    return all_refs, all_preds
 
 
 def setup_causal_model_and_tokenizer(config):
@@ -357,12 +365,15 @@ def run_causal_flow(config):
     eval_results = trainer.evaluate()
     print(f"[Causal LM] Validation loss: {eval_results['eval_loss']}")
 
-    # NOTE: save_preds_causal works unchanged for both full FT and QLoRA
-    save_preds_causal(
+    # Generate predictions
+    val_refs, val_preds = save_preds_causal(
         model_name, model, tokenizer, val_dataset, "val", config,
         max_length=max_length,
     )
-    save_preds_causal(
+    test_refs, test_preds = save_preds_causal(
         model_name, model, tokenizer, test_dataset, "test", config,
         max_length=max_length,
     )
+    
+    # Compute and log metrics
+    compute_and_log_metrics(val_refs, val_preds, split_name="val")
