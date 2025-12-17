@@ -2,6 +2,42 @@ from typing import Tuple
 import matplotlib.pyplot as plt
 
 
+def align_tokenizer_with_model(tokenizer, model):
+    """
+    Align tokenizer special tokens with model config.
+    
+    Transformers sometimes doesn't handle this automatically when loading
+    models and tokenizers separately. This ensures consistency and prevents
+    warnings about mismatched special tokens.
+    
+    Args:
+        tokenizer: The tokenizer instance
+        model: The model instance with config
+    """
+    # Align pad token - model config takes precedence
+    if model.config.pad_token_id is not None:
+        tokenizer.pad_token_id = model.config.pad_token_id
+    elif tokenizer.pad_token is None:
+        # Fallback: use eos_token as pad_token
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = tokenizer.pad_token_id
+    else:
+        # Tokenizer has pad_token but model doesn't - update model
+        model.config.pad_token_id = tokenizer.pad_token_id
+    
+    # Align BOS token - model config takes precedence
+    if model.config.bos_token_id is not None:
+        tokenizer.bos_token_id = model.config.bos_token_id
+    elif tokenizer.bos_token_id is not None:
+        model.config.bos_token_id = tokenizer.bos_token_id
+    
+    # Align EOS token - model config takes precedence
+    if model.config.eos_token_id is not None:
+        tokenizer.eos_token_id = model.config.eos_token_id
+    elif tokenizer.eos_token_id is not None:
+        model.config.eos_token_id = tokenizer.eos_token_id
+
+
 def get_lengths(dataset, plot: bool = False) -> Tuple[int, int]:
     prompt_lengths = [len(item["prompt"].split()) for item in dataset]
     intent_lengths = [len(item["intent"].split()) for item in dataset]

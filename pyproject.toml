@@ -8,7 +8,6 @@ dependencies = [
     "accelerate>=1.10.1",
     "bertopic>=0.17.3",
     "bitsandbytes>=0.48.1",
-    "bleurt",
     "datasets>=4.1.1",
     "evaluate>=0.4.6",
     "fast-langdetect>=1.0.0",
@@ -26,6 +25,7 @@ dependencies = [
     "torch>=2.8.0",
     "tqdm>=4.67.1",
     "transformers>=4.57.0",
+    "trl>=0.26.1",
     "umap-learn>=0.5.9.post2",
     "vllm>=0.10.2",
     "wandb>=0.22.2",
@@ -45,6 +45,3 @@ packages = ["src/intention_jailbreak"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
-
-[tool.uv.sources]
-bleurt = { git = "https://github.com/google-research/bleurt.git" }

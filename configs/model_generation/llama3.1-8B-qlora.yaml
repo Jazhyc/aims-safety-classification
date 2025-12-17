@@ -1,3 +1,8 @@
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
 model:
   name: "meta-llama/Llama-3.1-8B-Instruct"
   max_length_causal: 512

@@ -1,0 +1,5 @@
+# Shared Hydra Configuration for all model generation experiments
+run:
+  dir: logs/hydra/runs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+sweep:
+  dir: logs/hydra/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}

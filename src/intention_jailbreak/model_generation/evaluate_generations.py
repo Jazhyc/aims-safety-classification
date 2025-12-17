@@ -4,7 +4,6 @@ from pathlib import Path
 from statistics import mean, median, pstdev
 import os
 import evaluate
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 def load_std_jsonl(path: Path):
     """
@@ -38,86 +37,109 @@ def load_std_jsonl(path: Path):
     return ids, refs, preds
 
 
-def compute_bleurt(refs, preds, checkpoint: str = "bleurt-20", batch_size: int = 32):
+def compute_bleu_rouge(refs, preds):
     """
-    Compute BLEURT scores for lists of references and predictions.
-
-    Some versions of the BLEURT metric (via `evaluate`) do not accept
-    `batch_size` in `.compute()`, so we manually batch using `add_batch`.
+    Compute BLEU and ROUGE scores for lists of references and predictions.
+    
+    Returns:
+        dict with keys:
+            - 'bleu': Google BLEU scores (list)
+            - 'rouge1': ROUGE-1 F1 scores (list)
+            - 'rouge2': ROUGE-2 F1 scores (list)
+            - 'rougeL': ROUGE-L F1 scores (list)
     """
     if len(refs) != len(preds):
         raise ValueError(
             f"refs and preds length mismatch: {len(refs)} vs {len(preds)}"
         )
 
-    # Load BLEURT metric with the chosen checkpoint
-    metric = evaluate.load("bleurt", checkpoint)
+    # Load metrics
+    bleu_metric = evaluate.load("google_bleu")
+    rouge_metric = evaluate.load("rouge")
 
-    # Manually add in mini-batches
-    if batch_size is None or batch_size <= 0:
-        batch_size = len(refs)
+    bleu_scores = []
+    rouge1_scores = []
+    rouge2_scores = []
+    rougeL_scores = []
 
-    for i in range(0, len(refs), batch_size):
-        batch_refs = refs[i : i + batch_size]
-        batch_preds = preds[i : i + batch_size]
-        metric.add_batch(predictions=batch_preds, references=batch_refs)
+    # Compute per-example scores
+    for ref, pred in zip(refs, preds):
+        # Google BLEU expects references as list of lists
+        bleu_result = bleu_metric.compute(predictions=[pred], references=[[ref]])
+        bleu_scores.append(bleu_result["google_bleu"])
+        
+        # ROUGE
+        rouge_result = rouge_metric.compute(predictions=[pred], references=[ref])
+        rouge1_scores.append(rouge_result["rouge1"])
+        rouge2_scores.append(rouge_result["rouge2"])
+        rougeL_scores.append(rouge_result["rougeL"])
 
-    results = metric.compute()
-    scores = results["scores"]
-
-    if len(scores) != len(refs):
-        raise RuntimeError(
-            f"BLEURT returned {len(scores)} scores for {len(refs)} examples."
-        )
-
-    return scores
+    return {
+        "bleu": bleu_scores,
+        "rouge1": rouge1_scores,
+        "rouge2": rouge2_scores,
+        "rougeL": rougeL_scores,
+    }
 
 
 
 def save_per_example(
-    path: Path, ids, refs, preds, scores, model_name: str | None = None
+    path: Path, ids, refs, preds, all_scores, model_name: str | None = None
 ):
     """
-    Save per-example BLEURT scores to JSONL:
-        { "id": ..., "true": "...", "pred": "...", "bleurt": 0.123, "model": "..." }
+    Save per-example BLEU and ROUGE scores to JSONL:
+        { "id": ..., "true": "...", "pred": "...", "bleu": 0.5, "rouge1": 0.6, "rouge2": 0.4, "rougeL": 0.55, "model": "..." }
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        for i, (ex_id, ref, pred, sc) in enumerate(
-            zip(ids, refs, preds, scores), start=1
-        ):
+        for i, ex_id in enumerate(ids):
             obj = {
                 "id": ex_id,
-                "true": ref,
-                "pred": pred,
-                "bleurt": float(sc),
+                "true": refs[i],
+                "pred": preds[i],
+                "bleu": float(all_scores["bleu"][i]),
+                "rouge1": float(all_scores["rouge1"][i]),
+                "rouge2": float(all_scores["rouge2"][i]),
+                "rougeL": float(all_scores["rougeL"][i]),
             }
             if model_name is not None:
                 obj["model"] = model_name
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    print(f"Per-example BLEURT written to: {path}")
+    print(f"Per-example metrics written to: {path}")
 
 
 def append_summary_csv(
     path: Path,
     model_name: str,
     split: str,
-    scores,
+    all_scores,
 ):
     """
     Append a summary row to a CSV file with columns:
-        model,split,n,bleurt_mean,bleurt_median,bleurt_std
+        model,split,n,bleu_mean,bleu_median,bleu_std,rouge1_mean,rouge1_median,rouge1_std,rouge2_mean,rouge2_median,rouge2_std,rougeL_mean,rougeL_median,rougeL_std
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    n = len(scores)
-    m = mean(scores)
-    med = median(scores)
-    std = pstdev(scores) if n > 1 else 0.0
+    n = len(all_scores["bleu"])
+    
+    metrics = {}
+    for metric_name in ["bleu", "rouge1", "rouge2", "rougeL"]:
+        scores = all_scores[metric_name]
+        metrics[metric_name] = {
+            "mean": mean(scores),
+            "median": median(scores),
+            "std": pstdev(scores) if n > 1 else 0.0,
+        }
 
-    new_line = f"{model_name},{split},{n},{m:.6f},{med:.6f},{std:.6f}\n"
+    new_line = (
+        f"{model_name},{split},{n},"
+        f"{metrics['bleu']['mean']:.6f},{metrics['bleu']['median']:.6f},{metrics['bleu']['std']:.6f},"
+        f"{metrics['rouge1']['mean']:.6f},{metrics['rouge1']['median']:.6f},{metrics['rouge1']['std']:.6f},"
+        f"{metrics['rouge2']['mean']:.6f},{metrics['rouge2']['median']:.6f},{metrics['rouge2']['std']:.6f},"
+        f"{metrics['rougeL']['mean']:.6f},{metrics['rougeL']['median']:.6f},{metrics['rougeL']['std']:.6f}\n"
+    )
 
-    header = "model,split,n,bleurt_mean,bleurt_median,bleurt_std\n"
+    header = "model,split,n,bleu_mean,bleu_median,bleu_std,rouge1_mean,rouge1_median,rouge1_std,rouge2_mean,rouge2_median,rouge2_std,rougeL_mean,rougeL_median,rougeL_std\n"
     if not path.exists():
         with path.open("w", encoding="utf-8") as f:
             f.write(header)
@@ -134,7 +156,7 @@ def append_summary_csv(
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Compute BLEURT scores for a standardized predictions JSONL "
+            "Compute BLEU and ROUGE scores for a standardized predictions JSONL "
             "({id, true, pred})."
         )
     )
@@ -160,28 +182,11 @@ def main():
         help="Data split name for summary reporting (e.g. 'val', 'test').",
     )
     parser.add_argument(
-        "--checkpoint",
-        "-c",
-        type=str,
-        default="bleurt-20",
-        help=(
-            "BLEURT checkpoint name (e.g. 'bleurt-20', 'bleurt-base-128', "
-            "'bleurt-tiny-128'). Default: 'bleurt-20'."
-        ),
-    )
-    parser.add_argument(
-        "--batch-size",
-        "-b",
-        type=int,
-        default=32,
-        help="Batch size for BLEURT computation. Default: 32.",
-    )
-    parser.add_argument(
         "--per-example-out",
         type=str,
         default=None,
         help=(
-            "Optional path to write per-example JSONL with BLEURT scores. "
+            "Optional path to write per-example JSONL with metric scores. "
             "If omitted, only aggregate stats are printed."
         ),
     )
@@ -191,7 +196,7 @@ def main():
         default=None,
         help=(
             "Optional path to a CSV file to append a summary row "
-            "(model,split,n,bleurt_mean,bleurt_median,bleurt_std)."
+            "with BLEU and ROUGE statistics."
         ),
     )
 
@@ -201,23 +206,21 @@ def main():
     ids, refs, preds = load_std_jsonl(input_path)
 
     print(f"Loaded {len(ids)} examples from {input_path}")
-    print(f"Computing BLEURT with checkpoint '{args.checkpoint}'...")
+    print(f"Computing BLEU and ROUGE scores...")
 
-    scores = compute_bleurt(
-        refs, preds, checkpoint=args.checkpoint, batch_size=args.batch_size
-    )
+    all_scores = compute_bleu_rouge(refs, preds)
 
     # Aggregate stats
-    n = len(scores)
-    m = mean(scores)
-    med = median(scores)
-    std = pstdev(scores) if n > 1 else 0.0
-
-    print("=== BLEURT statistics ===")
-    print(f"n              : {n}")
-    print(f"mean           : {m:.6f}")
-    print(f"median         : {med:.6f}")
-    print(f"std (population): {std:.6f}")
+    n = len(all_scores["bleu"])
+    
+    print("=== Metric statistics ===")
+    print(f"n: {n}")
+    for metric_name in ["bleu", "rouge1", "rouge2", "rougeL"]:
+        scores = all_scores[metric_name]
+        m = mean(scores)
+        med = median(scores)
+        std = pstdev(scores) if n > 1 else 0.0
+        print(f"{metric_name:8s} - mean: {m:.6f}, median: {med:.6f}, std: {std:.6f}")
 
     # Optional per-example output
     if args.per_example_out is not None:
@@ -227,7 +230,7 @@ def main():
             ids,
             refs,
             preds,
-            scores,
+            all_scores,
             model_name=args.model_name,
         )
 
@@ -235,7 +238,7 @@ def main():
     if args.summary_csv is not None and args.model_name is not None:
         summary_path = Path(args.summary_csv)
         append_summary_csv(
-            summary_path, args.model_name, args.split, scores
+            summary_path, args.model_name, args.split, all_scores
         )
     elif args.summary_csv is not None and args.model_name is None:
         print(

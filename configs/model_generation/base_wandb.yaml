@@ -1,0 +1,9 @@
+# Shared WandB Configuration for all model generation experiments
+entity: "intention-analysis"
+project: "intention-sft"
+dir: "logs/wandb"
+run_name: null
+tags:
+  - "sft"
+  - "intent-generation"
+mode: "online"  # Set to "offline" for local logging only

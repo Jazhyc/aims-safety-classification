@@ -10,8 +10,8 @@ from transformers import (
     Seq2SeqTrainingArguments,
 )
 
-from preprocessing import preprocess_data
-from data_utils import get_lengths, train_val_test_split
+from .preprocessing import preprocess_data
+from .data_utils import get_lengths, train_val_test_split
 
 
 def format_input_output_seq2seq(examples, tokenizer, prompt_max=512, intent_max=32):

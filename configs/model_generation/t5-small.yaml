@@ -1,5 +1,10 @@
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
 model:
-  name: "t5-large"
+  name: "t5-small"
   max_length_prompt: 512
   max_length_intent: 64
 
@@ -18,10 +23,10 @@ data:
   plot_lengths: false
 
 paths:
-  output_dir: "train_results/seq2seq/t5-large"
-  logs_dir: "logs/seq2seq/t5-large"
-  model_save_dir: "trained_models/seq2seq/t5-large"
-  predictions_dir: "predictions/seq2seq/t5-large"
+  output_dir: "train_results/seq2seq/t5-small"
+  logs_dir: "logs/seq2seq/t5-small"
+  model_save_dir: "trained_models/seq2seq/t5-small"
+  predictions_dir: "predictions/seq2seq/t5-small"
 
 generation:
   num_beams: 4
