@@ -52,7 +52,7 @@ def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, co
     with open(full_path, "w", encoding="utf-8") as f:
         for batch in tqdm(batches, desc=f"Generating {split_name} predictions"):
             # Build prompts for the batch - just "Prompt: {text}\n"
-            prompt_texts = [f"Prompt: {ex['prompt']}\n" for ex in batch]
+            prompt_texts = [f"{ex['prompt']}\n" for ex in batch]
             
             inputs = tokenizer(
                 prompt_texts,
@@ -62,15 +62,14 @@ def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, co
                 max_length=max_length,
             ).to(device)
 
-            input_ids = inputs["input_ids"]
-            prompt_lens = (input_ids != tokenizer.pad_token_id).sum(dim=1)  # Get actual length per sample
-
             # Build generation kwargs
             gen_kwargs = {
                 "max_new_tokens": gen_max_new_tokens,
                 "do_sample": do_sample,
                 "num_beams": num_beams,
                 "pad_token_id": tokenizer.pad_token_id,
+                "return_dict_in_generate": True,
+                "output_scores": False,
             }
             
             # Only add sampling parameters when do_sample=True
@@ -87,22 +86,21 @@ def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, co
                     **gen_kwargs,
                 )
 
+            # outputs.sequences contains the full output (input + generated)
+            # Slice off the input portion to get only generated tokens
+            input_length = inputs["input_ids"].shape[1]
+            generated_ids = outputs.sequences[:, input_length:]
+            
+            # Batch decode all generated sequences at once
+            generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+
             # Process each sample in the batch
-            for idx, (ex, output_ids, prompt_len) in enumerate(zip(batch, outputs, prompt_lens)):
-                # Keep only the newly generated tokens (after the prompt)
-                gen_token_ids = output_ids[prompt_len:]
-
-                # Decode just the generation part
-                generated_intent = tokenizer.decode(
-                    gen_token_ids,
-                    skip_special_tokens=True,
-                ).strip()
-
+            for ex, generated_intent in zip(batch, generated_texts):
                 json_line = {
                     "id": ex["id"],
                     "prompt": ex["prompt"],
                     "true_intent": ex["intent"],
-                    "generated_intent": generated_intent,
+                    "generated_intent": generated_intent.strip(),
                 }
                 f.write(json.dumps(json_line, ensure_ascii=False) + "\n")
 
