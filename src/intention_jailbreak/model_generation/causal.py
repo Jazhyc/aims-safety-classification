@@ -21,11 +21,49 @@ except ImportError:
     get_peft_model = None
     prepare_model_for_kbit_training = None
 
+def format_prompt(prompt_text, predict_harm=False):
+    """
+    Format the input prompt for the model.
+    
+    Args:
+        prompt_text: The prompt text (raw text from dataset)
+        predict_harm: Whether to include harm prediction task
+    
+    Returns:
+        Formatted prompt string
+    """
+    return f"{prompt_text}\n"
+
+def format_completion(intent, harm=None, predict_harm=False):
+    """
+    Format the completion/target for the model.
+    
+    Args:
+        intent: The intent text
+        harm: The harm category (optional)
+        predict_harm: Whether to include harm in completion
+    
+    Returns:
+        Formatted completion string
+    """
+    if predict_harm and harm:
+        return f"Intent: {intent}; Harm: {harm}"
+    else:
+        return intent
+
 def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, config, max_length=256):
     paths_cfg = config.get("paths", {})
     gen_cfg = config.get("generation", {})
+    data_cfg = config.get("data", {})
+    predict_harm = data_cfg.get("predict_harm", False)
 
-    base_pred_dir = paths_cfg.get("predictions_dir", "predictions_causal")
+    # Use different directory if predict_harm is enabled
+    if predict_harm:
+        base_pred_dir = paths_cfg.get("predictions_dir", "predictions_causal")
+        base_pred_dir = base_pred_dir.replace("predictions", "predictions_with_harm")
+    else:
+        base_pred_dir = paths_cfg.get("predictions_dir", "predictions_causal")
+    
     os.makedirs(base_pred_dir, exist_ok=True)
 
     filename = f"{model_name.replace('/', '_')}_{split_name}.jsonl"
@@ -55,8 +93,8 @@ def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, co
 
     with open(full_path, "w", encoding="utf-8") as f:
         for batch in tqdm(batches, desc=f"Generating {split_name} predictions"):
-            # Build prompts for the batch - just "Prompt: {text}\n"
-            prompt_texts = [f"{ex['prompt']}\n" for ex in batch]
+            # Build prompts using format_prompt function
+            prompt_texts = [ex['prompt'] for ex in batch]
             
             inputs = tokenizer(
                 prompt_texts,
@@ -100,13 +138,17 @@ def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, co
 
             # Process each sample in the batch
             for ex, generated_intent in zip(batch, generated_texts):
+                # Format ground truth with harm if predict_harm is enabled
+                harm = ex.get("Annotator Harm") if predict_harm else None
+                true_intent_formatted = format_completion(ex["intent"], harm, predict_harm)
+                
                 all_preds.append(generated_intent.strip())
-                all_refs.append(ex["intent"])
+                all_refs.append(true_intent_formatted)
                 
                 json_line = {
                     "id": ex["id"],
                     "prompt": ex["prompt"],
-                    "true_intent": ex["intent"],
+                    "true_intent": true_intent_formatted,
                     "generated_intent": generated_intent.strip(),
                 }
                 f.write(json.dumps(json_line, ensure_ascii=False) + "\n")
@@ -316,14 +358,28 @@ def run_causal_flow(config):
 
     # Setup model and tokenizer (full FT or QLoRA)
     tokenizer, model, is_peft = setup_causal_model_and_tokenizer(config)
+    
+    # Get predict_harm flag from config
+    data_cfg = config.get("data", {})
+    predict_harm = data_cfg.get("predict_harm", False)
 
     # Create prompt and completion columns for SFTTrainer with completion_only_loss
     def create_prompt_completion(examples):
         # For completion_only_loss, we need separate prompt and completion columns
         # The model will only calculate loss on the completion tokens
+        prompts = [format_prompt(p, predict_harm) for p in examples["prompt"]]
+        
+        # Get harm values if predict_harm is enabled
+        if predict_harm:
+            harms = examples.get("Annotator Harm", [None] * len(examples["prompt"]))
+            completions = [format_completion(i, h, predict_harm) 
+                          for i, h in zip(examples["intent"], harms)]
+        else:
+            completions = [format_completion(i, None, predict_harm) for i in examples["intent"]]
+        
         return {
-            "prompt": [f"{p}\n" for p in examples["prompt"]],
-            "completion": [i for i in examples["intent"]],
+            "prompt": prompts,
+            "completion": completions,
         }
     
     dataset_with_cols = raw_dataset.map(
