@@ -485,5 +485,8 @@ def run_causal_flow(config):
         max_length=max_length,
     )
     
+    # Save memory for loading comparison model
+    del llm
+    
     # Compute and log metrics
     compute_and_log_metrics(val_refs, val_preds, split_name="val")

@@ -4,6 +4,9 @@ from pathlib import Path
 from statistics import mean, median, pstdev
 import os
 import evaluate
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
 def load_std_jsonl(path: Path):
     """
@@ -78,9 +81,42 @@ def compute_bleu_rouge(refs, preds):
     }
 
 
+def compute_semantic_similarity(refs, preds, model_name="sentence-transformers/all-MiniLM-L6-v2"):
+    """
+    Compute cosine similarity between references and predictions using sentence embeddings.
+    
+    Args:
+        refs: List of reference strings
+        preds: List of prediction strings
+        model_name: Name of the sentence-transformers model to use
+    
+    Returns:
+        list: Cosine similarity scores (one per example)
+    """
+    if len(refs) != len(preds):
+        raise ValueError(
+            f"refs and preds length mismatch: {len(refs)} vs {len(preds)}"
+        )
+    
+    # Load model
+    model = SentenceTransformer(model_name)
+    
+    # Encode all at once for efficiency
+    ref_embeddings = model.encode(refs, convert_to_numpy=True, show_progress_bar=False)
+    pred_embeddings = model.encode(preds, convert_to_numpy=True, show_progress_bar=False)
+    
+    # Compute cosine similarity per example
+    similarities = []
+    for ref_emb, pred_emb in zip(ref_embeddings, pred_embeddings):
+        sim = cosine_similarity([ref_emb], [pred_emb])[0][0]
+        similarities.append(float(sim))
+    
+    return similarities
+
+
 def compute_and_log_metrics(refs, preds, split_name="val", wandb_log=True):
     """
-    Compute BLEU and ROUGE scores and optionally log to wandb.
+    Compute BLEU, ROUGE, and semantic similarity scores and optionally log to wandb.
     
     Args:
         refs: List of reference strings
@@ -89,9 +125,11 @@ def compute_and_log_metrics(refs, preds, split_name="val", wandb_log=True):
         wandb_log: Whether to log to wandb
     
     Returns:
-        dict: Mean metrics with keys like {split}_bleu, {split}_rouge1, etc.
+        dict: Mean metrics with keys like {split}_bleu, {split}_rouge1, {split}_semantic_sim, etc.
     """
     scores = compute_bleu_rouge(refs, preds)
+    semantic_scores = compute_semantic_similarity(refs, preds)
+    scores["semantic_sim"] = semantic_scores
     
     # Calculate mean scores
     metrics = {
@@ -99,6 +137,7 @@ def compute_and_log_metrics(refs, preds, split_name="val", wandb_log=True):
         f"{split_name}_rouge1": sum(scores["rouge1"]) / len(scores["rouge1"]),
         f"{split_name}_rouge2": sum(scores["rouge2"]) / len(scores["rouge2"]),
         f"{split_name}_rougeL": sum(scores["rougeL"]) / len(scores["rougeL"]),
+        f"{split_name}_semantic_sim": sum(scores["semantic_sim"]) / len(scores["semantic_sim"]),
     }
     
     # Print metrics
@@ -123,8 +162,8 @@ def save_per_example(
     path: Path, ids, refs, preds, all_scores, model_name: str | None = None
 ):
     """
-    Save per-example BLEU and ROUGE scores to JSONL:
-        { "id": ..., "true": "...", "pred": "...", "bleu": 0.5, "rouge1": 0.6, "rouge2": 0.4, "rougeL": 0.55, "model": "..." }
+    Save per-example BLEU, ROUGE, and semantic similarity scores to JSONL:
+        { "id": ..., "true": "...", "pred": "...", "bleu": 0.5, "rouge1": 0.6, "rouge2": 0.4, "rougeL": 0.55, "semantic_sim": 0.85, "model": "..." }
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -137,6 +176,7 @@ def save_per_example(
                 "rouge1": float(all_scores["rouge1"][i]),
                 "rouge2": float(all_scores["rouge2"][i]),
                 "rougeL": float(all_scores["rougeL"][i]),
+                "semantic_sim": float(all_scores["semantic_sim"][i]),
             }
             if model_name is not None:
                 obj["model"] = model_name
@@ -152,14 +192,14 @@ def append_summary_csv(
 ):
     """
     Append a summary row to a CSV file with columns:
-        model,split,n,bleu_mean,bleu_median,bleu_std,rouge1_mean,rouge1_median,rouge1_std,rouge2_mean,rouge2_median,rouge2_std,rougeL_mean,rougeL_median,rougeL_std
+        model,split,n,bleu_mean,bleu_median,bleu_std,rouge1_mean,rouge1_median,rouge1_std,rouge2_mean,rouge2_median,rouge2_std,rougeL_mean,rougeL_median,rougeL_std,semantic_sim_mean,semantic_sim_median,semantic_sim_std
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     n = len(all_scores["bleu"])
     
     metrics = {}
-    for metric_name in ["bleu", "rouge1", "rouge2", "rougeL"]:
+    for metric_name in ["bleu", "rouge1", "rouge2", "rougeL", "semantic_sim"]:
         scores = all_scores[metric_name]
         metrics[metric_name] = {
             "mean": mean(scores),
@@ -172,10 +212,11 @@ def append_summary_csv(
         f"{metrics['bleu']['mean']:.6f},{metrics['bleu']['median']:.6f},{metrics['bleu']['std']:.6f},"
         f"{metrics['rouge1']['mean']:.6f},{metrics['rouge1']['median']:.6f},{metrics['rouge1']['std']:.6f},"
         f"{metrics['rouge2']['mean']:.6f},{metrics['rouge2']['median']:.6f},{metrics['rouge2']['std']:.6f},"
-        f"{metrics['rougeL']['mean']:.6f},{metrics['rougeL']['median']:.6f},{metrics['rougeL']['std']:.6f}\n"
+        f"{metrics['rougeL']['mean']:.6f},{metrics['rougeL']['median']:.6f},{metrics['rougeL']['std']:.6f},"
+        f"{metrics['semantic_sim']['mean']:.6f},{metrics['semantic_sim']['median']:.6f},{metrics['semantic_sim']['std']:.6f}\n"
     )
 
-    header = "model,split,n,bleu_mean,bleu_median,bleu_std,rouge1_mean,rouge1_median,rouge1_std,rouge2_mean,rouge2_median,rouge2_std,rougeL_mean,rougeL_median,rougeL_std\n"
+    header = "model,split,n,bleu_mean,bleu_median,bleu_std,rouge1_mean,rouge1_median,rouge1_std,rouge2_mean,rouge2_median,rouge2_std,rougeL_mean,rougeL_median,rougeL_std,semantic_sim_mean,semantic_sim_median,semantic_sim_std\n"
     if not path.exists():
         with path.open("w", encoding="utf-8") as f:
             f.write(header)
@@ -242,21 +283,23 @@ def main():
     ids, refs, preds = load_std_jsonl(input_path)
 
     print(f"Loaded {len(ids)} examples from {input_path}")
-    print(f"Computing BLEU and ROUGE scores...")
+    print(f"Computing BLEU, ROUGE, and semantic similarity scores...")
 
     all_scores = compute_bleu_rouge(refs, preds)
+    semantic_scores = compute_semantic_similarity(refs, preds)
+    all_scores["semantic_sim"] = semantic_scores
 
     # Aggregate stats
     n = len(all_scores["bleu"])
     
     print("=== Metric statistics ===")
     print(f"n: {n}")
-    for metric_name in ["bleu", "rouge1", "rouge2", "rougeL"]:
+    for metric_name in ["bleu", "rouge1", "rouge2", "rougeL", "semantic_sim"]:
         scores = all_scores[metric_name]
         m = mean(scores)
         med = median(scores)
         std = pstdev(scores) if n > 1 else 0.0
-        print(f"{metric_name:8s} - mean: {m:.6f}, median: {med:.6f}, std: {std:.6f}")
+        print(f"{metric_name:12s} - mean: {m:.6f}, median: {med:.6f}, std: {std:.6f}")
 
     # Optional per-example output
     if args.per_example_out is not None:
