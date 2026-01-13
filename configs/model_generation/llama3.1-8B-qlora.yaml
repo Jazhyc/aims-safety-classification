@@ -30,7 +30,7 @@ paths:
   output_dir: "train_results/causal/llama3.1-8b-qlora"
   logs_dir: "logs_causal/causal/llama3.1-8b-qlora"
   model_save_dir: "trained_models/causal/llama3.1-8b-qlora"
-  predictions_dir: "predictions/causal/llama3.1-8b-qlora"
+  predictions_dir: "data/predictions/causal/llama3.1-8b-qlora"
 
 generation:
   # How many new tokens to generate for the intent at eval time

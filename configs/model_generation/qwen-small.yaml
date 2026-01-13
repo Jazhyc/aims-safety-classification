@@ -30,7 +30,7 @@ paths:
   output_dir: "train_results/causal/qwen-small"
   logs_dir: "logs_causal/causal/qwen-small"
   model_save_dir: "trained_models/causal/qwen-small"
-  predictions_dir: "predictions/causal/qwen-small"
+  predictions_dir: "data/predictions/causal/qwen-small"
 
 generation:
   max_new_tokens: 64  

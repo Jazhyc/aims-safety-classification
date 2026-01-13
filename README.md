@@ -38,9 +38,11 @@ intention-jailbreak/
 │
 ├── data/                         # Data (gitignored)
 │   ├── annotations/
+│   ├── predictions/
+│   ├── predictions_with_harm/
+│   ├── test_predictions/
 │   ├── embeddings/
-│   ├── cache/
-│   └── test_predictions/
+│   └── cache/
 │
 ├── logs/                         # Logs (gitignored)
 │   ├── hydra/

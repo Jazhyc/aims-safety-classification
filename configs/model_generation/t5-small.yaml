@@ -26,7 +26,7 @@ paths:
   output_dir: "train_results/seq2seq/t5-small"
   logs_dir: "logs/seq2seq/t5-small"
   model_save_dir: "trained_models/seq2seq/t5-small"
-  predictions_dir: "predictions/seq2seq/t5-small"
+  predictions_dir: "data/predictions/seq2seq/t5-small"
 
 generation:
   num_beams: 4
