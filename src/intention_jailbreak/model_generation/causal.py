@@ -9,6 +9,8 @@ from transformers import (
     BitsAndBytesConfig,
 )
 from trl import SFTTrainer, SFTConfig
+from vllm import LLM, SamplingParams
+from vllm.lora.request import LoRARequest
 
 from .preprocessing import preprocess_data
 from .data_utils import train_val_test_split, align_tokenizer_with_model
@@ -51,7 +53,20 @@ def format_completion(intent, harm=None, predict_harm=False):
     else:
         return intent
 
-def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, config, max_length=256):
+def save_preds_causal(model_name, llm, lora_request, tokenizer, eval_dataset, split_name, config, max_length=256):
+    """
+    Generate predictions using VLLM for faster inference.
+    
+    Args:
+        model_name: Name of the model (for file naming)
+        llm: Initialized VLLM LLM instance
+        lora_request: Initialized VLLM LoRARequest instance (or None)
+        tokenizer: Tokenizer for formatting prompts
+        eval_dataset: Dataset to generate predictions on
+        split_name: Name of the split (e.g., "val", "test")
+        config: Configuration dictionary
+        max_length: Maximum input length for tokenization
+    """
     paths_cfg = config.get("paths", {})
     gen_cfg = config.get("generation", {})
     data_cfg = config.get("data", {})
@@ -73,85 +88,53 @@ def save_preds_causal(model_name, model, tokenizer, eval_dataset, split_name, co
     gen_max_new_tokens = int(gen_cfg.get("max_new_tokens", 32))
     num_beams = int(gen_cfg.get("num_beams", 1))
     do_sample = bool(gen_cfg.get("do_sample", False))
-    batch_size = int(gen_cfg.get("batch_size", 4))
     
-    # Sampling parameters (only used when do_sample=True)
+    # Sampling parameters
     temperature = float(gen_cfg.get("temperature", 1.0))
     top_p = float(gen_cfg.get("top_p", 1.0))
     top_k = int(gen_cfg.get("top_k", 50))
-
-    device = next(model.parameters()).device
-    model.eval()
-
-    # Prepare batches
+    
+    # Build sampling parameters for VLLM
+    # Note: VLLM doesn't support num_beams in the same way, use best_of instead
+    sampling_params = SamplingParams(
+        max_tokens=gen_max_new_tokens,
+        temperature=temperature if do_sample else 0.0,  # temperature=0 for greedy
+        top_p=top_p if do_sample else 1.0,
+        top_k=top_k if do_sample else -1,
+        skip_special_tokens=True,
+    )
+    
+    # Prepare all prompts
     examples = list(eval_dataset)
-    batches = [examples[i:i + batch_size] for i in range(0, len(examples), batch_size)]
+    prompt_texts = [ex['prompt'] for ex in examples]
     
     # Collect all predictions and references for metric computation
     all_preds = []
     all_refs = []
 
+    # Generate all predictions with VLLM (handles batching internally)
+    print(f"Generating {split_name} predictions with VLLM...")
+    outputs = llm.generate(prompt_texts, sampling_params, lora_request=lora_request)
+    
+    # Process and save results
     with open(full_path, "w", encoding="utf-8") as f:
-        for batch in tqdm(batches, desc=f"Generating {split_name} predictions"):
-            # Build prompts using format_prompt function
-            prompt_texts = [ex['prompt'] for ex in batch]
+        for ex, output in zip(examples, outputs):
+            generated_intent = output.outputs[0].text.strip()
             
-            inputs = tokenizer(
-                prompt_texts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=max_length,
-            ).to(device)
-
-            # Build generation kwargs
-            gen_kwargs = {
-                "max_new_tokens": gen_max_new_tokens,
-                "do_sample": do_sample,
-                "num_beams": num_beams,
-                "pad_token_id": tokenizer.pad_token_id,
-                "return_dict_in_generate": True,
-                "output_scores": False,
+            # Format ground truth with harm if predict_harm is enabled
+            harm = ex.get("Annotator Harm") if predict_harm else None
+            true_intent_formatted = format_completion(ex["intent"], harm, predict_harm)
+            
+            all_preds.append(generated_intent)
+            all_refs.append(true_intent_formatted)
+            
+            json_line = {
+                "id": ex["id"],
+                "prompt": ex["prompt"],
+                "true_intent": true_intent_formatted,
+                "generated_intent": generated_intent,
             }
-            
-            # Only add sampling parameters when do_sample=True
-            if do_sample:
-                gen_kwargs.update({
-                    "temperature": temperature,
-                    "top_p": top_p,
-                    "top_k": top_k,
-                })
-
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    **gen_kwargs,
-                )
-
-            # outputs.sequences contains the full output (input + generated)
-            # Slice off the input portion to get only generated tokens
-            input_length = inputs["input_ids"].shape[1]
-            generated_ids = outputs.sequences[:, input_length:]
-            
-            # Batch decode all generated sequences at once
-            generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-
-            # Process each sample in the batch
-            for ex, generated_intent in zip(batch, generated_texts):
-                # Format ground truth with harm if predict_harm is enabled
-                harm = ex.get("Annotator Harm") if predict_harm else None
-                true_intent_formatted = format_completion(ex["intent"], harm, predict_harm)
-                
-                all_preds.append(generated_intent.strip())
-                all_refs.append(true_intent_formatted)
-                
-                json_line = {
-                    "id": ex["id"],
-                    "prompt": ex["prompt"],
-                    "true_intent": true_intent_formatted,
-                    "generated_intent": generated_intent.strip(),
-                }
-                f.write(json.dumps(json_line, ensure_ascii=False) + "\n")
+            f.write(json.dumps(json_line, ensure_ascii=False) + "\n")
 
     print(f"Saved {split_name} predictions to {full_path}")
     return all_refs, all_preds
@@ -349,20 +332,17 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
 def run_causal_flow(config):
     model_cfg = config.get("model", {})
     paths_cfg = config.get("paths", {})
+    train_cfg = config.get("training", {})
     model_name = model_cfg["name"]
     max_length = model_cfg.get("max_length_causal", 256)
-
-    print("Loading dataset with preprocess_data()...")
-    raw_dataset = preprocess_data()
-    print("Dataset size:", len(raw_dataset))
-
-    # Setup model and tokenizer (full FT or QLoRA)
-    tokenizer, model, is_peft = setup_causal_model_and_tokenizer(config)
+    
+    # Check if we should skip training
+    skip_training = bool(train_cfg.get("skip_training", False))
     
     # Get predict_harm flag from config
     data_cfg = config.get("data", {})
     predict_harm = data_cfg.get("predict_harm", False)
-
+    
     # Create prompt and completion columns for SFTTrainer with completion_only_loss
     def create_prompt_completion(examples):
         # For completion_only_loss, we need separate prompt and completion columns
@@ -382,6 +362,11 @@ def run_causal_flow(config):
             "completion": completions,
         }
     
+    # Load and prepare dataset
+    print("Loading dataset with preprocess_data()...")
+    raw_dataset = preprocess_data()
+    print("Dataset size:", len(raw_dataset))
+    
     dataset_with_cols = raw_dataset.map(
         create_prompt_completion,
         batched=True,
@@ -390,45 +375,113 @@ def run_causal_flow(config):
     train_dataset, val_dataset, test_dataset = train_val_test_split(
         dataset_with_cols, config
     )
+    
+    if skip_training:
+        print("Skipping training (skip_training=True)")
+        model_save_dir = paths_cfg.get(
+            "model_save_dir",
+            f"./trained_models/causal/{model_name}-model",
+        )
+        print(f"Loading pre-trained model from {model_save_dir}")
+        tokenizer = AutoTokenizer.from_pretrained(model_save_dir)
+    else:
+        # Setup model and tokenizer (full FT or QLoRA)
+        tokenizer, model, is_peft = setup_causal_model_and_tokenizer(config)
 
-    # Put non-PEFT model on a single device
-    if not is_peft:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
+        # Put non-PEFT model on a single device
+        if not is_peft:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model.to(device)
 
-    # Prepare training arguments from config
-    training_args = SFTConfig(**prepare_training_arguments(config, is_peft, len(train_dataset)))
+        # Prepare training arguments from config
+        training_args = SFTConfig(**prepare_training_arguments(config, is_peft, len(train_dataset)))
 
-    trainer = SFTTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        processing_class=tokenizer,
-    )
+        trainer = SFTTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset,
+            eval_dataset=val_dataset,
+            processing_class=tokenizer,
+        )
 
-    trainer.evaluate()
-    trainer.train()
+        trainer.evaluate()
+        trainer.train()
 
-    model_save_dir = paths_cfg.get(
-        "model_save_dir",
-        f"./trained_models/causal/{model_name}-model",
-    )
-    os.makedirs(model_save_dir, exist_ok=True)
-    trainer.save_model(model_save_dir)
-    tokenizer.save_pretrained(model_save_dir)
-    print(f"Causal LM model and tokenizer saved to {model_save_dir}")
+        model_save_dir = paths_cfg.get(
+            "model_save_dir",
+            f"./trained_models/causal/{model_name}-model",
+        )
+        os.makedirs(model_save_dir, exist_ok=True)
+        
+        # For LoRA models, save adapter separately for VLLM
+        if is_peft:
+            print("Saving LoRA adapter for VLLM...")
+            adapter_dir = model_save_dir + "_adapter"
+            trainer.save_model(adapter_dir)
+            print(f"LoRA adapter saved to {adapter_dir}")
+            
+            # Also save tokenizer with the adapter
+            tokenizer.save_pretrained(adapter_dir)
+        else:
+            trainer.save_model(model_save_dir)
+            tokenizer.save_pretrained(model_save_dir)
+            print(f"Model and tokenizer saved to {model_save_dir}")
 
-    eval_results = trainer.evaluate()
-    print(f"[Causal LM] Validation loss: {eval_results['eval_loss']}")
+        eval_results = trainer.evaluate()
+        print(f"[Causal LM] Validation loss: {eval_results['eval_loss']}")
 
-    # Generate predictions
+        # Free GPU memory before loading with VLLM
+        del model
+        del trainer
+        torch.cuda.empty_cache()
+        print("Freed PyTorch model from GPU memory")
+
+    # Determine paths for VLLM loading
+    # For LoRA: use base model name + adapter path
+    # For full FT: use saved model directory
+    if skip_training:
+        # When skipping training, we need to determine if it's a LoRA model
+        adapter_dir = model_save_dir + "_adapter"
+        if os.path.exists(adapter_dir):
+            # LoRA model exists
+            base_model_path = model_name  # use original model name as base
+            adapter_path = adapter_dir
+            print(f"Using LoRA adapter from {adapter_path} with base model {base_model_path}")
+        else:
+            # Full fine-tuned model
+            base_model_path = model_save_dir
+            adapter_path = None
+            print(f"Using full model from {base_model_path}")
+    else:
+        # Just finished training
+        if is_peft:
+            base_model_path = model_name  # use original model name
+            adapter_path = model_save_dir + "_adapter"
+            print(f"Using LoRA adapter from {adapter_path} with base model {base_model_path}")
+        else:
+            base_model_path = model_save_dir
+            adapter_path = None
+            print(f"Using full model from {base_model_path}")
+
+    # Initialize VLLM once
+    peft_cfg = config.get("peft", {})
+    if adapter_path:
+        max_lora_rank = peft_cfg.get("lora_r", 16)
+        print(f"Loading model with VLLM and LoRA from {base_model_path} and {adapter_path}...")
+        llm = LLM(model=base_model_path, enable_lora=True, max_lora_rank=max_lora_rank, max_loras=1)
+        lora_request = LoRARequest("intent_lora", 1, adapter_path)
+    else:
+        print(f"Loading model with VLLM from {base_model_path}...")
+        llm = LLM(model=base_model_path)
+        lora_request = None
+
+    # Generate predictions using VLLM
     val_refs, val_preds = save_preds_causal(
-        model_name, model, tokenizer, val_dataset, "val", config,
+        model_name, llm, lora_request, tokenizer, val_dataset, "val", config,
         max_length=max_length,
     )
     test_refs, test_preds = save_preds_causal(
-        model_name, model, tokenizer, test_dataset, "test", config,
+        model_name, llm, lora_request, tokenizer, test_dataset, "test", config,
         max_length=max_length,
     )
     
