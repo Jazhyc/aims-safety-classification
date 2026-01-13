@@ -204,7 +204,7 @@ def setup_causal_model_and_tokenizer(config):
         device_map="auto",
         trust_remote_code=trust_remote_code,
         attn_implementation=attn_implementation,
-        dtype=torch.bfloat16,
+        dtype=compute_dtype,
     )
 
     # Required for gradient checkpointing
@@ -215,7 +215,7 @@ def setup_causal_model_and_tokenizer(config):
     model = prepare_model_for_kbit_training(model)
 
     # LoRA config (defaults can be overridden in config)
-    lora_r = int(peft_cfg.get("r", 16))
+    lora_r = int(peft_cfg.get("lora_rank", 16))
     lora_alpha = int(peft_cfg.get("lora_alpha", 32))
     lora_dropout = float(peft_cfg.get("lora_dropout", 0.05))
     bias = peft_cfg.get("bias", "none")
@@ -466,7 +466,7 @@ def run_causal_flow(config):
     # Initialize VLLM once
     peft_cfg = config.get("peft", {})
     if adapter_path:
-        max_lora_rank = peft_cfg.get("lora_r", 16)
+        max_lora_rank = peft_cfg.get("lora_rank", 16)
         print(f"Loading model with VLLM and LoRA from {base_model_path} and {adapter_path}...")
         llm = LLM(model=base_model_path, enable_lora=True, max_lora_rank=max_lora_rank, max_loras=1)
         lora_request = LoRARequest("intent_lora", 1, adapter_path)

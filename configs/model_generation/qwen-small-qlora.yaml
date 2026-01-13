@@ -40,7 +40,7 @@ generation:
 
 peft:
   use_lora: true
-  r: 16
+  lora_rank: 16
   lora_alpha: 32
   lora_dropout: 0
 
