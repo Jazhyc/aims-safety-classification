@@ -105,11 +105,9 @@ def compute_semantic_similarity(refs, preds, model_name="sentence-transformers/a
     ref_embeddings = model.encode(refs, convert_to_numpy=True, show_progress_bar=False)
     pred_embeddings = model.encode(preds, convert_to_numpy=True, show_progress_bar=False)
     
-    # Compute cosine similarity per example
-    similarities = []
-    for ref_emb, pred_emb in zip(ref_embeddings, pred_embeddings):
-        sim = cosine_similarity([ref_emb], [pred_emb])[0][0]
-        similarities.append(float(sim))
+    # Compute cosine similarity per example (diagonal of full similarity matrix)
+    sim_matrix = cosine_similarity(ref_embeddings, pred_embeddings)
+    similarities = [float(sim_matrix[i, i]) for i in range(len(ref_embeddings))]
     
     return similarities
 
