@@ -281,7 +281,7 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
         use_fp16 = False
     
     # Optimizer
-    default_optim = "paged_adamw_8bit" if is_peft else "adamw_torch"
+    default_optim = "paged_adamw_8bit"
     optim_name = train_cfg.get("optim", default_optim)
     
     # Torch compile for speedup
