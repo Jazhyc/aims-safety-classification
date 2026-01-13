@@ -407,6 +407,7 @@ def run_causal_flow(config):
         processing_class=tokenizer,
     )
 
+    trainer.evaluate()
     trainer.train()
 
     model_save_dir = paths_cfg.get(
