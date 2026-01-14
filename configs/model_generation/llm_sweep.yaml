@@ -1,0 +1,54 @@
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
+model:
+  name: "Qwen/Qwen3-0.6B"  # Will be overridden by command line
+  max_length_causal: 512
+  attn_implementation: "flash_attention_2"
+
+training:
+  epochs: 1
+  batch_size: 4
+  learning_rate: 2e-4
+  weight_decay: 0.01
+  gradient_accumulation: 1
+  bf16: true
+  torch_compile: true
+  gradient_checkpointing: true
+  padding_free: true
+
+data:
+  test_size: 0.1
+  val_size: 0.1
+  seed: 22
+  plot_lengths: false
+  predict_harm: true
+
+paths:
+  output_dir: "train_results/causal/llm_sweep"
+  logs_dir: "logs/causal/llm_sweep"
+  model_save_dir: "trained_models/causal/llm_sweep"
+  predictions_dir: "data/predictions/causal/llm_sweep"
+
+generation:
+  max_new_tokens: 64
+  num_beams: 1
+  do_sample: false
+  batch_size: 8
+
+peft:
+  use_lora: true
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0
+
+quantization:
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_quant_type: "nf4"
+
+wandb:
+  project: "intention-jailbreak-llm-sweep"
+  name: "llm-generator"
