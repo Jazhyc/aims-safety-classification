@@ -29,20 +29,11 @@ dependencies = [
     "transformers>=4.57.1",
     "trl>=0.26.1",
     "umap-learn>=0.5.9.post2",
-    "vllm>=0.10.2",
+    "vllm==0.10.2",
     "wandb>=0.22.2",
 ]
 
 [project.optional-dependencies]
-flash-attn = [
-    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl",
-]
-flash-attn-hpc = [
-    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl",
-]
-vllm = [
-    "vllm>=0.10.2",
-]
 
 [build-system]
 requires = ["hatchling"]

@@ -52,8 +52,7 @@ def submit_job(model_hf_path: str, model_name: str) -> str:
     # Submit the job
     template_path = "scripts/hpc/generation_template.sh"
     result = subprocess.run(
-        ['sbatch', template_path],
-        env=env,
+        ['sbatch', f'--export=MODEL_HF_PATH={model_hf_path},MODEL_NAME={model_name}', template_path],
         capture_output=True,
         text=True,
         check=True

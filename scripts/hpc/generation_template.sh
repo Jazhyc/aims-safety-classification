@@ -4,6 +4,8 @@
 #SBATCH --mem=16GB
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
+#SBATCH --output=logs/slurm/%x-%j.out
+#SBATCH --error=logs/slurm/%x-%j.err
 
 module load Python/3.12.3-GCCcore-13.3.0
 module load CUDA/12.8.0

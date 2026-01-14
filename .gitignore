@@ -222,6 +222,7 @@ checkpoints/
 # Logs
 logs/*
 !logs/.gitkeep
+*.out
 
 # Other
 scripts/cache 
