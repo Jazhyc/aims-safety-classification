@@ -1,11 +1,10 @@
 #!/bin/bash
-#SBATCH --job-name=llm_gen_${MODEL_NAME}
+#SBATCH --job-name=llm_gen
 #SBATCH --time=04:00:00
 #SBATCH --mem=16GB
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
+#SBATCH --gpus-per-node=a100:1
 #SBATCH --output=logs/slurm/%x-%j.out
-#SBATCH --error=logs/slurm/%x-%j.err
 
 module load Python/3.12.3-GCCcore-13.3.0
 module load CUDA/12.8.0
@@ -21,4 +20,3 @@ python scripts/train_generator.py \
     paths.model_save_dir="trained_models/causal/${MODEL_NAME}" \
     paths.predictions_dir="data/predictions/causal/${MODEL_NAME}" \
     wandb.project="intention-jailbreak-llm-sweep" \
-    wandb.name="${MODEL_NAME}-generator"
