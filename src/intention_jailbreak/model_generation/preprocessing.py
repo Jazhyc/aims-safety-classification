@@ -1,11 +1,10 @@
 from pathlib import Path
-from datasets import Dataset
+from datasets import Dataset, load_dataset
 
 
 def load_raw_parquet() -> Dataset:
-    data_path = Path(__file__).parent.parent.parent.parent / "data" / "annotations" / "intent_annotations.parquet" 
-    print(f"Loading dataset from: {data_path}")
-    ds = Dataset.from_parquet(str(data_path))
+    print("Loading dataset from Hugging Face Hub: Jazhyc/wildguard-annotated-intents")
+    ds = load_dataset("Jazhyc/wildguard-annotated-intents", split="train")
     print("Raw dataset size:", len(ds))
     print("Columns:", ds.column_names)
     return ds
