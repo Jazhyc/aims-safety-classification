@@ -491,8 +491,7 @@ def run_causal_flow(config):
             enable_lora=True, 
             max_lora_rank=max_lora_rank, 
             max_loras=1,
-            limit_mm_per_prompt={"image": 0},  # Disable multimodal for text-only models
-            disable_mm_preprocessor=True,  # Completely disable multimodal preprocessing
+            limit_mm_per_prompt={"image": 0},  # Disable multimodal inputs
             gpu_memory_utilization=0.95,  # Use more GPU memory for KV cache
             max_model_len=8192  # Reduce from default to fit in available memory
         )
@@ -502,7 +501,6 @@ def run_causal_flow(config):
         llm = LLM(
             model=base_model_path, 
             limit_mm_per_prompt={"image": 0},
-            disable_mm_preprocessor=True,
             gpu_memory_utilization=0.95,
             max_model_len=8192
         )
