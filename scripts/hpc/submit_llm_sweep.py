@@ -17,9 +17,9 @@ from pathlib import Path
 
 # List of models to test - add or modify as needed
 MODELS = [
-    ("Qwen/Qwen3-0.6B", "qwen3-0.6b"),
-    ("Qwen/Qwen3-4B", "qwen3-4b"),
-    ("Qwen/Qwen3-8B", "qwen3-8b"),
+    # ("Qwen/Qwen3-0.6B", "qwen3-0.6b"),
+    # ("Qwen/Qwen3-4B", "qwen3-4b"),
+    # ("Qwen/Qwen3-8B", "qwen3-8b"),
     ("Qwen/Qwen3-14B", "qwen3-14b"),
     ("google/gemma-3-4b-it", "gemma3-4b"),
     ("google/gemma-3-12b-it", "gemma3-12b"),

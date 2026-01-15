@@ -1,5 +1,6 @@
 import os
 import json
+import gc
 import torch
 from tqdm import tqdm
 
@@ -431,9 +432,24 @@ def run_causal_flow(config):
         print(f"[Causal LM] Validation loss: {eval_results['eval_loss']}")
 
         # Free GPU memory before loading with VLLM
+        # Delete all training objects explicitly
         del model
+        del tokenizer
         del trainer
+        del train_dataset
+        del val_dataset
+        
+        # Clear CUDA cache multiple times and force garbage collection
         torch.cuda.empty_cache()
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        # Print memory status to verify cleanup
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated(0) / 1024**3
+            reserved = torch.cuda.memory_reserved(0) / 1024**3
+            print(f"GPU Memory after cleanup: {allocated:.2f} GiB allocated, {reserved:.2f} GiB reserved")
+        
         print("Freed PyTorch model from GPU memory")
 
     # Determine paths for VLLM loading
@@ -468,11 +484,17 @@ def run_causal_flow(config):
     if adapter_path:
         max_lora_rank = peft_cfg.get("lora_rank", 16)
         print(f"Loading model with VLLM and LoRA from {base_model_path} and {adapter_path}...")
-        llm = LLM(model=base_model_path, enable_lora=True, max_lora_rank=max_lora_rank, max_loras=1)
+        llm = LLM(
+            model=base_model_path, 
+            enable_lora=True, 
+            max_lora_rank=max_lora_rank, 
+            max_loras=1,
+            limit_mm_per_prompt={"image": 0}  # Disable multimodal for text-only models
+        )
         lora_request = LoRARequest("intent_lora", 1, adapter_path)
     else:
         print(f"Loading model with VLLM from {base_model_path}...")
-        llm = LLM(model=base_model_path)
+        llm = LLM(model=base_model_path, limit_mm_per_prompt={"image": 0})
         lora_request = None
 
     # Generate predictions using VLLM
