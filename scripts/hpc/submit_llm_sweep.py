@@ -20,9 +20,11 @@ MODELS = [
     # ("Qwen/Qwen3-0.6B", "qwen3-0.6b"),
     # ("Qwen/Qwen3-4B", "qwen3-4b"),
     # ("Qwen/Qwen3-8B", "qwen3-8b"),
-    ("Qwen/Qwen3-14B", "qwen3-14b"),
+    # ("Qwen/Qwen3-14B", "qwen3-14b"),
     # ("google/gemma-3-4b-it", "gemma3-4b"),
-    ("google/gemma-3-12b-it", "gemma3-12b"),
+    # ("google/gemma-3-12b-it", "gemma3-12b"),
+    # ("meta-llama/Llama-3.2-1B-Instruct", "llama3.2-1b"),
+    # ("meta-llama/Llama-3.1-8B-Instruct", "llama3.1-8b"),
 ]
 
 
