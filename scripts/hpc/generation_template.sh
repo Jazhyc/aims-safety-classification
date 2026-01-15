@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=llm_gen
-#SBATCH --time=08:00:00
+#SBATCH --time=01:00:00
 #SBATCH --mem=16GB
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=a100:1

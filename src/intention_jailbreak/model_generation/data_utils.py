@@ -26,14 +26,23 @@ def align_tokenizer_with_model(tokenizer, model):
         model.config.pad_token_id = tokenizer.pad_token_id
     
     # Align BOS token - model config takes precedence
+    # Handle both single token ID and list of IDs
     if model.config.bos_token_id is not None:
-        tokenizer.bos_token_id = model.config.bos_token_id
+        bos_id = model.config.bos_token_id
+        if isinstance(bos_id, list):
+            bos_id = bos_id[0]
+        tokenizer.bos_token_id = bos_id
     elif tokenizer.bos_token_id is not None:
         model.config.bos_token_id = tokenizer.bos_token_id
     
     # Align EOS token - model config takes precedence
+    # Handle both single token ID and list of IDs (e.g., Gemma-3)
     if model.config.eos_token_id is not None:
-        tokenizer.eos_token_id = model.config.eos_token_id
+        # If model has multiple EOS tokens, use the first one
+        eos_id = model.config.eos_token_id
+        if isinstance(eos_id, list):
+            eos_id = eos_id[0]
+        tokenizer.eos_token_id = eos_id
     elif tokenizer.eos_token_id is not None:
         model.config.eos_token_id = tokenizer.eos_token_id
 
