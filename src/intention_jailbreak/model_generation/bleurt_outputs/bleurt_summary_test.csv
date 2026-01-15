@@ -1,0 +1,9 @@
+model,split,n,bleurt_mean,bleurt_median,bleurt_std
+llama3.1-8b-qlora,test_raw,169,0.493768,0.500930,0.149258
+llama3.1-8b-qlora,test_clean,169,0.484983,0.489369,0.166810
+qwen-small,test_raw,169,0.409234,0.414574,0.131206
+qwen-small,test_clean,169,0.377810,0.359554,0.152245
+t5-base,test_raw,169,0.451937,0.444229,0.169572
+t5-base,test_clean,169,0.445065,0.418381,0.182639
+t5-small,test_raw,169,0.421854,0.420242,0.157239
+t5-small,test_clean,169,0.425479,0.416498,0.164734

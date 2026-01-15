@@ -8,6 +8,8 @@ Usage:
 """
 
 import os
+
+from wandb import config
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["USE_TF"] = "0"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -17,6 +19,7 @@ from omegaconf import DictConfig, OmegaConf
 from transformers import AutoConfig
 from intention_jailbreak.model_generation.seq2seq import run_seq2seq_flow
 from intention_jailbreak.model_generation.causal import run_causal_flow
+from intention_jailbreak.model_generation.bert_harm import run_bert_flow
 from intention_jailbreak.training import set_all_seeds, print_gpu_info
 from dotenv import load_dotenv
 
@@ -54,17 +57,27 @@ def main(cfg: DictConfig):
     print(f"Model: {model_name}")
 
     # Determine model type
-    hf_config = AutoConfig.from_pretrained(model_name)
-    is_seq2seq = getattr(hf_config, "is_encoder_decoder", False)
+    task_type = config.get("task", {}).get("type")
 
-    print(f"is_encoder_decoder = {is_seq2seq}")
-
-    if is_seq2seq:
-        print("Running T5-style Seq2Seq training.")
-        run_seq2seq_flow(config)
+    if task_type == "bert_harm":
+        print("Running BERT-style harm classifier training.")
+        run_bert_flow(config)
     else:
-        print("Running causal LM training (LLaMA/Qwen).")
-        run_causal_flow(config)
+        hf_config = AutoConfig.from_pretrained(
+            model_name,
+            trust_remote_code=config.get("model", {}).get("trust_remote_code", False),
+        )
+        is_seq2seq = bool(getattr(hf_config, "is_encoder_decoder", False))
+
+        print(f"is_encoder_decoder = {is_seq2seq}")
+
+        if is_seq2seq:
+            print("Running T5-style Seq2Seq training.")
+            run_seq2seq_flow(config)
+        else:
+            print("Running causal LM training (LLaMA/Qwen).")
+            run_causal_flow(config)
+
 
 if __name__ == "__main__":
     main()
