@@ -434,10 +434,8 @@ def run_causal_flow(config):
         # Free GPU memory before loading with VLLM
         # Delete all training objects explicitly
         del model
-        del tokenizer
         del trainer
         del train_dataset
-        del val_dataset
         
         # Clear CUDA cache and force garbage collection
         torch.cuda.empty_cache()
