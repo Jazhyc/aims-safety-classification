@@ -490,8 +490,10 @@ def run_causal_flow(config):
             max_lora_rank=max_lora_rank, 
             max_loras=1,
             limit_mm_per_prompt={"image": 0},  # Disable multimodal inputs
-            gpu_memory_utilization=0.95,  # Use more GPU memory for KV cache
-            max_model_len=8192  # Reduce from default to fit in available memory
+            gpu_memory_utilization=0.90,  # Leave more headroom for large models
+            max_model_len=2048,  # Reduced for memory efficiency
+            dtype="bfloat16",  # Use bf16 to match training precision
+            enforce_eager=True  # Disable CUDA graphs to save memory
         )
         lora_request = LoRARequest("intent_lora", 1, adapter_path)
     else:
@@ -499,8 +501,10 @@ def run_causal_flow(config):
         llm = LLM(
             model=base_model_path, 
             limit_mm_per_prompt={"image": 0},
-            gpu_memory_utilization=0.95,
-            max_model_len=8192
+            gpu_memory_utilization=0.90,
+            max_model_len=2048,
+            dtype="bfloat16",
+            enforce_eager=True
         )
         lora_request = None
 
