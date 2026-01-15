@@ -439,10 +439,12 @@ def run_causal_flow(config):
         del train_dataset
         del val_dataset
         
-        # Clear CUDA cache multiple times and force garbage collection
+        # Clear CUDA cache and force garbage collection
         torch.cuda.empty_cache()
         gc.collect()
         torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.reset_accumulated_memory_stats()
         
         # Print memory status to verify cleanup
         if torch.cuda.is_available():
@@ -489,12 +491,21 @@ def run_causal_flow(config):
             enable_lora=True, 
             max_lora_rank=max_lora_rank, 
             max_loras=1,
-            limit_mm_per_prompt={"image": 0}  # Disable multimodal for text-only models
+            limit_mm_per_prompt={"image": 0},  # Disable multimodal for text-only models
+            disable_mm_preprocessor=True,  # Completely disable multimodal preprocessing
+            gpu_memory_utilization=0.95,  # Use more GPU memory for KV cache
+            max_model_len=8192  # Reduce from default to fit in available memory
         )
         lora_request = LoRARequest("intent_lora", 1, adapter_path)
     else:
         print(f"Loading model with VLLM from {base_model_path}...")
-        llm = LLM(model=base_model_path, limit_mm_per_prompt={"image": 0})
+        llm = LLM(
+            model=base_model_path, 
+            limit_mm_per_prompt={"image": 0},
+            disable_mm_preprocessor=True,
+            gpu_memory_utilization=0.95,
+            max_model_len=8192
+        )
         lora_request = None
 
     # Generate predictions using VLLM
