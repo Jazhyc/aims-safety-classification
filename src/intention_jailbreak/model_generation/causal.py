@@ -285,6 +285,10 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
     default_optim = "paged_adamw_8bit"
     optim_name = train_cfg.get("optim", default_optim)
     
+    # Adam optimizer hyperparameters (optional)
+    adam_beta1 = train_cfg.get("adam_beta1", None)
+    adam_beta2 = train_cfg.get("adam_beta2", None)
+    
     # Torch compile for speedup
     torch_compile = train_cfg.get("torch_compile", True)
     
@@ -302,7 +306,7 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
     report_to = "wandb" if wandb_cfg else "none"
     run_name = wandb_cfg.get("run_name", None)
     
-    return {
+    training_args = {
         "output_dir": output_dir,
         "eval_strategy": "epoch",
         "save_strategy": "epoch",
@@ -328,6 +332,14 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
         "remove_unused_columns": False,
         "max_length": max_length,
     }
+    
+    # Add Adam beta parameters if specified
+    if adam_beta1 is not None:
+        training_args["adam_beta1"] = adam_beta1
+    if adam_beta2 is not None:
+        training_args["adam_beta2"] = adam_beta2
+    
+    return training_args
 
 
 def run_causal_flow(config):

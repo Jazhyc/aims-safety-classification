@@ -18,6 +18,9 @@ training:
   torch_compile: false
   gradient_checkpointing: true
   padding_free: false
+  optim: "paged_adamw_8bit"
+  adam_beta1: 0.9
+  adam_beta2: 0.999
 
 data:
   test_size: 0.1
