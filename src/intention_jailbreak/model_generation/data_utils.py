@@ -1,5 +1,6 @@
 from typing import Tuple
 import matplotlib.pyplot as plt
+from collections import Counter
 
 
 def align_tokenizer_with_model(tokenizer, model):
@@ -62,6 +63,71 @@ def get_lengths(dataset, plot: bool = False) -> Tuple[int, int]:
         plt.show()
 
     return prompt_max, intent_max
+
+
+def map_harm_to_binary(harm_value):
+    """
+    Map 4-category harm labels to binary (Safe/Harmful).
+    
+    Args:
+        harm_value: One of 'completely harmful', 'uncertain harmful', 'uncertain safe', 'completely safe'
+    
+    Returns:
+        'harmful' or 'safe'
+    """
+    if harm_value is None:
+        return None
+    
+    harm_lower = str(harm_value).lower().strip()
+    
+    if 'harmful' in harm_lower:
+        return 'harmful'
+    elif 'safe' in harm_lower:
+        return 'safe'
+    else:
+        return None
+
+
+def apply_binary_harm_mapping(dataset, binary_harm_mapping=True):
+    """
+    Apply binary harm mapping to dataset if enabled.
+    
+    Args:
+        dataset: Dataset with 'Annotator Harm' column
+        binary_harm_mapping: Whether to apply binary mapping (default: True)
+    
+    Returns:
+        Dataset with mapped harm values (or unchanged if not enabled)
+    """
+    if not binary_harm_mapping or "Annotator Harm" not in dataset.column_names:
+        return dataset
+    
+    print("\nApplying binary harm mapping (4 categories -> 2 categories)")
+    
+    # Print distribution before mapping
+    harm_values_before = [ex for ex in dataset["Annotator Harm"] if ex is not None]
+    dist_before = Counter(harm_values_before)
+    print("Distribution before mapping:")
+    for label, count in sorted(dist_before.items()):
+        print(f"  {label}: {count}")
+    
+    # Apply mapping
+    def apply_binary_harm(example):
+        if "Annotator Harm" in example:
+            example["Annotator Harm"] = map_harm_to_binary(example["Annotator Harm"])
+        return example
+    
+    dataset = dataset.map(apply_binary_harm)
+    
+    # Print distribution after mapping
+    harm_values_after = [ex for ex in dataset["Annotator Harm"] if ex is not None]
+    dist_after = Counter(harm_values_after)
+    print("Distribution after mapping:")
+    for label, count in sorted(dist_after.items()):
+        print(f"  {label}: {count}")
+    print()
+    
+    return dataset
 
 
 def train_val_test_split(dataset, config):

@@ -14,7 +14,7 @@ from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
 from .preprocessing import preprocess_data
-from .data_utils import train_val_test_split, align_tokenizer_with_model
+from .data_utils import train_val_test_split, align_tokenizer_with_model, apply_binary_harm_mapping
 from .evaluate_generations import compute_and_log_metrics
 
 try:
@@ -343,6 +343,15 @@ def run_causal_flow(config):
     # Get predict_harm flag from config
     data_cfg = config.get("data", {})
     predict_harm = data_cfg.get("predict_harm", False)
+    binary_harm_mapping = data_cfg.get("binary_harm_mapping", True)
+    
+    # Load and prepare dataset
+    print("Loading dataset with preprocess_data()...")
+    raw_dataset = preprocess_data()
+    print("Dataset size:", len(raw_dataset))
+    
+    # Apply binary harm mapping if enabled
+    raw_dataset = apply_binary_harm_mapping(raw_dataset, binary_harm_mapping)
     
     # Create prompt and completion columns for SFTTrainer with completion_only_loss
     def create_prompt_completion(examples):
@@ -362,11 +371,6 @@ def run_causal_flow(config):
             "prompt": prompts,
             "completion": completions,
         }
-    
-    # Load and prepare dataset
-    print("Loading dataset with preprocess_data()...")
-    raw_dataset = preprocess_data()
-    print("Dataset size:", len(raw_dataset))
     
     dataset_with_cols = raw_dataset.map(
         create_prompt_completion,
