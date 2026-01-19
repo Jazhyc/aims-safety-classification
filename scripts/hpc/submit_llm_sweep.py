@@ -11,8 +11,7 @@ Usage:
 """
 
 import subprocess
-import os
-from pathlib import Path
+from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_summary
 
 
 # List of models to test - add or modify as needed
@@ -28,13 +27,6 @@ MODELS = [
 ]
 
 
-def create_logs_dir():
-    """Ensure the logs directory exists for SLURM output."""
-    logs_dir = Path("logs/slurm")
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    print(f"✓ Created logs directory: {logs_dir}")
-
-
 def submit_job(model_hf_path: str, model_name: str) -> str:
     """
     Submit a SLURM job for a specific model.
@@ -46,34 +38,22 @@ def submit_job(model_hf_path: str, model_name: str) -> str:
     Returns:
         Job ID as string
     """
-    # Set environment variables for the SLURM script
-    env = os.environ.copy()
-    env['MODEL_HF_PATH'] = model_hf_path
-    env['MODEL_NAME'] = model_name
-    
-    # Submit the job
     template_path = "scripts/hpc/generation_template.sh"
-    result = subprocess.run(
-        ['sbatch', f'--export=MODEL_HF_PATH={model_hf_path},MODEL_NAME={model_name}', template_path],
-        capture_output=True,
-        text=True,
-        check=True
-    )
-    
-    # Extract job ID from output (typically "Submitted batch job 12345")
-    job_id = result.stdout.strip().split()[-1]
-    return job_id
+    export_vars = {
+        'MODEL_HF_PATH': model_hf_path,
+        'MODEL_NAME': model_name,
+    }
+    return submit_sbatch(template_path, export_vars)
 
 
 def main():
     """Main orchestration function."""
-    print("=" * 60)
-    print("LLM Fine-tuning Sweep - SLURM Job Submission")
-    print("=" * 60)
+    print_header("LLM Fine-tuning Sweep - SLURM Job Submission")
     print(f"\nSubmitting {len(MODELS)} jobs...\n")
     
     # Create necessary directories
-    create_logs_dir()
+    logs_dir = create_logs_dir()
+    print(f"✓ Created logs directory: {logs_dir}")
     
     # Submit all jobs
     job_ids = []
@@ -97,12 +77,7 @@ def main():
         for model_name, job_id in job_ids:
             print(f"  {model_name:20s} → Job {job_id}")
         
-        print("\nMonitor jobs with:")
-        print(f"  squeue -u $USER")
-        print("\nCheck specific job:")
-        print(f"  squeue -j {job_ids[0][1]}")
-        print("\nCancel all jobs:")
-        print(f"  scancel {' '.join(job_id for _, job_id in job_ids)}")
+        print_job_summary(job_ids)
 
 
 if __name__ == "__main__":
