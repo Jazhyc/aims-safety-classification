@@ -16,7 +16,6 @@ python scripts/train_generator.py \
     --config-name=llm_sweep \
     model.name="meta-llama/Llama-3.1-8B-Instruct" \
     training.learning_rate="${LEARNING_RATE}" \
-    training.optim="adamw_torch" \
     training.adam_beta1="${ADAM_BETA1}" \
     training.adam_beta2="${ADAM_BETA2}" \
     paths.output_dir="train_results/causal/hyperparam_sweep/lr_${LEARNING_RATE}" \
