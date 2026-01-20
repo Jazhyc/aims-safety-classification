@@ -82,6 +82,10 @@ def t5_trainer(
     weight_decay = float(train_cfg.get("weight_decay", 0.01))
     grad_accum = int(train_cfg.get("gradient_accumulation", 1))
     use_fp16 = bool(train_cfg.get("fp16", True)) and torch.cuda.is_available()
+    
+    # Learning rate scheduler
+    lr_scheduler_type = train_cfg.get("lr_scheduler_type", "cosine")
+    warmup_ratio = train_cfg.get("warmup_ratio", 0.0)
 
     output_dir = paths_cfg.get("output_dir", f"./train_results/seq2seq/{model_name.replace('/', '_')}")
     logs_dir = paths_cfg.get("logs_dir", f"./logs/seq2seq/{model_name.replace('/', '_')}")
@@ -102,6 +106,8 @@ def t5_trainer(
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         generation_max_length=intent_max,
+        lr_scheduler_type=lr_scheduler_type,
+        warmup_ratio=warmup_ratio,
         report_to="none",
         fp16=use_fp16,
     )

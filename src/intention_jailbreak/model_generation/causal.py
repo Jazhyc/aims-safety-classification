@@ -295,6 +295,10 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
     # Gradient checkpointing for memory efficiency
     gradient_checkpointing = train_cfg.get("gradient_checkpointing", True)
     
+    # Learning rate scheduler
+    lr_scheduler_type = train_cfg.get("lr_scheduler_type", "cosine")
+    warmup_ratio = train_cfg.get("warmup_ratio", 0.1)
+    
     # SFT-specific parameters
     padding_free = train_cfg.get("padding_free", False)
     
@@ -325,6 +329,8 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
         "optim": optim_name,
         "torch_compile": torch_compile,
         "gradient_checkpointing": gradient_checkpointing,
+        "lr_scheduler_type": lr_scheduler_type,
+        "warmup_ratio": warmup_ratio,
         "report_to": report_to,
         "run_name": run_name,
         "padding_free": padding_free,
