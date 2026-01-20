@@ -29,7 +29,7 @@ LEARNING_RATES = [
 ]
 
 # Epochs to sweep over
-EPOCHS = [1, 2, 3, 5]
+EPOCHS = [5]
 
 # Adam optimizer hyperparameters
 ADAM_BETA1 = 0.9

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=hyperparam_sweep
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 #SBATCH --mem=16GB
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=a100:1

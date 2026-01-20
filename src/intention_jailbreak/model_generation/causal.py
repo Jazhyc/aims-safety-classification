@@ -8,6 +8,7 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     BitsAndBytesConfig,
+    EarlyStoppingCallback,
 )
 from trl import SFTTrainer, SFTConfig
 from vllm import LLM, SamplingParams
@@ -419,12 +420,19 @@ def run_causal_flow(config):
         # Prepare training arguments from config
         training_args = SFTConfig(**prepare_training_arguments(config, is_peft, len(train_dataset)))
 
+        # Create early stopping callback (patience=1 means stop if loss increases once)
+        early_stopping = EarlyStoppingCallback(
+            early_stopping_patience=1,
+            early_stopping_threshold=0.0,
+        )
+
         trainer = SFTTrainer(
             model=model,
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=val_dataset,
             processing_class=tokenizer,
+            callbacks=[early_stopping],
         )
 
         trainer.evaluate()
