@@ -1,0 +1,78 @@
+# Configuration for evaluating intent generation from hyperparameter sweep
+# Best model from sweep: lr_5e-05_e_5
+
+# Hydra configuration
+hydra:
+  run:
+    dir: logs/hydra/eval_intent_generation/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: logs/hydra/eval_intent_generation/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false  # Don't change working directory
+
+model:
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+  max_length_causal: 512
+  attn_implementation: "sdpa"
+  trust_remote_code: false
+
+# LORA configuration (only rank needed for loading)
+lora:
+  rank: 16
+
+# Dataset configuration - evaluates on multiple datasets
+datasets:
+  - name: "annotated-intents"
+    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    subset: null
+    split: "train"
+    harm_column: "Annotator Harm"
+    intent_column: "Intent"
+    use_manual_split: true
+    seed: 22
+    test_size: 0.1
+    val_size: 0.1
+    output_dir: "data/eval_predictions/lr_5e-05_e_5"
+    predictions_file: "annotated_intents_predictions.jsonl"
+  
+  - name: "wildguardmix"
+    dataset_name: "allenai/wildguardmix"
+    subset: "wildguardtest"
+    split: "test"
+    harm_column: "prompt_harm_label"
+    intent_column: null
+    use_manual_split: false
+    seed: 22
+    test_size: 0.1
+    val_size: 0.1
+    output_dir: "data/eval_predictions/lr_5e-05_e_5"
+    predictions_file: "wildguardmix_predictions.jsonl"
+
+# Generation parameters
+generation:
+  max_new_tokens: 128
+  temperature: 0.0  # Greedy decoding
+  top_p: 1.0
+  top_k: -1
+  do_sample: false
+  num_beams: 1
+
+# Paths - specific to the best hyperparameter model
+paths:
+  model_path: "trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter"
+
+# VLLM configuration
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 2048
+  dtype: "bfloat16"
+  enforce_eager: true
+
+# Weights & Biases configuration
+wandb:
+  enabled: true
+  entity: null  # Your wandb entity/username
+  project: "intention-jailbreak-eval"
+  tags: ["evaluation", "intent-generation", "hyperparam-sweep"]
+  dir: "logs/wandb"
+  mode: "online"  # or "offline"
