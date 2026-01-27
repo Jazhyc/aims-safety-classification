@@ -39,16 +39,16 @@ module load CUDA/12.8.0
 
 source .venv/bin/activate
 
-# Train classification-only model with baseline LoRA (rank=16, alpha=32)
+# Train classification-only model with baseline LoRA (rank=8, alpha=16)
 python scripts/train_generator.py \\
     --config-name=llama3.1-8b-classification-base \\
-    peft.lora_rank=16 \\
-    peft.lora_alpha=32 \\
-    paths.output_dir="train_results/causal/classification-baseline" \\
-    paths.logs_dir="logs/causal/classification-baseline" \\
-    paths.model_save_dir="trained_models/causal/classification-baseline" \\
-    paths.predictions_dir="data/predictions/causal/classification-baseline" \\
-    wandb.name="classification-baseline-r16-a32"
+    peft.lora_rank=8 \\
+    peft.lora_alpha=16 \\
+    paths.output_dir="train_results/causal/classification-r8-a16" \
+    paths.logs_dir="logs/causal/classification-r8-a16" \
+    paths.model_save_dir="trained_models/causal/classification-r8-a16" \
+    paths.predictions_dir="data/predictions/causal/classification-r8-a16" \
+    wandb.name="classification-r8-a16"
 """
     
     print("=" * 60)
@@ -56,7 +56,7 @@ python scripts/train_generator.py \\
     print("=" * 60)
     print("\nModel: meta-llama/Llama-3.1-8B-Instruct")
     print("Format: prompt -> 'harmful' or 'safe'")
-    print("LoRA: rank=16, alpha=32 (same as generation baseline)")
+    print("LoRA: rank=8, alpha=16")
     print("\nHyperparameters:")
     print("  - learning_rate: 5e-5")
     print("  - epochs: 5")
@@ -80,7 +80,7 @@ python scripts/train_generator.py \\
         job_id = result.stdout.strip().split()[-1]
         print(f"\n✓ Submitted: Job ID {job_id}")
         print(f"\nOutput will be saved to:")
-        print(f"  trained_models/causal/classification-baseline_adapter/")
+        print(f"  trained_models/causal/classification-r8-a16_adapter/")
         print(f"\nMonitor with: squeue -j {job_id}")
         print(f"View logs: tail -f logs/slurm/class-baseline-{job_id}.out")
     except subprocess.CalledProcessError as e:

@@ -138,7 +138,7 @@ def save_preds_causal(model_name, llm, lora_request, tokenizer, eval_dataset, sp
             generated_text = output.outputs[0].text.strip()
             
             # Format ground truth with appropriate mode
-            harm = ex.get("Annotator Harm") if predict_harm else None
+            harm = ex.get("Annotator Harm") if (predict_harm or classification_only) else None
             true_formatted = format_completion(
                 ex["intent"], harm, predict_harm, classification_only
             )
@@ -146,17 +146,20 @@ def save_preds_causal(model_name, llm, lora_request, tokenizer, eval_dataset, sp
             all_preds.append(generated_text)
             all_refs.append(true_formatted)
             
-            json_line = {
-                "id": ex["id"],
-                "prompt": ex["prompt"],
-                "true_intent": true_formatted,
-                "generated_intent": generated_text,
-            }
-            
-            # Add extra fields for classification-only mode
             if classification_only:
-                json_line["true_harm"] = harm
-                json_line["pred_harm"] = generated_text
+                json_line = {
+                    "id": ex["id"],
+                    "prompt": ex["prompt"],
+                    "true_harm": harm,
+                    "pred_harm": generated_text,
+                }
+            else:
+                json_line = {
+                    "id": ex["id"],
+                    "prompt": ex["prompt"],
+                    "true_intent": true_formatted,
+                    "generated_intent": generated_text,
+                }
             
             f.write(json.dumps(json_line, ensure_ascii=False) + "\n")
 
