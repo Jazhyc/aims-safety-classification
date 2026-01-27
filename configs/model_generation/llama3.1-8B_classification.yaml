@@ -1,0 +1,62 @@
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
+model:
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+  max_length_causal: 512
+  attn_implementation: "sdpa"
+
+training:
+  epochs: 5
+  batch_size: 4
+  learning_rate: 5e-5 
+  weight_decay: 0.01
+  gradient_accumulation: 8
+  bf16: true
+  torch_compile: false
+  gradient_checkpointing: true
+  padding_free: false
+  optim: "paged_adamw_8bit"
+  adam_beta1: 0.9
+  adam_beta2: 0.98 
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+
+data:
+  test_size: 0.1
+  val_size: 0.1
+  seed: 22
+  plot_lengths: false
+  predict_harm: true
+  classification_only: true  # KEY: Only output harm label
+  binary_harm_mapping: true
+
+paths:
+  # Will be overridden by sweep script
+  output_dir: "train_results/causal/llama3.1-8b-classification"
+  logs_dir: "logs/causal/llama3.1-8b-classification"
+  model_save_dir: "trained_models/causal/llama3.1-8b-classification"
+  predictions_dir: "data/predictions/causal/llama3.1-8b-classification"
+
+generation:
+  max_new_tokens: 16  # Short output - just "harmful" or "safe"
+  num_beams: 1
+  do_sample: false
+  batch_size: 8
+
+peft:
+  use_lora: true
+  lora_rank: 16  
+  lora_alpha: 32  
+  lora_dropout: 0
+
+quantization:
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_quant_type: "nf4"
+
+wandb:
+  project: "intention-jailbreak-classification"
+  name: null  

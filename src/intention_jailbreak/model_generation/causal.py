@@ -31,14 +31,15 @@ def format_prompt(prompt_text, predict_harm=False):
     
     Args:
         prompt_text: The prompt text (raw text from dataset)
-        predict_harm: Whether to include harm prediction task
+        predict_harm: Whether to include harm prediction task (unused, kept for compatibility)
     
     Returns:
         Formatted prompt string
     """
     return f"{prompt_text}\n"
 
-def format_completion(intent, harm=None, predict_harm=False):
+
+def format_completion(intent, harm=None, predict_harm=False, classification_only=False):
     """
     Format the completion/target for the model.
     
@@ -46,14 +47,24 @@ def format_completion(intent, harm=None, predict_harm=False):
         intent: The intent text
         harm: The harm category (optional)
         predict_harm: Whether to include harm in completion
+        classification_only: If True, only output harm label (no intent)
     
     Returns:
         Formatted completion string
+    
+    Examples:
+        - classification_only=True, harm="harmful" -> "harmful"
+        - predict_harm=True, intent="get info", harm="safe" -> "Intent: get info; Harm: safe"
+        - predict_harm=False -> just the intent
     """
+    if classification_only and harm:
+        return harm
+    
     if predict_harm and harm:
         return f"Intent: {intent}; Harm: {harm}"
     else:
         return intent
+
 
 def save_preds_causal(model_name, llm, lora_request, tokenizer, eval_dataset, split_name, config, max_length=256):
     """
@@ -73,9 +84,13 @@ def save_preds_causal(model_name, llm, lora_request, tokenizer, eval_dataset, sp
     gen_cfg = config.get("generation", {})
     data_cfg = config.get("data", {})
     predict_harm = data_cfg.get("predict_harm", False)
+    classification_only = data_cfg.get("classification_only", False)  
 
-    # Use different directory if predict_harm is enabled
-    if predict_harm:
+    # Use different directory based on mode
+    if classification_only:
+        base_pred_dir = paths_cfg.get("predictions_dir", "predictions_causal")
+        base_pred_dir = base_pred_dir.replace("predictions", "predictions_classification")
+    elif predict_harm:
         base_pred_dir = paths_cfg.get("predictions_dir", "predictions_causal")
         base_pred_dir = base_pred_dir.replace("predictions", "predictions_with_harm")
     else:
@@ -97,10 +112,9 @@ def save_preds_causal(model_name, llm, lora_request, tokenizer, eval_dataset, sp
     top_k = int(gen_cfg.get("top_k", 50))
     
     # Build sampling parameters for VLLM
-    # Note: VLLM doesn't support num_beams in the same way, use best_of instead
     sampling_params = SamplingParams(
         max_tokens=gen_max_new_tokens,
-        temperature=temperature if do_sample else 0.0,  # temperature=0 for greedy
+        temperature=temperature if do_sample else 0.0,
         top_p=top_p if do_sample else 1.0,
         top_k=top_k if do_sample else -1,
         skip_special_tokens=True,
@@ -121,21 +135,29 @@ def save_preds_causal(model_name, llm, lora_request, tokenizer, eval_dataset, sp
     # Process and save results
     with open(full_path, "w", encoding="utf-8") as f:
         for ex, output in zip(examples, outputs):
-            generated_intent = output.outputs[0].text.strip()
+            generated_text = output.outputs[0].text.strip()
             
-            # Format ground truth with harm if predict_harm is enabled
+            # Format ground truth with appropriate mode
             harm = ex.get("Annotator Harm") if predict_harm else None
-            true_intent_formatted = format_completion(ex["intent"], harm, predict_harm)
+            true_formatted = format_completion(
+                ex["intent"], harm, predict_harm, classification_only
+            )
             
-            all_preds.append(generated_intent)
-            all_refs.append(true_intent_formatted)
+            all_preds.append(generated_text)
+            all_refs.append(true_formatted)
             
             json_line = {
                 "id": ex["id"],
                 "prompt": ex["prompt"],
-                "true_intent": true_intent_formatted,
-                "generated_intent": generated_intent,
+                "true_intent": true_formatted,
+                "generated_intent": generated_text,
             }
+            
+            # Add extra fields for classification-only mode
+            if classification_only:
+                json_line["true_harm"] = harm
+                json_line["pred_harm"] = generated_text
+            
             f.write(json.dumps(json_line, ensure_ascii=False) + "\n")
 
     print(f"Saved {split_name} predictions to {full_path}")
@@ -147,7 +169,7 @@ def setup_causal_model_and_tokenizer(config):
     Set up tokenizer and model for causal LM training.
 
     - If config['peft']['use_lora'] is False or missing:
-        → standard full fine-tuning (what you already did before).
+        → standard full fine-tuning.
     - If True:
         → load model in 4-bit and wrap with LoRA (QLoRA-style).
 
@@ -162,17 +184,16 @@ def setup_causal_model_and_tokenizer(config):
     use_lora = bool(peft_cfg.get("use_lora", False))
     
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    tokenizer.padding_side = 'left'  # Required for decoder-only models during generation
+    tokenizer.padding_side = 'left'
 
     if not use_lora:
-        # Get attention implementation from config
         attn_implementation = model_cfg.get("attn_implementation", "flash_attention_2")
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             attn_implementation=attn_implementation,
             dtype=torch.bfloat16
         )
-        model.config.use_cache = False  # Required for gradient checkpointing
+        model.config.use_cache = False
         align_tokenizer_with_model(tokenizer, model)
         return tokenizer, model, False
 
@@ -197,7 +218,6 @@ def setup_causal_model_and_tokenizer(config):
         bnb_4bit_compute_dtype=compute_dtype,
     )
 
-    # Load model in 4-bit, let HF place it on devices automatically
     trust_remote_code = bool(model_cfg.get("trust_remote_code", False))
     attn_implementation = model_cfg.get("attn_implementation", "flash_attention_2")
     model = AutoModelForCausalLM.from_pretrained(
@@ -209,20 +229,18 @@ def setup_causal_model_and_tokenizer(config):
         dtype=compute_dtype,
     )
 
-    # Required for gradient checkpointing
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
 
     # Prepare for k-bit training
     model = prepare_model_for_kbit_training(model)
 
-    # LoRA config (defaults can be overridden in config)
+    # LoRA config
     lora_r = int(peft_cfg.get("lora_rank", 16))
     lora_alpha = int(peft_cfg.get("lora_alpha", 32))
     lora_dropout = float(peft_cfg.get("lora_dropout", 0.05))
     bias = peft_cfg.get("bias", "none")
 
-    # Target modules: typical names for LLaMA/Qwen-style models
     default_target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
     target_modules = peft_cfg.get("target_modules", default_target_modules)
 
@@ -238,7 +256,6 @@ def setup_causal_model_and_tokenizer(config):
     model = get_peft_model(model, lora_config)
     align_tokenizer_with_model(tokenizer, model)
 
-    # Optional: print how many parameters are trainable
     model.print_trainable_parameters()
 
     return tokenizer, model, True
@@ -247,14 +264,6 @@ def setup_causal_model_and_tokenizer(config):
 def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
     """
     Extract and prepare training arguments from config.
-    
-    Args:
-        config: Full config dictionary
-        is_peft: Whether using PEFT/LoRA (affects default optimizer)
-        num_train_samples: Number of training samples (for eval step calculation)
-    
-    Returns:
-        Dictionary of SFTConfig parameters
     """
     train_cfg = config.get("training", {})
     paths_cfg = config.get("paths", {})
@@ -263,50 +272,34 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
     model_name = model_cfg["name"]
     out_name = model_name.replace("/", "_")
     
-    # Default paths
     output_dir = paths_cfg.get("output_dir", f"./train_results/causal/{out_name}")
     logs_dir = paths_cfg.get("logs_dir", f"./logs/causal/{out_name}")
     
-    # Training hyperparameters
     epochs = train_cfg.get("epochs", 8)
     lr = train_cfg.get("learning_rate", 5e-5)
     batch_size = train_cfg.get("batch_size", 8)
     weight_decay = train_cfg.get("weight_decay", 0.01)
     grad_accum = train_cfg.get("gradient_accumulation", 1)
     
-    # Mixed precision - only one can be enabled
     use_fp16 = train_cfg.get("fp16", False) and torch.cuda.is_available()
     use_bf16 = train_cfg.get("bf16", False) and torch.cuda.is_available()
     
-    # Prefer bf16
     if use_fp16 and use_bf16:
         use_fp16 = False
     
-    # Optimizer
     default_optim = "paged_adamw_8bit"
     optim_name = train_cfg.get("optim", default_optim)
     
-    # Adam optimizer hyperparameters (optional)
     adam_beta1 = train_cfg.get("adam_beta1", None)
     adam_beta2 = train_cfg.get("adam_beta2", None)
     
-    # Torch compile for speedup
     torch_compile = train_cfg.get("torch_compile", True)
-    
-    # Gradient checkpointing for memory efficiency
     gradient_checkpointing = train_cfg.get("gradient_checkpointing", True)
-    
-    # Learning rate scheduler
     lr_scheduler_type = train_cfg.get("lr_scheduler_type", "cosine")
     warmup_ratio = train_cfg.get("warmup_ratio", 0.1)
-    
-    # SFT-specific parameters
     padding_free = train_cfg.get("padding_free", False)
-    
-    # Max sequence length for use with padding_free
     max_length = model_cfg.get("max_length_causal", 512)
     
-    # WandB configuration
     wandb_cfg = config.get("wandb", {})
     report_to = "wandb" if wandb_cfg else "none"
     run_name = wandb_cfg.get("run_name", None)
@@ -340,7 +333,6 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
         "max_length": max_length,
     }
     
-    # Add Adam beta parameters if specified
     if adam_beta1 is not None:
         training_args["adam_beta1"] = adam_beta1
     if adam_beta2 is not None:
@@ -356,13 +348,30 @@ def run_causal_flow(config):
     model_name = model_cfg["name"]
     max_length = model_cfg.get("max_length_causal", 256)
     
-    # Check if we should skip training
     skip_training = bool(train_cfg.get("skip_training", False))
     
-    # Get predict_harm flag from config
+    # Get data configuration
     data_cfg = config.get("data", {})
     predict_harm = data_cfg.get("predict_harm", False)
     binary_harm_mapping = data_cfg.get("binary_harm_mapping", True)
+    classification_only = data_cfg.get("classification_only", False)  
+    
+    # Log the training mode
+    if classification_only:
+        print("=" * 60)
+        print("CLASSIFICATION-ONLY MODE")
+        print("Training format: prompt -> harm label (e.g., 'harmful' or 'safe')")
+        print("=" * 60)
+    elif predict_harm:
+        print("=" * 60)
+        print("GENERATION MODE (with harm)")
+        print("Training format: prompt -> Intent: {intent}; Harm: {harm}")
+        print("=" * 60)
+    else:
+        print("=" * 60)
+        print("GENERATION MODE (intent only)")
+        print("Training format: prompt -> intent")
+        print("=" * 60)
     
     # Load and prepare dataset
     print("Loading dataset with preprocess_data()...")
@@ -374,17 +383,16 @@ def run_causal_flow(config):
     
     # Create prompt and completion columns for SFTTrainer with completion_only_loss
     def create_prompt_completion(examples):
-        # For completion_only_loss, we need separate prompt and completion columns
-        # The model will only calculate loss on the completion tokens
         prompts = [format_prompt(p, predict_harm) for p in examples["prompt"]]
         
-        # Get harm values if predict_harm is enabled
         if predict_harm:
             harms = examples.get("Annotator Harm", [None] * len(examples["prompt"]))
-            completions = [format_completion(i, h, predict_harm) 
-                          for i, h in zip(examples["intent"], harms)]
+            completions = [
+                format_completion(i, h, predict_harm, classification_only) 
+                for i, h in zip(examples["intent"], harms)
+            ]
         else:
-            completions = [format_completion(i, None, predict_harm) for i in examples["intent"]]
+            completions = [format_completion(i, None, predict_harm, classification_only) for i in examples["intent"]]
         
         return {
             "prompt": prompts,
@@ -395,6 +403,15 @@ def run_causal_flow(config):
         create_prompt_completion,
         batched=True,
     )
+    
+    # Print example of training data
+    print("\n" + "=" * 40)
+    print("EXAMPLE TRAINING DATA:")
+    print("=" * 40)
+    example = dataset_with_cols[0]
+    print(f"Prompt: {example['prompt'][:100]}...")
+    print(f"Completion: {example['completion']}")
+    print("=" * 40 + "\n")
     
     train_dataset, val_dataset, test_dataset = train_val_test_split(
         dataset_with_cols, config
@@ -409,18 +426,14 @@ def run_causal_flow(config):
         print(f"Loading pre-trained model from {model_save_dir}")
         tokenizer = AutoTokenizer.from_pretrained(model_save_dir)
     else:
-        # Setup model and tokenizer (full FT or QLoRA)
         tokenizer, model, is_peft = setup_causal_model_and_tokenizer(config)
 
-        # Put non-PEFT model on a single device
         if not is_peft:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             model.to(device)
 
-        # Prepare training arguments from config
         training_args = SFTConfig(**prepare_training_arguments(config, is_peft, len(train_dataset)))
 
-        # Create early stopping callback (patience=1 means stop if loss increases once)
         early_stopping = EarlyStoppingCallback(
             early_stopping_patience=1,
             early_stopping_threshold=0.0,
@@ -444,14 +457,11 @@ def run_causal_flow(config):
         )
         os.makedirs(model_save_dir, exist_ok=True)
         
-        # For LoRA models, save adapter separately for VLLM
         if is_peft:
             print("Saving LoRA adapter for VLLM...")
             adapter_dir = model_save_dir + "_adapter"
             trainer.save_model(adapter_dir)
             print(f"LoRA adapter saved to {adapter_dir}")
-            
-            # Also save tokenizer with the adapter
             tokenizer.save_pretrained(adapter_dir)
         else:
             trainer.save_model(model_save_dir)
@@ -461,20 +471,16 @@ def run_causal_flow(config):
         eval_results = trainer.evaluate()
         print(f"[Causal LM] Validation loss: {eval_results['eval_loss']}")
 
-        # Free GPU memory before loading with VLLM
-        # Delete all training objects explicitly
         del model
         del trainer
         del train_dataset
         
-        # Clear CUDA cache and force garbage collection
         torch.cuda.empty_cache()
         gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.reset_accumulated_memory_stats()
         
-        # Print memory status to verify cleanup
         if torch.cuda.is_available():
             allocated = torch.cuda.memory_allocated(0) / 1024**3
             reserved = torch.cuda.memory_reserved(0) / 1024**3
@@ -483,25 +489,19 @@ def run_causal_flow(config):
         print("Freed PyTorch model from GPU memory")
 
     # Determine paths for VLLM loading
-    # For LoRA: use base model name + adapter path
-    # For full FT: use saved model directory
     if skip_training:
-        # When skipping training, we need to determine if it's a LoRA model
         adapter_dir = model_save_dir + "_adapter"
         if os.path.exists(adapter_dir):
-            # LoRA model exists
-            base_model_path = model_name  # use original model name as base
+            base_model_path = model_name
             adapter_path = adapter_dir
             print(f"Using LoRA adapter from {adapter_path} with base model {base_model_path}")
         else:
-            # Full fine-tuned model
             base_model_path = model_save_dir
             adapter_path = None
             print(f"Using full model from {base_model_path}")
     else:
-        # Just finished training
         if is_peft:
-            base_model_path = model_name  # use original model name
+            base_model_path = model_name
             adapter_path = model_save_dir + "_adapter"
             print(f"Using LoRA adapter from {adapter_path} with base model {base_model_path}")
         else:
@@ -519,11 +519,11 @@ def run_causal_flow(config):
             enable_lora=True, 
             max_lora_rank=max_lora_rank, 
             max_loras=1,
-            limit_mm_per_prompt={"image": 0},  # Disable multimodal inputs
-            gpu_memory_utilization=0.90,  # Leave more headroom for large models
-            max_model_len=2048,  # Reduced for memory efficiency
-            dtype="bfloat16",  # Use bf16 to match training precision
-            enforce_eager=True  # Disable CUDA graphs to save memory
+            limit_mm_per_prompt={"image": 0},
+            gpu_memory_utilization=0.90,
+            max_model_len=2048,
+            dtype="bfloat16",
+            enforce_eager=True
         )
         lora_request = LoRARequest("intent_lora", 1, adapter_path)
     else:
@@ -548,7 +548,6 @@ def run_causal_flow(config):
         max_length=max_length,
     )
     
-    # Save memory for loading comparison model
     del llm
     
     # Compute and log metrics
