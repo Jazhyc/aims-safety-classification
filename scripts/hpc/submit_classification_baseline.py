@@ -27,7 +27,7 @@ def main():
     Path("logs/slurm").mkdir(parents=True, exist_ok=True)
     
     script = """#!/bin/bash
-#SBATCH --job-name=class-baseline
+#SBATCH --job-name=class-r8-a16
 #SBATCH --time=01:00:00
 #SBATCH --mem=32GB
 #SBATCH --partition=gpu
@@ -44,10 +44,10 @@ python scripts/train_generator.py \\
     --config-name=llama3.1-8b-classification-base \\
     peft.lora_rank=8 \\
     peft.lora_alpha=16 \\
-    paths.output_dir="train_results/causal/classification-r8-a16" \
-    paths.logs_dir="logs/causal/classification-r8-a16" \
-    paths.model_save_dir="trained_models/causal/classification-r8-a16" \
-    paths.predictions_dir="data/predictions/causal/classification-r8-a16" \
+    paths.output_dir="train_results/causal/classification-r8-a16" \\
+    paths.logs_dir="logs/causal/classification-r8-a16" \\
+    paths.model_save_dir="trained_models/causal/classification-r8-a16" \\
+    paths.predictions_dir="data/predictions/causal/classification-r8-a16" \\
     wandb.name="classification-r8-a16"
 """
     
