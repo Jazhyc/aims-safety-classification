@@ -1,0 +1,101 @@
+# Configuration for safety classification experiment
+# Supports 6 conditions:
+#   - finetuned_generation: Fine-tuned model outputs (intent, harm)
+#   - finetuned_classification: Fine-tuned model outputs harm only
+#   - vanilla_classification: Vanilla model with system prompt -> harm only
+#   - vanilla_generation: Vanilla model with system prompt -> intent + harm
+#   - vanilla_with_human_intent: Vanilla model with prompt + human intent -> harm
+#   - vanilla_with_model_intent: Vanilla model with prompt + model-generated intent -> harm
+
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
+# Experiment configuration
+experiment:
+  # Conditions to run (can be a list or single condition)
+  conditions:
+    - "vanilla_classification"
+    - "vanilla_generation"
+    - "vanilla_with_human_intent"
+
+# Model configuration
+model:
+  # Base model for vanilla conditions
+  name: "Qwen/Qwen3-0.6B"  # Change to meta-llama/Llama-3.1-8B-Instruct for Llama
+  max_length: 512
+
+# Fine-tuned model configuration
+# These are separate adapters trained for different tasks
+finetuned:
+  # Adapter for intent + harm generation (finetuned_generation condition)
+  generation_adapter: null  # e.g., "trained_models/causal/qwen-small-qlora_adapter"
+  # Adapter for harm-only classification (finetuned_classification condition)
+  classification_adapter: null  # e.g., "trained_models/causal/qwen-harm-only_adapter"
+
+# LoRA configuration
+lora:
+  rank: 16
+
+# Dataset configurations - cycles through all datasets
+datasets:
+  - name: "annotated-intents"
+    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    subset: null
+    split: "train"
+    harm_column: "Annotator Harm"
+    use_manual_split: true
+    test_size: 0.1
+    val_size: 0.1
+    seed: 22
+    output_dir: "data/safety_experiment/annotated_intents"
+
+  - name: "wildguardmix"
+    dataset_name: "allenai/wildguardmix"
+    subset: "wildguardtest"
+    split: "test"
+    harm_column: "prompt_harm_label"
+    use_manual_split: false
+    seed: 22
+    test_size: 0.1
+    val_size: 0.1
+    output_dir: "data/safety_experiment/wildguardmix"
+
+  - name: "xstest"
+    dataset_name: "walledai/XSTest"
+    subset: null
+    split: "test"
+    harm_column: "label"
+    use_manual_split: false
+    seed: 22
+    test_size: 0.1
+    val_size: 0.1
+    output_dir: "data/safety_experiment/xstest"
+
+# Generation parameters
+generation:
+  max_new_tokens: 64
+  temperature: 0.0  # Greedy decoding for consistency
+  top_p: 1.0
+  top_k: -1
+
+# Paths
+paths:
+  output_dir: "data/safety_experiment"
+
+# VLLM configuration
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 2048
+  dtype: "bfloat16"
+  enforce_eager: true
+
+# Weights & Biases configuration
+wandb:
+  enabled: false
+  entity: null
+  project: "safety-experiment"
+  tags: ["safety", "classification"]
+  dir: "logs/wandb"
+  mode: "online"
