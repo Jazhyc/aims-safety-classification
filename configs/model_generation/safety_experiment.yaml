@@ -48,38 +48,50 @@ llamaguard:
 
 # Dataset configurations - cycles through all datasets
 datasets:
-  - name: "annotated-intents"
-    dataset_name: "Jazhyc/wildguard-annotated-intents"
+  - name: "strongreject"
+    dataset_name: "walledai/StrongREJECT"
     subset: null
     split: "train"
-    harm_column: "Annotator Harm"
-    use_manual_split: true
-    test_size: 0.1
-    val_size: 0.1
-    seed: 22
-    output_dir: "data/safety_experiment/annotated_intents"
-
-  - name: "wildguardmix"
-    dataset_name: "allenai/wildguardmix"
-    subset: "wildguardtest"
-    split: "test"
-    harm_column: "prompt_harm_label"
+    harm_column: "harm_label"
+    all_harmful: true  # All prompts in this dataset are harmful
     use_manual_split: false
     seed: 22
     test_size: 0.1
     val_size: 0.1
-    output_dir: "data/safety_experiment/wildguardmix"
+    output_dir: "data/safety_experiment/strongreject"
 
-  - name: "xstest"
-    dataset_name: "walledai/XSTest"
-    subset: null
-    split: "test"
-    harm_column: "label"
-    use_manual_split: false
-    seed: 22
-    test_size: 0.1
-    val_size: 0.1
-    output_dir: "data/safety_experiment/xstest"
+  # - name: "annotated-intents"
+  #   dataset_name: "Jazhyc/wildguard-annotated-intents"
+  #   subset: null
+  #   split: "train"
+  #   harm_column: "Annotator Harm"
+  #   use_manual_split: true
+  #   test_size: 0.1
+  #   val_size: 0.1
+  #   seed: 22
+  #   output_dir: "data/safety_experiment/annotated_intents"
+
+  # - name: "wildguardmix"
+  #   dataset_name: "allenai/wildguardmix"
+  #   subset: "wildguardtest"
+  #   split: "test"
+  #   harm_column: "prompt_harm_label"
+  #   use_manual_split: false
+  #   seed: 22
+  #   test_size: 0.1
+  #   val_size: 0.1
+  #   output_dir: "data/safety_experiment/wildguardmix"
+
+  # - name: "xstest"
+  #   dataset_name: "walledai/XSTest"
+  #   subset: null
+  #   split: "test"
+  #   harm_column: "label"
+  #   use_manual_split: false
+  #   seed: 22
+  #   test_size: 0.1
+  #   val_size: 0.1
+  #   output_dir: "data/safety_experiment/xstest"
 
 # Generation parameters
 generation:

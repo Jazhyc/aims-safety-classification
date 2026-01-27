@@ -293,6 +293,12 @@ def load_test_dataset(data_cfg: dict) -> Tuple[Any, str, bool]:
     # Determine harm column
     harm_column = data_cfg.get("harm_column", "Annotator Harm")
     
+    # Handle datasets where all samples are harmful (no label column)
+    # Create a synthetic harm column if specified
+    if data_cfg.get("all_harmful", False) and harm_column not in dataset.column_names:
+        print(f"  Creating synthetic harm column '{harm_column}' with all 'harmful' labels")
+        dataset = dataset.map(lambda x: {**x, harm_column: "harmful"})
+    
     # Check if dataset has intent column
     has_intent = "intent" in dataset.column_names
     
