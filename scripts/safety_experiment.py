@@ -112,6 +112,7 @@ VALID_CONDITIONS = [
     "vanilla_generation",        # Vanilla: prompt -> intent + harm (with system prompt)
     "vanilla_with_human_intent", # Vanilla: prompt + human intent -> harm
     "vanilla_with_model_intent", # Vanilla: prompt + model intent -> harm
+    "llamaguard_classification", # LlamaGuard baseline: prompt -> harm
 ]
 
 
@@ -684,6 +685,76 @@ def run_vanilla_classification_with_intent(
     return results
 
 
+def run_llamaguard_classification(
+    llm: LLM,
+    tokenizer: AutoTokenizer,
+    test_dataset,
+    sampling_params: SamplingParams,
+    harm_column: str,
+) -> List[dict]:
+    """
+    LlamaGuard baseline: Uses LlamaGuard's native safety classification.
+    LlamaGuard is specifically trained for content moderation and outputs
+    'safe' or 'unsafe' followed by violated categories.
+    """
+    print("\n=== Running: LlamaGuard Classification ===")
+    
+    examples = list(test_dataset)
+    
+    # Create sampling params - no guided decoding, let LlamaGuard use its native format
+    llama_guard_params = SamplingParams(
+        max_tokens=sampling_params.max_tokens,
+        temperature=sampling_params.temperature,
+        top_p=sampling_params.top_p,
+        top_k=sampling_params.top_k,
+        skip_special_tokens=True,
+    )
+    
+    # Format prompts - LlamaGuard expects user messages only (no system prompt)
+    formatted_prompts = []
+    for ex in examples:
+        messages = [
+            {"role": "user", "content": ex["prompt"]}
+        ]
+        formatted = tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False
+        )
+        formatted_prompts.append(formatted)
+    
+    outputs = llm.generate(formatted_prompts, llama_guard_params)
+    
+    results = []
+    for ex, output in zip(examples, outputs):
+        generated_text = output.outputs[0].text.strip()
+        
+        # LlamaGuard outputs "safe" or "unsafe\n<categories>"
+        first_line = generated_text.split('\n')[0].lower().strip()
+        if first_line == "safe":
+            predicted_harm = "safe"
+        elif first_line == "unsafe":
+            predicted_harm = "harmful"
+        else:
+            # Fallback extraction
+            predicted_harm = extract_harm_label(generated_text)
+        
+        true_harm = ex.get(harm_column)
+        true_harm_binary = map_harm_to_binary(true_harm)
+        
+        results.append({
+            "id": ex.get("id", ""),
+            "prompt": ex["prompt"],
+            "true_harm": true_harm,
+            "true_harm_binary": true_harm_binary,
+            "predicted_harm": predicted_harm,
+            "raw_generation": generated_text,
+            "condition": "llamaguard_classification",
+        })
+    
+    return results
+
+
 def generate_model_intents(
     llm: LLM,
     lora_request: Optional[LoRARequest],
@@ -825,6 +896,9 @@ def run_condition_on_dataset(
             llm, tokenizer, test_dataset, sampling_params, harm_column,
             intent_source="model", model_intents=model_intents
         )
+    elif condition == "llamaguard_classification":
+        # Handled separately in main loop with dedicated model
+        return []
     else:
         raise ValueError(f"Unknown condition: {condition}")
 
@@ -844,6 +918,7 @@ def main(cfg: DictConfig):
     wandb_cfg = config.get("wandb", {})
     lora_cfg = config.get("lora", {})
     finetuned_cfg = config.get("finetuned", {})
+    llamaguard_cfg = config.get("llamaguard", {})
     
     conditions = experiment_cfg.get("conditions", ["vanilla_classification"])
     if isinstance(conditions, str):
@@ -857,6 +932,10 @@ def main(cfg: DictConfig):
     generation_adapter = finetuned_cfg.get("generation_adapter")
     classification_adapter = finetuned_cfg.get("classification_adapter")
     
+    # Check if llamaguard condition is requested
+    needs_llamaguard = "llamaguard_classification" in conditions
+    llamaguard_model = llamaguard_cfg.get("name", "meta-llama/Llama-Guard-3-8B")
+    
     print(f"\n{'='*60}")
     print(f"Safety Experiment")
     print(f"Conditions: {conditions}")
@@ -865,6 +944,8 @@ def main(cfg: DictConfig):
         print(f"Generation adapter: {generation_adapter}")
     if classification_adapter:
         print(f"Classification adapter: {classification_adapter}")
+    if needs_llamaguard:
+        print(f"LlamaGuard model: {llamaguard_model}")
     print(f"{'='*60}")
     
     # Validate conditions
@@ -1021,6 +1102,76 @@ def main(cfg: DictConfig):
                     f"{metric_key}/correct": metrics["correct"],
                     f"{metric_key}/total": metrics["total"],
                 })
+    
+    # Clean up main model before loading LlamaGuard
+    if needs_llamaguard:
+        print(f"\n{'='*60}")
+        print("Cleaning up main model to load LlamaGuard...")
+        print(f"{'='*60}")
+        del llm
+        import gc
+        gc.collect()
+        import torch
+        torch.cuda.empty_cache()
+        
+        # Load LlamaGuard model
+        print(f"\n=== Loading LlamaGuard: {llamaguard_model} ===")
+        llamaguard_llm = LLM(
+            model=llamaguard_model,
+            gpu_memory_utilization=vllm_cfg.get("gpu_memory_utilization", 0.90),
+            max_model_len=vllm_cfg.get("max_model_len", 2048),
+            dtype=vllm_cfg.get("dtype", "bfloat16"),
+            enforce_eager=vllm_cfg.get("enforce_eager", True),
+            limit_mm_per_prompt={"image": 0},
+        )
+        llamaguard_tokenizer = AutoTokenizer.from_pretrained(llamaguard_model)
+        
+        # Run LlamaGuard on all datasets
+        for dataset_idx, data_cfg in enumerate(datasets_cfg):
+            dataset_name = data_cfg.get("name", f"dataset_{dataset_idx}")
+            print(f"\n{'='*80}")
+            print(f"=== LlamaGuard on Dataset: {dataset_name} ===")
+            print(f"{'='*80}")
+            
+            # Load dataset
+            test_dataset, harm_column, has_intent = load_test_dataset(data_cfg)
+            
+            # Run LlamaGuard classification
+            results = run_llamaguard_classification(
+                llamaguard_llm, llamaguard_tokenizer, test_dataset, sampling_params, harm_column
+            )
+            
+            if results:
+                # Compute metrics
+                metrics = compute_metrics(results)
+                metric_key = f"{dataset_name}/llamaguard_classification"
+                all_metrics[metric_key] = metrics
+                
+                print(f"\n  Results for llamaguard_classification:")
+                print(f"    Accuracy: {metrics['accuracy']:.4f} ({metrics['correct']}/{metrics['total']})")
+                print(f"    Precision: {metrics['precision']:.4f}, Recall: {metrics['recall']:.4f}, F1: {metrics['f1']:.4f}")
+                print(f"    Missing predictions: {metrics['missing_predictions']}")
+                
+                # Save results
+                output_dir = Path(data_cfg.get("output_dir", paths_cfg.get("output_dir", "data/safety_experiment")))
+                output_file = f"{llamaguard_model.replace('/', '_')}_llamaguard_classification.jsonl"
+                save_results(results, output_dir / output_file, "llamaguard_classification")
+                
+                # Log to wandb
+                if wandb_run is not None:
+                    wandb.log({
+                        f"{metric_key}/accuracy": metrics["accuracy"],
+                        f"{metric_key}/precision": metrics["precision"],
+                        f"{metric_key}/recall": metrics["recall"],
+                        f"{metric_key}/f1": metrics["f1"],
+                        f"{metric_key}/correct": metrics["correct"],
+                        f"{metric_key}/total": metrics["total"],
+                    })
+        
+        # Clean up LlamaGuard
+        del llamaguard_llm
+        gc.collect()
+        torch.cuda.empty_cache()
     
     # Summary
     print(f"\n{'='*80}")

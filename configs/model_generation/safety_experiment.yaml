@@ -1,11 +1,12 @@
 # Configuration for safety classification experiment
-# Supports 6 conditions:
+# Supports 7 conditions:
 #   - finetuned_generation: Fine-tuned model outputs (intent, harm)
 #   - finetuned_classification: Fine-tuned model outputs harm only
 #   - vanilla_classification: Vanilla model with system prompt -> harm only
 #   - vanilla_generation: Vanilla model with system prompt -> intent + harm
 #   - vanilla_with_human_intent: Vanilla model with prompt + human intent -> harm
 #   - vanilla_with_model_intent: Vanilla model with prompt + model-generated intent -> harm
+#   - llamaguard_classification: LlamaGuard baseline with same system prompt -> harm only
 
 defaults:
   - base_wandb@wandb
@@ -20,6 +21,7 @@ experiment:
     - "vanilla_generation"
     - "vanilla_with_human_intent"
     - "finetuned_generation"
+    - "llamaguard_classification"
     # - "finetuned_classification"
 
 # Model configuration
@@ -39,6 +41,10 @@ finetuned:
 # LoRA configuration
 lora:
   rank: 16
+
+# LlamaGuard baseline configuration
+llamaguard:
+  name: "meta-llama/Llama-Guard-3-8B"
 
 # Dataset configurations - cycles through all datasets
 datasets:

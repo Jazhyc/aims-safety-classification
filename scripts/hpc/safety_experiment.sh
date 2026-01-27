@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=safety_exp
-#SBATCH --time=00:30:00
+#SBATCH --time=00:45:00
 #SBATCH --mem=16GB
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=a100:1
@@ -11,5 +11,5 @@ module load CUDA/12.8.0
 
 source .venv/bin/activate
 
-# Run safety experiment with all vanilla conditions + finetuned generation
+# Run safety experiment with all conditions including LlamaGuard baseline
 python scripts/safety_experiment.py --config-name=safety_experiment
