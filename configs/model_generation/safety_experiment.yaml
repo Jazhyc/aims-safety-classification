@@ -17,17 +17,17 @@ defaults:
 experiment:
   # Conditions to run (can be a list or single condition)
   conditions:
-    - "vanilla_classification"
-    - "vanilla_generation"
-    - "vanilla_with_human_intent"
+    # - "vanilla_classification"
+    # - "vanilla_generation"
+    # - "vanilla_with_human_intent"
     # - "finetuned_generation"
     # - "llamaguard_classification"
-    # - "finetuned_classification"
+    - "finetuned_classification"
 
 # Model configuration
 model:
   # Base model for vanilla conditions
-  name: "Qwen/Qwen3-0.6B"
+  name: "meta-llama/Llama-3.1-8B-Instruct"
   max_length: 512
 
 # Fine-tuned model configuration
