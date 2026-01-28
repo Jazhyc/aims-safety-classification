@@ -20,14 +20,14 @@ experiment:
     - "vanilla_classification"
     - "vanilla_generation"
     - "vanilla_with_human_intent"
-    - "finetuned_generation"
-    - "llamaguard_classification"
+    # - "finetuned_generation"
+    # - "llamaguard_classification"
     # - "finetuned_classification"
 
 # Model configuration
 model:
   # Base model for vanilla conditions
-  name: "meta-llama/Llama-3.1-8B-Instruct"
+  name: "Qwen/Qwen3-0.6B"
   max_length: 512
 
 # Fine-tuned model configuration
@@ -36,7 +36,7 @@ finetuned:
   # Adapter for intent + harm generation (finetuned_generation condition)
   generation_adapter: "trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter"
   # Adapter for harm-only classification (finetuned_classification condition)
-  classification_adapter: null  # e.g., "trained_models/causal/qwen-harm-only_adapter"
+  classification_adapter: "trained_models/causal/classification-r16-a32_adapter"  # e.g., "trained_models/causal/qwen-harm-only_adapter"
 
 # LoRA configuration
 lora:
@@ -48,50 +48,50 @@ llamaguard:
 
 # Dataset configurations - cycles through all datasets
 datasets:
-  - name: "strongreject"
-    dataset_name: "walledai/StrongREJECT"
+  - name: "annotated-intents"
+    dataset_name: "Jazhyc/wildguard-annotated-intents"
     subset: null
     split: "train"
-    harm_column: "harm_label"
-    all_harmful: true  # All prompts in this dataset are harmful
+    harm_column: "Annotator Harm"
+    use_manual_split: true
+    test_size: 0.1
+    val_size: 0.1
+    seed: 22
+    output_dir: "data/safety_experiment/annotated_intents"
+
+  - name: "wildguardmix"
+    dataset_name: "allenai/wildguardmix"
+    subset: "wildguardtest"
+    split: "test"
+    harm_column: "prompt_harm_label"
     use_manual_split: false
     seed: 22
     test_size: 0.1
     val_size: 0.1
-    output_dir: "data/safety_experiment/strongreject"
+    output_dir: "data/safety_experiment/wildguardmix"
 
-  # - name: "annotated-intents"
-  #   dataset_name: "Jazhyc/wildguard-annotated-intents"
+  - name: "xstest"
+    dataset_name: "walledai/XSTest"
+    subset: null
+    split: "test"
+    harm_column: "label"
+    use_manual_split: false
+    seed: 22
+    test_size: 0.1
+    val_size: 0.1
+    output_dir: "data/safety_experiment/xstest"
+
+  # - name: "strongreject"
+  #   dataset_name: "walledai/StrongREJECT"
   #   subset: null
   #   split: "train"
-  #   harm_column: "Annotator Harm"
-  #   use_manual_split: true
-  #   test_size: 0.1
-  #   val_size: 0.1
-  #   seed: 22
-  #   output_dir: "data/safety_experiment/annotated_intents"
-
-  # - name: "wildguardmix"
-  #   dataset_name: "allenai/wildguardmix"
-  #   subset: "wildguardtest"
-  #   split: "test"
-  #   harm_column: "prompt_harm_label"
+  #   harm_column: "harm_label"
+  #   all_harmful: true
   #   use_manual_split: false
   #   seed: 22
   #   test_size: 0.1
   #   val_size: 0.1
-  #   output_dir: "data/safety_experiment/wildguardmix"
-
-  # - name: "xstest"
-  #   dataset_name: "walledai/XSTest"
-  #   subset: null
-  #   split: "test"
-  #   harm_column: "label"
-  #   use_manual_split: false
-  #   seed: 22
-  #   test_size: 0.1
-  #   val_size: 0.1
-  #   output_dir: "data/safety_experiment/xstest"
+  #   output_dir: "data/safety_experiment/strongreject"
 
 # Generation parameters
 generation:

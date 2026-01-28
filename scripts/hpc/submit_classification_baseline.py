@@ -42,13 +42,13 @@ source .venv/bin/activate
 # Train classification-only model with baseline LoRA (rank=8, alpha=16)
 python scripts/train_generator.py \\
     --config-name=llama3.1-8b-classification-base \\
-    peft.lora_rank=8 \\
-    peft.lora_alpha=16 \\
-    paths.output_dir="train_results/causal/classification-r8-a16" \\
-    paths.logs_dir="logs/causal/classification-r8-a16" \\
-    paths.model_save_dir="trained_models/causal/classification-r8-a16" \\
-    paths.predictions_dir="data/predictions/causal/classification-r8-a16" \\
-    wandb.name="classification-r8-a16"
+    peft.lora_rank=16 \\
+    peft.lora_alpha=32 \\
+    paths.output_dir="train_results/causal/classification-r16-a32" \\
+    paths.logs_dir="logs/causal/classification-r16-a32" \\
+    paths.model_save_dir="trained_models/causal/classification-r16-a32" \\
+    paths.predictions_dir="data/predictions/causal/classification-r16-a32" \\
+    wandb.name="classification-r16-a32"
 """
     
     print("=" * 60)
@@ -56,7 +56,7 @@ python scripts/train_generator.py \\
     print("=" * 60)
     print("\nModel: meta-llama/Llama-3.1-8B-Instruct")
     print("Format: prompt -> 'harmful' or 'safe'")
-    print("LoRA: rank=8, alpha=16")
+    print("LoRA: rank=16, alpha=32")
     print("\nHyperparameters:")
     print("  - learning_rate: 5e-5")
     print("  - epochs: 5")
