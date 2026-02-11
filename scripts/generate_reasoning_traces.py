@@ -208,7 +208,18 @@ def main(cfg: DictConfig):
     paths_cfg = config.get("paths", {})
     
     output_dir = Path(paths_cfg.get("output_dir", "data/reasoning_traces"))
+    
+    # Create model-specific subdirectory (use model name, replace slashes with dashes)
+    model_name_clean = model_cfg["name"].replace("/", "-")
+    output_dir = output_dir / model_name_clean
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get conditions to run
+    conditions = config.get("conditions", ["without_intent"])
+    if isinstance(conditions, str):
+        conditions = [conditions]
+    
+    print(f"\nConditions to run: {conditions}")
     
     # Load samples
     samples = load_samples(dataset_cfg)
@@ -244,8 +255,8 @@ def main(cfg: DictConfig):
         skip_special_tokens=True,
     )
     
-    # Build prompts for both conditions: without_intent and with_intent
-    print("\n=== Formatting prompts (without_intent + with_intent) ===")
+    # Build prompts for each enabled condition
+    print("\n=== Formatting prompts ===")
     
     def format_prompt(user_content: str) -> str:
         messages = [{"role": "user", "content": user_content}]
@@ -259,88 +270,93 @@ def main(cfg: DictConfig):
                 messages, add_generation_prompt=True, tokenize=False,
             )
     
-    # Without intent prompts
-    prompts_without_intent = []
-    for sample in samples:
-        user_content = PROMPT_TEMPLATE.format(
-            prompt=sample["prompt"],
-            response=sample["response"],
-            prompt_harm_label=sample["prompt_harm_label"],
-            response_harm_label=sample["response_harm_label"],
-            response_refusal_label=sample["response_refusal_label"],
-        )
-        prompts_without_intent.append(format_prompt(user_content))
-    
-    # With intent prompts
-    prompts_with_intent = []
-    for sample in samples:
-        user_content = PROMPT_TEMPLATE_WITH_INTENT.format(
-            prompt=sample["prompt"],
-            intent=sample["intent"],
-            response=sample["response"],
-            prompt_harm_label=sample["prompt_harm_label"],
-            response_harm_label=sample["response_harm_label"],
-            response_refusal_label=sample["response_refusal_label"],
-        )
-        prompts_with_intent.append(format_prompt(user_content))
+    condition_prompts = {}
+    for condition in conditions:
+        prompts = []
+        if condition == "without_intent":
+            for sample in samples:
+                user_content = PROMPT_TEMPLATE.format(
+                    prompt=sample["prompt"],
+                    response=sample["response"],
+                    prompt_harm_label=sample["prompt_harm_label"],
+                    response_harm_label=sample["response_harm_label"],
+                    response_refusal_label=sample["response_refusal_label"],
+                )
+                prompts.append(format_prompt(user_content))
+        elif condition == "with_intent":
+            for sample in samples:
+                user_content = PROMPT_TEMPLATE_WITH_INTENT.format(
+                    prompt=sample["prompt"],
+                    intent=sample["intent"],
+                    response=sample["response"],
+                    prompt_harm_label=sample["prompt_harm_label"],
+                    response_harm_label=sample["response_harm_label"],
+                    response_refusal_label=sample["response_refusal_label"],
+                )
+                prompts.append(format_prompt(user_content))
+        else:
+            print(f"Warning: Unknown condition {condition}")
+            continue
+        
+        condition_prompts[condition] = prompts
+        print(f"  {condition}: {len(prompts)} prompts")
     
     # Combine all prompts for a single VLLM batch
-    all_prompts = prompts_without_intent + prompts_with_intent
-    n = len(samples)
+    all_prompts = []
+    prompt_to_condition = {}
+    for condition in conditions:
+        start_idx = len(all_prompts)
+        all_prompts.extend(condition_prompts[condition])
+        end_idx = len(all_prompts)
+        for idx in range(start_idx, end_idx):
+            prompt_to_condition[idx] = condition
     
-    print(f"  Without intent: {n} prompts")
-    print(f"  With intent: {n} prompts")
-    print(f"  Total batch size: {len(all_prompts)}")
+    total_prompts = len(all_prompts)
+    print(f"  Total batch size: {total_prompts}")
     
     # Generate all at once
-    print(f"\n=== Generating reasoning traces for {len(all_prompts)} prompts ===")
+    print(f"\n=== Generating reasoning traces for {total_prompts} prompts ===")
     all_outputs = llm.generate(all_prompts, sampling_params)
     
-    outputs_without = all_outputs[:n]
-    outputs_with = all_outputs[n:]
+    # Process results for each condition
+    raw_outputs = []
+    parsed_results = []
     
-    # Process results for both conditions
-    def process_outputs(samples, outputs, condition):
-        raw_list = []
-        parsed_list = []
-        for sample, output in zip(samples, outputs):
-            raw_text = output.outputs[0].text.strip()
-            parsed = parse_model_output(raw_text)
-            
-            raw_list.append({
-                "wildguard_id": sample["wildguard_id"],
-                "prompt": sample["prompt"],
-                "response": sample["response"],
-                "intent": sample["intent"],
-                "condition": condition,
-                "raw_output": raw_text,
-            })
-            
-            parsed_list.append({
-                "wildguard_id": sample["wildguard_id"],
-                "prompt": sample["prompt"],
-                "response": sample["response"],
-                "intent": sample["intent"],
-                "condition": condition,
-                "ground_truth": {
-                    "prompt_harm_label": sample["prompt_harm_label"],
-                    "response_harm_label": sample["response_harm_label"],
-                    "response_refusal_label": sample["response_refusal_label"],
-                },
-                "predicted": {
-                    "prompt_harm": parsed["prompt_harm"],
-                    "response_harm": parsed["response_harm"],
-                    "response_refusal": parsed["response_refusal"],
-                },
-                "reasoning": parsed["reasoning"],
-            })
-        return raw_list, parsed_list
-    
-    raw_without, parsed_without = process_outputs(samples, outputs_without, "without_intent")
-    raw_with, parsed_with = process_outputs(samples, outputs_with, "with_intent")
-    
-    raw_outputs = raw_without + raw_with
-    parsed_results = parsed_without + parsed_with
+    for output_idx, (prompt, output) in enumerate(zip(all_prompts, all_outputs)):
+        condition = prompt_to_condition[output_idx]
+        sample_idx = output_idx % len(samples)
+        sample = samples[sample_idx]
+        
+        raw_text = output.outputs[0].text.strip()
+        parsed = parse_model_output(raw_text)
+        
+        raw_outputs.append({
+            "wildguard_id": sample["wildguard_id"],
+            "prompt": sample["prompt"],
+            "response": sample["response"],
+            "intent": sample["intent"],
+            "condition": condition,
+            "raw_output": raw_text,
+        })
+        
+        parsed_results.append({
+            "wildguard_id": sample["wildguard_id"],
+            "prompt": sample["prompt"],
+            "response": sample["response"],
+            "intent": sample["intent"],
+            "condition": condition,
+            "ground_truth": {
+                "prompt_harm_label": sample["prompt_harm_label"],
+                "response_harm_label": sample["response_harm_label"],
+                "response_refusal_label": sample["response_refusal_label"],
+            },
+            "predicted": {
+                "prompt_harm": parsed["prompt_harm"],
+                "response_harm": parsed["response_harm"],
+                "response_refusal": parsed["response_refusal"],
+            },
+            "reasoning": parsed["reasoning"],
+        })
     
     # Save results
     raw_output_path = output_dir / "raw_outputs.json"
@@ -354,11 +370,12 @@ def main(cfg: DictConfig):
         json.dump(parsed_results, f, indent=2, ensure_ascii=False)
     print(f"Parsed results saved to: {parsed_output_path}")
     
-    # Print summary
-    for condition, parsed_list in [("without_intent", parsed_without), ("with_intent", parsed_with)]:
-        total = len(parsed_list)
+    # Print summary per condition
+    for condition in conditions:
+        condition_results = [r for r in parsed_results if r["condition"] == condition]
+        total = len(condition_results)
         parsed_count = sum(
-            1 for r in parsed_list
+            1 for r in condition_results
             if r["predicted"]["prompt_harm"] is not None
             and r["predicted"]["response_harm"] is not None
             and r["predicted"]["response_refusal"] is not None

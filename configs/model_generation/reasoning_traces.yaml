@@ -12,6 +12,11 @@ model:
   name: "RedHatAI/Qwen3-32B-quantized.w4a16"
   max_length: 16384
 
+# Conditions to run
+conditions:
+  - "without_intent"
+  # - "with_intent"  # Uncomment to enable
+
 # Dataset configuration
 dataset:
   dataset_name: "allenai/wildguardmix"
