@@ -10,7 +10,7 @@ defaults:
 # Model configuration
 model:
   name: "RedHatAI/Qwen3-32B-quantized.w4a16"
-  max_length: 512
+  max_length: 16384
 
 # Dataset configuration
 dataset:
@@ -22,7 +22,7 @@ dataset:
 
 # Generation parameters
 generation:
-  max_new_tokens: 4096  # Long traces for reasoning
+  max_new_tokens: 16384  # Long traces for reasoning
   temperature: 0.0  # Greedy decoding for consistency
   top_p: 1.0
   top_k: -1
@@ -30,7 +30,7 @@ generation:
 # VLLM configuration
 vllm:
   gpu_memory_utilization: 0.95
-  max_model_len: 8192
+  max_model_len: 16384
   dtype: "bfloat16"
   enforce_eager: true
 
