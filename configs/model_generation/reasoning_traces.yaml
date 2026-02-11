@@ -1,0 +1,48 @@
+# Configuration for generating reasoning traces from WildGuard train set
+# Uses vLLM pipeline with Qwen3-32B quantized model
+# Reasoning is disabled via tokenizer (enable_thinking=False) - traces come from prompting
+
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
+# Model configuration
+model:
+  name: "RedHatAI/Qwen3-32B-quantized.w4a16"
+  max_length: 512
+
+# Dataset configuration
+dataset:
+  dataset_name: "allenai/wildguardmix"
+  subset: "wildguardtrain"
+  split: "train"
+  num_samples: 20
+  seed: 42
+
+# Generation parameters
+generation:
+  max_new_tokens: 4096  # Long traces for reasoning
+  temperature: 0.0  # Greedy decoding for consistency
+  top_p: 1.0
+  top_k: -1
+
+# VLLM configuration
+vllm:
+  gpu_memory_utilization: 0.95
+  max_model_len: 8192
+  dtype: "bfloat16"
+  enforce_eager: true
+
+# Paths
+paths:
+  output_dir: "data/reasoning_traces"
+
+# Weights & Biases configuration
+wandb:
+  enabled: false
+  entity: null
+  project: "reasoning-traces"
+  tags: ["reasoning", "wildguard"]
+  dir: "logs/wandb"
+  mode: "online"
