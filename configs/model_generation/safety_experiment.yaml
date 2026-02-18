@@ -1,5 +1,5 @@
 # Configuration for safety classification experiment
-# Supports 7 conditions:
+# Supports 10 conditions:
 #   - finetuned_generation: Fine-tuned model outputs (intent, harm)
 #   - finetuned_classification: Fine-tuned model outputs harm only
 #   - vanilla_classification: Vanilla model with system prompt -> harm only
@@ -7,6 +7,9 @@
 #   - vanilla_with_human_intent: Vanilla model with prompt + human intent -> harm
 #   - vanilla_with_model_intent: Vanilla model with prompt + model-generated intent -> harm
 #   - llamaguard_classification: LlamaGuard baseline with same system prompt -> harm only
+#   - zeroshot_cot_classification: CoT prompt -> reasoning + harm (JSON output)
+#   - zeroshot_cot_generation: CoT prompt -> reasoning + intent + harm (JSON output)
+#   - zeroshot_cot_classification_with_intent: CoT prompt + human intent -> reasoning + harm (JSON output)
 
 defaults:
   - base_wandb@wandb
@@ -21,14 +24,17 @@ experiment:
     # - "vanilla_generation"
     # - "vanilla_with_human_intent"
     # - "finetuned_generation"
+    # - "finetuned_classification"
     # - "llamaguard_classification"
-    - "finetuned_classification"
+    - "zeroshot_cot_classification"
+    - "zeroshot_cot_generation"
+    - "zeroshot_cot_classification_with_intent"
 
 # Model configuration
 model:
   # Base model for vanilla conditions
   name: "meta-llama/Llama-3.1-8B-Instruct"
-  max_length: 512
+  max_length: 2048
 
 # Fine-tuned model configuration
 # These are separate adapters trained for different tasks
@@ -95,7 +101,7 @@ datasets:
 
 # Generation parameters
 generation:
-  max_new_tokens: 512
+  max_new_tokens: 2048
   temperature: 0.0  # Greedy decoding for consistency
   top_p: 1.0
   top_k: -1
