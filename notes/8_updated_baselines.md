@@ -1,6 +1,6 @@
 # Updated Baselines with CoT Conditions
 
-Zero-shot CoT prompting was added as three new conditions (`zeroshot_cot_classification`, `zeroshot_cot_generation`, `zeroshot_cot_classification_with_intent`). The model is prompted to think step by step and output its reasoning explicitly in a structured JSON field, with `enable_thinking=False` to prevent Qwen3-style internal thinking from interfering.
+Zero-shot CoT prompting was added as three new conditions (`zeroshot_cot_classification`, `zeroshot_cot_generation`, `zeroshot_cot_classification_with_intent`). The model is prompted to think step by step and output its reasoning explicitly in a structured JSON field
 
 ## Annotated Intents (Llama 3.1 8B)
 
