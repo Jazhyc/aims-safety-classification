@@ -112,33 +112,15 @@ def parse_model_output(raw_text: str) -> dict:
 
 
 def load_samples(data_cfg: dict) -> list:
-    """
-    Load samples by:
-    1. Loading annotated intents dataset for unique Wildguard IDs and intents
-    2. Loading WildGuardMix train set for prompt/response/labels
-    3. Joining on Wildguard ID, filtering non-null responses
-    4. Sampling num_samples unique IDs with fixed seed
-    """
     num_samples = data_cfg.get("num_samples", 20)
     seed = data_cfg.get("seed", 42)
 
-    # Load annotated intents dataset
+    # Load annotated intents dataset (has prompt + intent)
     print("Loading annotated intents dataset: Jazhyc/wildguard-annotated-intents")
     annotated_ds = load_dataset("Jazhyc/wildguard-annotated-intents", split="train")
     print(f"  Annotated intents size: {len(annotated_ds)}")
-    print(f"  Columns: {annotated_ds.column_names}")
 
-    # Build lookup: Wildguard ID -> Intent (use first occurrence for uniqueness)
-    intent_lookup = {}
-    for row in annotated_ds:
-        wg_id = row.get("Wildguard ID")
-        if wg_id is not None and wg_id not in intent_lookup:
-            intent_lookup[wg_id] = row.get("Intent", "")
-
-    unique_wg_ids = set(intent_lookup.keys())
-    print(f"  Unique Wildguard IDs with intents: {len(unique_wg_ids)}")
-
-    # Load WildGuardMix train set
+    # Load WildGuardMix to get harm labels — match on prompt text
     wg_dataset_name = data_cfg.get("dataset_name", "allenai/wildguardmix")
     wg_subset = data_cfg.get("subset", "wildguardtrain")
     wg_split = data_cfg.get("split", "train")
@@ -146,39 +128,42 @@ def load_samples(data_cfg: dict) -> list:
     print(f"\nLoading WildGuardMix: {wg_dataset_name} (subset={wg_subset}, split={wg_split})")
     wg_dataset = load_dataset(wg_dataset_name, wg_subset, split=wg_split)
 
-    # Build lookup: index -> row for WildGuardMix (index is the Wildguard ID)
-    # WildGuardMix rows are indexed by position, which corresponds to Wildguard ID
-    wg_lookup = {}
-    for idx, row in enumerate(wg_dataset):
-        if idx in unique_wg_ids:
-            # Only keep rows with non-null responses
-            response = row.get("response")
-            if response is not None and str(response).strip():
-                wg_lookup[idx] = row
+    # Build lookup: prompt text -> harm label
+    prompt_to_harm = {}
+    for row in wg_dataset:
+        prompt = row.get("prompt", "").strip()
+        if prompt:
+            prompt_to_harm[prompt] = row.get("prompt_harm_label", "")
 
-    available_ids = list(wg_lookup.keys())
-    print(f"  WildGuardMix rows matching annotated IDs with valid responses: {len(available_ids)}")
+    print(f"  WildGuardMix harm label lookup size: {len(prompt_to_harm)}")
+
+    # Build samples directly from annotated intents dataset
+    # Deduplicate by Wildguard ID (keep first intent per ID)
+    seen_ids = {}
+    for row in annotated_ds:
+        wg_id = row.get("Wildguard ID")
+        if wg_id is not None and wg_id not in seen_ids:
+            prompt = row.get("Prompt", "").strip()
+            harm_label = prompt_to_harm.get(prompt)
+            if prompt and harm_label is not None:
+                seen_ids[wg_id] = {
+                    "wildguard_id": wg_id,
+                    "prompt": prompt,
+                    "prompt_harm_label": harm_label,
+                    "intent": row.get("Intent", ""),
+                }
+
+    available = list(seen_ids.values())
+    print(f"  Samples with matched harm labels: {len(available)}")
 
     # Shuffle and select with fixed seed
     import random
     rng = random.Random(seed)
-    rng.shuffle(available_ids)
-    selected_ids = available_ids[:min(num_samples, len(available_ids))]
-
-    # Build combined samples
-    samples = []
-    for wg_id in selected_ids:
-        wg_row = wg_lookup[wg_id]
-        samples.append({
-            "wildguard_id": wg_id,
-            "prompt": wg_row.get("prompt", ""),
-            "prompt_harm_label": wg_row.get("prompt_harm_label", ""),
-            "intent": intent_lookup.get(wg_id, ""),
-        })
+    rng.shuffle(available)
+    samples = available[:min(num_samples, len(available))]
 
     print(f"\nSelected {len(samples)} samples (seed={seed})")
     return samples
-
 
 @hydra.main(version_base=None, config_path="../configs/model_generation", config_name="reasoning_traces")
 def main(cfg: DictConfig):
