@@ -191,17 +191,6 @@ def run_analysis(args):
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     # ------------------------------------------------------------------
-    # DEBUG: Print first 5 raw outputs so we can verify format
-    # ------------------------------------------------------------------
-    print("\n=== DEBUG: First 5 raw VLLM outputs ===")
-    for i, output in enumerate(outputs[:5]):
-        print(f"\n--- Prompt {i+1} ---")
-        print(f"  Prompt (truncated): {prompts[i][:80].strip()}")
-        for j, completion in enumerate(output.outputs[:2]):   # show first 2 of k
-            print(f"  Sample {j+1}: {repr(completion.text[:150])}")
-    print("=== END DEBUG ===\n")
-
-    # ------------------------------------------------------------------
     # 4. Sentence-transformer for diversity
     # ------------------------------------------------------------------
     print("=== Loading sentence-transformer ===")
@@ -351,7 +340,7 @@ def run_analysis(args):
     print(f"Summary          -> {summary_path}")
 
     # ------------------------------------------------------------------
-    # 8. Human-readable summary
+    # 8. readable summary
     # ------------------------------------------------------------------
     print("\n" + "=" * 65)
     print("DIVERSITY ANALYSIS SUMMARY")
