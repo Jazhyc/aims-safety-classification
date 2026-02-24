@@ -1,0 +1,35 @@
+model:
+  name: answerdotai/ModernBERT-base
+  max_length_prompt: 256      # intents are short (~10-20 words), 128 is plenty
+  trust_remote_code: false
+
+task:
+  type: bert_harm             # same task handler, different input_key
+
+data:
+  seed: 22
+  test_size: 0.1
+  val_size: 0.1
+  harm_label_key: "Annotator Harm"
+  input_key: "intent"         
+  binary_harm_mapping: true   
+
+training:
+  epochs: 5
+  learning_rate: 2e-5
+  batch_size: 16
+  weight_decay: 0.01
+  gradient_accumulation: 1
+  bf16: true
+  fp16: false
+
+paths:
+  output_dir:     ./train_results/bert_intent/ModernBERT-base
+  logs_dir:       ./logs/bert_intent/ModernBERT-base
+  model_save_dir: ./trained_models/bert_intent/ModernBERT-base
+  predictions_dir: data/predictions_intent
+
+wandb:
+  project: bert-intent-classifier
+  run_name: ModernBERT-base-intent
+  group: bert_intent
