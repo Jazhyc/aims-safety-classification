@@ -23,12 +23,9 @@ source .venv/bin/activate
 #   0.8  → standard DPO sampling point from the literature
 #   1.0  → high diversity; watch parse_failures in summary.json
 #   1.2  → stress test; some outputs may lose the Intent/Harm format
-#
-# After all runs finish, open notebooks/diversity_analysis.ipynb to compare.
-# Time estimate: ~20-30 min per run on an A100, ~2-3h total.
 # ---------------------------------------------------------------------------
 
-ADAPTER_PATH="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter"
+ADAPTER_PATH="trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter"
 BASE_MODEL="meta-llama/Llama-3.1-8B-Instruct"
 TEMPERATURES=(0.3 0.6 0.8 1.0 1.2)
 
