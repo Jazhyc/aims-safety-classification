@@ -1,6 +1,6 @@
 # Configuration for generating reasoning traces from WildGuard train set
-# Uses vLLM pipeline with Qwen3-32B quantized model
-# Reasoning is disabled via tokenizer (enable_thinking=False) - traces come from prompting
+# Uses vLLM pipeline with a chat-capable model (e.g. Llama-3.1-8B-Instruct)
+# Reasoning comes from prompting; enable_thinking=False is used when supported by the tokenizer
 
 defaults:
   - base_wandb@wandb
@@ -8,18 +8,46 @@ defaults:
   - _self_
 
 model:
-  name: "meta-llama/Llama-3.1-8B-Instruct"
+  name: "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
   max_length: 4096
 
+# Conditions control which prompt template is used for each sample.
+# Each condition produces one output per sample in the batch:
+#   - without_intent:  Baseline from Traian's paper. Ground-truth harm label is provided
+#                      in the prompt so the model explains *why* the label holds, but the
+#                      label itself must not appear in the output.
+#   - with_intent:     Same as without_intent but also includes the human-written intent
+#                      from the annotated_intents dataset. Useful for studying whether
+#                      explicit intent information improves reasoning quality.
+#   - zeroshot_cot:    No ground-truth label or intent is supplied. The model must reason
+#                      from scratch (zero-shot chain-of-thought). This mirrors the
+#                      inference-time setting where labels are unknown.
+# All enabled conditions are batched into a single vLLM call.
 conditions:
   - "without_intent"
   - "with_intent"
-  - "zeroshot_cot"
+  # - "zeroshot_cot"
 
+# Dataset configuration
+# Two datasets are used together:
+#   annotated_intents — primary source of prompts and human-written intents.
+#                       Must have columns: Prompt, Intent, Wildguard ID.
+#                       Matches the "annotated-intents" entry in safety_experiment.yaml.
+#   wildguardmix      — used as a lookup table to attach harm labels to each prompt
+#                       by matching on prompt text. Only the harm_column is used from here.
+# num_samples and seed control how many entries are sampled from annotated_intents after
+# deduplication by Wildguard ID and matching against wildguardmix harm labels.
 dataset:
-  dataset_name: "allenai/wildguardmix"
-  subset: "wildguardtrain"
-  split: "train"
+  annotated_intents:
+    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    subset: null
+    split: "train"
+    harm_column: "Annotator Harm"
+  # wildguardmix:
+  #   dataset_name: "allenai/wildguardmix"
+  #   subset: "wildguardtrain"
+  #   split: "train"
+  #   harm_column: "prompt_harm_label"
   num_samples: 20
   seed: 42
 

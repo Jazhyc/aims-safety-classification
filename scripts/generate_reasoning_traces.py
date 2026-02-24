@@ -1,20 +1,17 @@
 """
 Generate reasoning traces for WildGuard samples using vLLM.
 
-Samples from the annotated intents dataset (Jazhyc/wildguard-annotated-intents),
-then looks up corresponding WildGuardMix entries for prompt/labels.
-Runs three conditions in a single VLLM batch:
-  - without_intent: baseline classification with ground truth labels (Traian's paper)
-  - with_intent: includes the annotated intent and ground truth labels
-  - zeroshot_cot: zero-shot chain-of-thought, no ground truth labels provided
+All enabled conditions are batched into a single vLLM call to maximise GPU utilisation.
 
 Outputs:
-  - data/reasoning_traces/raw_outputs.json: Raw model outputs
-  - data/reasoning_traces/parsed_results.json: Parsed fields + reasoning traces
+  - data/reasoning_traces/<model>/raw_outputs.json    Raw model outputs
+  - data/reasoning_traces/<model>/parsed_results.json Parsed fields + reasoning traces
 
 Usage:
     python scripts/generate_reasoning_traces.py
     python scripts/generate_reasoning_traces.py model.name=<other_model>
+    python scripts/generate_reasoning_traces.py dataset.num_samples=100
+    python scripts/generate_reasoning_traces.py conditions=[zeroshot_cot]
 """
 
 import json
@@ -112,18 +109,51 @@ def parse_model_output(raw_text: str) -> dict:
 
 
 def load_samples(data_cfg: dict) -> list:
+    """
+    Load and join samples from the annotated intents dataset and WildGuardMix.
+
+    The annotated_intents sub-config selects the primary dataset (prompts + intents).
+    The wildguardmix sub-config selects the secondary dataset used only to attach
+    harm labels by matching on prompt text.  Both sub-configs follow the same field
+    conventions as the dataset entries in safety_experiment.yaml.
+
+    Args:
+        data_cfg: The ``dataset`` block from reasoning_traces.yaml, expected to have:
+            annotated_intents.dataset_name  -- HuggingFace dataset with Prompt/Intent columns
+            annotated_intents.subset        -- subset name (null for no subset)
+            annotated_intents.split         -- dataset split (default: "train")
+            wildguardmix.dataset_name       -- harm-label source dataset
+            wildguardmix.subset             -- subset name (default: "wildguardtrain")
+            wildguardmix.split              -- dataset split (default: "train")
+            wildguardmix.harm_column        -- column name for harm labels
+            num_samples                     -- max number of samples to return
+            seed                            -- random seed for shuffling
+
+    Returns:
+        List of dicts with keys: wildguard_id, prompt, prompt_harm_label, intent.
+    """
     num_samples = data_cfg.get("num_samples", 20)
     seed = data_cfg.get("seed", 42)
 
-    # Load annotated intents dataset (has prompt + intent)
-    print("Loading annotated intents dataset: Jazhyc/wildguard-annotated-intents")
-    annotated_ds = load_dataset("Jazhyc/wildguard-annotated-intents", split="train")
+    # --- Annotated intents dataset (primary: prompts + intents) ---
+    ai_cfg = data_cfg.get("annotated_intents", {})
+    ai_name = ai_cfg.get("dataset_name", "Jazhyc/wildguard-annotated-intents")
+    ai_subset = ai_cfg.get("subset")
+    ai_split = ai_cfg.get("split", "train")
+
+    print(f"Loading annotated intents dataset: {ai_name}")
+    if ai_subset:
+        annotated_ds = load_dataset(ai_name, ai_subset, split=ai_split)
+    else:
+        annotated_ds = load_dataset(ai_name, split=ai_split)
     print(f"  Annotated intents size: {len(annotated_ds)}")
 
-    # Load WildGuardMix to get harm labels — match on prompt text
-    wg_dataset_name = data_cfg.get("dataset_name", "allenai/wildguardmix")
-    wg_subset = data_cfg.get("subset", "wildguardtrain")
-    wg_split = data_cfg.get("split", "train")
+    # --- WildGuardMix dataset (secondary: harm label lookup) ---
+    wg_cfg = data_cfg.get("wildguardmix", {})
+    wg_dataset_name = wg_cfg.get("dataset_name", "allenai/wildguardmix")
+    wg_subset = wg_cfg.get("subset", "wildguardtrain")
+    wg_split = wg_cfg.get("split", "train")
+    wg_harm_column = wg_cfg.get("harm_column", "prompt_harm_label")
 
     print(f"\nLoading WildGuardMix: {wg_dataset_name} (subset={wg_subset}, split={wg_split})")
     wg_dataset = load_dataset(wg_dataset_name, wg_subset, split=wg_split)
@@ -133,7 +163,7 @@ def load_samples(data_cfg: dict) -> list:
     for row in wg_dataset:
         prompt = row.get("prompt", "").strip()
         if prompt:
-            prompt_to_harm[prompt] = row.get("prompt_harm_label", "")
+            prompt_to_harm[prompt] = row.get(wg_harm_column, "")
 
     print(f"  WildGuardMix harm label lookup size: {len(prompt_to_harm)}")
 
