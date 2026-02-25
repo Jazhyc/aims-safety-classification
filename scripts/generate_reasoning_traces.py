@@ -96,11 +96,20 @@ def parse_model_output(raw_text: str) -> dict:
     if reasoning_match:
         reasoning = reasoning_match.group(1).strip()
 
-    # Extract Prompt harm field
+    # Extract Prompt harm field.
+    # The model may echo the 4-category ground-truth labels ("Completely Harmful",
+    # "Uncertain Safe", etc.) instead of the binary labels requested.  Capture the
+    # full label on that line and apply substring-based binary mapping so that
+    # "Uncertain Harmful" -> "harmful", "Completely Safe" -> "unharmful", etc.
+    # "unharmful" must be checked before "harmful" because the latter is a substring.
     prompt_harm = None
-    ph_match = re.search(r'Prompt harm:\s*(harmful|unharmful)', text, re.IGNORECASE)
+    ph_match = re.search(r'Prompt harm:\s*([^\n]+)', text, re.IGNORECASE)
     if ph_match:
-        prompt_harm = ph_match.group(1).lower()
+        label = ph_match.group(1).strip().lower()
+        if 'unharmful' in label or 'safe' in label:
+            prompt_harm = 'unharmful'
+        elif 'harmful' in label:
+            prompt_harm = 'harmful'
 
     return {
         "prompt_harm": prompt_harm,
@@ -112,69 +121,45 @@ def load_samples(data_cfg: dict) -> list:
     """
     Load and join samples from the annotated intents dataset and WildGuardMix.
 
-    The annotated_intents sub-config selects the primary dataset (prompts + intents).
-    The wildguardmix sub-config selects the secondary dataset used only to attach
-    harm labels by matching on prompt text.  Both sub-configs follow the same field
-    conventions as the dataset entries in safety_experiment.yaml.
+    Loads only the annotated_intents dataset, which contains prompts, human-written
+    intents, and harm labels in a single place (the harm_column field, defaulting to
+    "Annotator Harm").  No secondary dataset is needed.
 
     Args:
         data_cfg: The ``dataset`` block from reasoning_traces.yaml, expected to have:
-            annotated_intents.dataset_name  -- HuggingFace dataset with Prompt/Intent columns
+            annotated_intents.dataset_name  -- HuggingFace dataset id
             annotated_intents.subset        -- subset name (null for no subset)
             annotated_intents.split         -- dataset split (default: "train")
-            wildguardmix.dataset_name       -- harm-label source dataset
-            wildguardmix.subset             -- subset name (default: "wildguardtrain")
-            wildguardmix.split              -- dataset split (default: "train")
-            wildguardmix.harm_column        -- column name for harm labels
-            num_samples                     -- max number of samples to return
+            annotated_intents.harm_column   -- column with harm labels (default: "Annotator Harm")
+            num_samples                     -- max samples to return; null means use all
             seed                            -- random seed for shuffling
 
     Returns:
         List of dicts with keys: wildguard_id, prompt, prompt_harm_label, intent.
     """
-    num_samples = data_cfg.get("num_samples", 20)
+    num_samples = data_cfg.get("num_samples")   # None means use all
     seed = data_cfg.get("seed", 42)
 
-    # --- Annotated intents dataset (primary: prompts + intents) ---
     ai_cfg = data_cfg.get("annotated_intents", {})
     ai_name = ai_cfg.get("dataset_name", "Jazhyc/wildguard-annotated-intents")
     ai_subset = ai_cfg.get("subset")
     ai_split = ai_cfg.get("split", "train")
+    harm_column = ai_cfg.get("harm_column", "Annotator Harm")
 
     print(f"Loading annotated intents dataset: {ai_name}")
     if ai_subset:
         annotated_ds = load_dataset(ai_name, ai_subset, split=ai_split)
     else:
         annotated_ds = load_dataset(ai_name, split=ai_split)
-    print(f"  Annotated intents size: {len(annotated_ds)}")
+    print(f"  Dataset size: {len(annotated_ds)}")
 
-    # --- WildGuardMix dataset (secondary: harm label lookup) ---
-    wg_cfg = data_cfg.get("wildguardmix", {})
-    wg_dataset_name = wg_cfg.get("dataset_name", "allenai/wildguardmix")
-    wg_subset = wg_cfg.get("subset", "wildguardtrain")
-    wg_split = wg_cfg.get("split", "train")
-    wg_harm_column = wg_cfg.get("harm_column", "prompt_harm_label")
-
-    print(f"\nLoading WildGuardMix: {wg_dataset_name} (subset={wg_subset}, split={wg_split})")
-    wg_dataset = load_dataset(wg_dataset_name, wg_subset, split=wg_split)
-
-    # Build lookup: prompt text -> harm label
-    prompt_to_harm = {}
-    for row in wg_dataset:
-        prompt = row.get("prompt", "").strip()
-        if prompt:
-            prompt_to_harm[prompt] = row.get(wg_harm_column, "")
-
-    print(f"  WildGuardMix harm label lookup size: {len(prompt_to_harm)}")
-
-    # Build samples directly from annotated intents dataset
-    # Deduplicate by Wildguard ID (keep first intent per ID)
+    # Deduplicate by Wildguard ID (keep first intent per ID) and filter missing harm labels
     seen_ids = {}
     for row in annotated_ds:
         wg_id = row.get("Wildguard ID")
         if wg_id is not None and wg_id not in seen_ids:
             prompt = row.get("Prompt", "").strip()
-            harm_label = prompt_to_harm.get(prompt)
+            harm_label = row.get(harm_column)
             if prompt and harm_label is not None:
                 seen_ids[wg_id] = {
                     "wildguard_id": wg_id,
@@ -184,15 +169,15 @@ def load_samples(data_cfg: dict) -> list:
                 }
 
     available = list(seen_ids.values())
-    print(f"  Samples with matched harm labels: {len(available)}")
+    print(f"  Unique samples with harm labels: {len(available)}")
 
     # Shuffle and select with fixed seed
     import random
     rng = random.Random(seed)
     rng.shuffle(available)
-    samples = available[:min(num_samples, len(available))]
+    samples = available if num_samples is None else available[:num_samples]
 
-    print(f"\nSelected {len(samples)} samples (seed={seed})")
+    print(f"\nSelected {len(samples)} samples (num_samples={num_samples}, seed={seed})")
     return samples
 
 @hydra.main(version_base=None, config_path="../configs/model_generation", config_name="reasoning_traces")
@@ -238,7 +223,8 @@ def main(cfg: DictConfig):
         model=model_name,
         gpu_memory_utilization=vllm_cfg.get("gpu_memory_utilization", 0.95),
         max_model_len=vllm_cfg.get("max_model_len", 8192),
-        dtype=vllm_cfg.get("dtype", "bfloat16"),
+        max_num_seqs=vllm_cfg.get("max_num_seqs", 256),
+        dtype=vllm_cfg.get("dtype", "float16"),
         enforce_eager=vllm_cfg.get("enforce_eager", True),
     )
 
