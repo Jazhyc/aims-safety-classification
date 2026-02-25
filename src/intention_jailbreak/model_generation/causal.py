@@ -668,15 +668,15 @@ def run_causal_flow(config):
             "model_save_dir",
             f"./trained_models/causal/{model_name}-model",
         )
-        os.makedirs(model_save_dir, exist_ok=True)
-        
         if is_peft:
             print("Saving LoRA adapter for VLLM...")
             adapter_dir = model_save_dir + "_adapter"
+            os.makedirs(adapter_dir, exist_ok=True)
             trainer.save_model(adapter_dir)
             print(f"LoRA adapter saved to {adapter_dir}")
             tokenizer.save_pretrained(adapter_dir)
         else:
+            os.makedirs(model_save_dir, exist_ok=True)
             trainer.save_model(model_save_dir)
             tokenizer.save_pretrained(model_save_dir)
             print(f"Model and tokenizer saved to {model_save_dir}")

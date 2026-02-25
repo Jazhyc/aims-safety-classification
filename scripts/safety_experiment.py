@@ -185,6 +185,8 @@ VALID_CONDITIONS = [
     "zeroshot_cot_classification",           # CoT: prompt -> reasoning + harm
     "zeroshot_cot_generation",               # CoT: prompt -> reasoning + intent + harm
     "zeroshot_cot_classification_with_intent",  # CoT: prompt + human intent -> reasoning + harm
+    "finetuned_reasoning_classification",    # Distilled (MODE D): prompt -> reasoning + harm
+    "finetuned_reasoning_generation",        # Distilled (MODE E): prompt -> reasoning + intent + harm
 ]
 
 
@@ -1101,6 +1103,113 @@ def save_results(results: List[dict], output_path: Path, condition: str):
     print(f"✓ Saved {len(results)} results to {output_path}")
 
 
+def _parse_reasoning_output(raw_text: str, with_intent: bool = False):
+    """Parse Reasoning: / [Intent:] / Prompt harm: format produced by distilled models."""
+    text = raw_text.strip()
+
+    reasoning = ""
+    m = re.search(r'Reasoning:\s*(.+?)(?=Intent:|Prompt harm:|$)', text, re.IGNORECASE | re.DOTALL)
+    if m:
+        reasoning = m.group(1).strip()
+
+    intent = None
+    if with_intent:
+        m = re.search(r'Intent:\s*(.+?)(?=Prompt harm:|$)', text, re.IGNORECASE | re.DOTALL)
+        if m:
+            intent = m.group(1).strip()
+
+    predicted_harm = None
+    m = re.search(r'Prompt harm:\s*([^\n]+)', text, re.IGNORECASE)
+    if m:
+        label = m.group(1).strip().lower()
+        if 'unharmful' in label or 'safe' in label:
+            predicted_harm = 'safe'
+        elif 'harmful' in label:
+            predicted_harm = 'harmful'
+
+    return reasoning, intent, predicted_harm
+
+
+def run_finetuned_reasoning_classification(
+    llm: LLM,
+    lora_request: Optional[LoRARequest],
+    tokenizer: AutoTokenizer,
+    test_dataset,
+    sampling_params: SamplingParams,
+    harm_column: str,
+) -> List[dict]:
+    """
+    Distilled model (MODE D): prompt -> Reasoning: ... / Prompt harm: harmful|safe
+    """
+    print("\n=== Running: Fine-tuned Reasoning Classification (reasoning + harm) ===")
+
+    examples = list(test_dataset)
+    prompts = [f"{ex['prompt']}\n" for ex in examples]
+    outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
+
+    results = []
+    for ex, output in zip(examples, outputs):
+        generated_text = output.outputs[0].text.strip()
+        reasoning, _, predicted_harm = _parse_reasoning_output(generated_text, with_intent=False)
+
+        true_harm = ex.get(harm_column)
+        true_harm_binary = map_harm_to_binary(true_harm)
+
+        results.append({
+            "id": ex.get("id", ""),
+            "prompt": ex["prompt"],
+            "true_harm": true_harm,
+            "true_harm_binary": true_harm_binary,
+            "predicted_harm": predicted_harm,
+            "reasoning": reasoning,
+            "raw_generation": generated_text,
+            "condition": "finetuned_reasoning_classification",
+        })
+
+    return results
+
+
+def run_finetuned_reasoning_generation(
+    llm: LLM,
+    lora_request: Optional[LoRARequest],
+    tokenizer: AutoTokenizer,
+    test_dataset,
+    sampling_params: SamplingParams,
+    harm_column: str,
+) -> List[dict]:
+    """
+    Distilled model (MODE E): prompt -> Reasoning: ... / Intent: ... / Prompt harm: harmful|safe
+    """
+    print("\n=== Running: Fine-tuned Reasoning Generation (reasoning + intent + harm) ===")
+
+    examples = list(test_dataset)
+    prompts = [f"{ex['prompt']}\n" for ex in examples]
+    outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
+
+    results = []
+    for ex, output in zip(examples, outputs):
+        generated_text = output.outputs[0].text.strip()
+        reasoning, generated_intent, predicted_harm = _parse_reasoning_output(generated_text, with_intent=True)
+
+        true_harm = ex.get(harm_column)
+        true_harm_binary = map_harm_to_binary(true_harm)
+
+        results.append({
+            "id": ex.get("id", ""),
+            "prompt": ex["prompt"],
+            "true_intent": ex.get("intent"),
+            "generated_intent": generated_intent,
+            "true_harm": true_harm,
+            "true_harm_binary": true_harm_binary,
+            "predicted_harm": predicted_harm,
+            "reasoning": reasoning,
+            "raw_generation": generated_text,
+            "condition": "finetuned_reasoning_generation",
+        })
+
+    return results
+
+
 def run_condition_on_dataset(
     condition: str,
     llm: LLM,
@@ -1112,6 +1221,8 @@ def run_condition_on_dataset(
     model_intents: Optional[List[str]] = None,
     generation_lora_request: Optional[LoRARequest] = None,
     classification_lora_request: Optional[LoRARequest] = None,
+    reasoning_classification_lora_request: Optional[LoRARequest] = None,
+    reasoning_generation_lora_request: Optional[LoRARequest] = None,
 ) -> List[dict]:
     """
     Run a specific condition on a dataset.
@@ -1173,6 +1284,14 @@ def run_condition_on_dataset(
         return run_zeroshot_cot_classification_with_intent(
             llm, tokenizer, test_dataset, sampling_params, harm_column
         )
+    elif condition == "finetuned_reasoning_classification":
+        return run_finetuned_reasoning_classification(
+            llm, reasoning_classification_lora_request, tokenizer, test_dataset, sampling_params, harm_column
+        )
+    elif condition == "finetuned_reasoning_generation":
+        return run_finetuned_reasoning_generation(
+            llm, reasoning_generation_lora_request, tokenizer, test_dataset, sampling_params, harm_column
+        )
     else:
         raise ValueError(f"Unknown condition: {condition}")
 
@@ -1199,12 +1318,17 @@ def main(cfg: DictConfig):
         conditions = [conditions]
     
     # Check if any finetuned conditions are requested
-    finetuned_conditions = {"finetuned_generation", "finetuned_classification"}
+    finetuned_conditions = {
+        "finetuned_generation", "finetuned_classification",
+        "finetuned_reasoning_classification", "finetuned_reasoning_generation",
+    }
     needs_finetuned = bool(set(conditions) & finetuned_conditions)
-    
+
     # Get adapter paths
     generation_adapter = finetuned_cfg.get("generation_adapter")
     classification_adapter = finetuned_cfg.get("classification_adapter")
+    reasoning_classification_adapter = finetuned_cfg.get("reasoning_classification_adapter")
+    reasoning_generation_adapter = finetuned_cfg.get("reasoning_generation_adapter")
     
     # Check if llamaguard condition is requested
     needs_llamaguard = "llamaguard_classification" in conditions
@@ -1218,6 +1342,10 @@ def main(cfg: DictConfig):
         print(f"Generation adapter: {generation_adapter}")
     if classification_adapter:
         print(f"Classification adapter: {classification_adapter}")
+    if reasoning_classification_adapter:
+        print(f"Reasoning classification adapter: {reasoning_classification_adapter}")
+    if reasoning_generation_adapter:
+        print(f"Reasoning generation adapter: {reasoning_generation_adapter}")
     if needs_llamaguard:
         print(f"LlamaGuard model: {llamaguard_model}")
     print(f"{'='*60}")
@@ -1234,6 +1362,12 @@ def main(cfg: DictConfig):
     if "finetuned_classification" in conditions:
         if not classification_adapter or not os.path.exists(classification_adapter):
             raise ValueError(f"finetuned_classification requires valid finetuned.classification_adapter path. Got: {classification_adapter}")
+    if "finetuned_reasoning_classification" in conditions:
+        if not reasoning_classification_adapter or not os.path.exists(reasoning_classification_adapter):
+            raise ValueError(f"finetuned_reasoning_classification requires valid finetuned.reasoning_classification_adapter path. Got: {reasoning_classification_adapter}")
+    if "finetuned_reasoning_generation" in conditions:
+        if not reasoning_generation_adapter or not os.path.exists(reasoning_generation_adapter):
+            raise ValueError(f"finetuned_reasoning_generation requires valid finetuned.reasoning_generation_adapter path. Got: {reasoning_generation_adapter}")
     
     # Initialize wandb
     wandb_run = None
@@ -1263,7 +1397,7 @@ def main(cfg: DictConfig):
     if needs_finetuned:
         llm_kwargs["enable_lora"] = True
         llm_kwargs["max_lora_rank"] = lora_cfg.get("rank", 16)
-        llm_kwargs["max_loras"] = 2  # Support both generation and classification adapters
+        llm_kwargs["max_loras"] = 4  # generation, classification, reasoning_classification, reasoning_generation
         print("LoRA enabled for fine-tuned conditions")
     
     llm = LLM(**llm_kwargs)
@@ -1279,6 +1413,17 @@ def main(cfg: DictConfig):
     if classification_adapter and os.path.exists(classification_adapter):
         classification_lora_request = LoRARequest("classification_lora", 2, classification_adapter)
         print(f"Loaded classification adapter: {classification_adapter}")
+
+    reasoning_classification_lora_request = None
+    reasoning_generation_lora_request = None
+
+    if reasoning_classification_adapter and os.path.exists(reasoning_classification_adapter):
+        reasoning_classification_lora_request = LoRARequest("reasoning_classification_lora", 3, reasoning_classification_adapter)
+        print(f"Loaded reasoning classification adapter: {reasoning_classification_adapter}")
+
+    if reasoning_generation_adapter and os.path.exists(reasoning_generation_adapter):
+        reasoning_generation_lora_request = LoRARequest("reasoning_generation_lora", 4, reasoning_generation_adapter)
+        print(f"Loaded reasoning generation adapter: {reasoning_generation_adapter}")
     
     # Load tokenizer (use generation adapter if available, else base model)
     tokenizer_path = generation_adapter if generation_adapter and os.path.exists(generation_adapter) else model_cfg["name"]
@@ -1324,6 +1469,14 @@ def main(cfg: DictConfig):
             if condition == "finetuned_classification" and classification_lora_request is None:
                 print(f"  Skipping {condition} (no classification adapter)")
                 continue
+
+            if condition == "finetuned_reasoning_classification" and reasoning_classification_lora_request is None:
+                print(f"  Skipping {condition} (no reasoning classification adapter)")
+                continue
+
+            if condition == "finetuned_reasoning_generation" and reasoning_generation_lora_request is None:
+                print(f"  Skipping {condition} (no reasoning generation adapter)")
+                continue
             
             if condition in ("vanilla_with_human_intent", "zeroshot_cot_classification_with_intent") and not has_intent:
                 print(f"  Skipping {condition} (no intent column)")
@@ -1345,6 +1498,8 @@ def main(cfg: DictConfig):
                 model_intents=model_intents,
                 generation_lora_request=generation_lora_request,
                 classification_lora_request=classification_lora_request,
+                reasoning_classification_lora_request=reasoning_classification_lora_request,
+                reasoning_generation_lora_request=reasoning_generation_lora_request,
             )
             
             if not results:
