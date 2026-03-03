@@ -2,6 +2,31 @@
 
 Research project for using verbalized intention analysis to improve jailbreak mitigation in large language models.
 
+## Environment Setup
+
+### Hugging Face Cache
+
+By default, Hugging Face downloads models and datasets to `~/.cache/huggingface`, which can fill up your home directory quickly. To redirect the cache to your scratch folder, set the `HF_HOME` environment variable before running any scripts:
+
+```bash
+export HF_HOME=/scratch/$USER/hub
+```
+
+To make this persistent, add it to your `~/.bashrc` or `~/.zshrc`:
+
+```bash
+echo 'export HF_HOME=/scratch/$USER/hub' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Alternatively, you can set it inline for a single command:
+
+```bash
+HF_HOME=/scratch/$USER/hub python scripts/train.py
+```
+
+> **Note:** `HF_HOME` controls all Hugging Face caches (models, datasets, tokenizers). The hub cache specifically lives at `$HF_HOME/hub`.
+
 ## Installation
 
 This project uses [uv](https://github.com/astral-sh/uv) for Python package management.
