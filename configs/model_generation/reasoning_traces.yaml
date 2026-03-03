@@ -53,7 +53,10 @@ vllm:
   gpu_memory_utilization: 0.95
   max_model_len: 2048
   dtype: "bfloat16"
-  enforce_eager: true
+  enforce_eager: false
+  # Number of GPUs for tensor parallelism. null = use all available GPUs.
+  # Override with e.g. tensor_parallel_size=1 to restrict to a single GPU.
+  tensor_parallel_size: null
 
 paths:
   output_dir: "data/reasoning_traces"
