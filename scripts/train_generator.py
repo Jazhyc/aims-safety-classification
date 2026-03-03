@@ -42,7 +42,7 @@ def main(cfg: DictConfig):
     
     # Initialize wandb if configured
     wandb_cfg = config.get("wandb", {})
-    if wandb_cfg and wandb is not None:
+    if wandb_cfg.get("enabled", False) and wandb is not None:
         wandb.init(
             entity=wandb_cfg.get("entity"),
             project=wandb_cfg.get("project"),

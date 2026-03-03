@@ -68,6 +68,7 @@ wandb:
   enabled: false
   entity: null
   project: "reasoning-traces-generation"
+  run_name: null
   tags: ["reasoning", "wildguard"]
   dir: "logs/wandb"
   mode: "online"
