@@ -78,7 +78,7 @@ done
 
 # ===========================================================================
 # Pass 2: Reclassify with LLM at temperature=0
-#         Loads parsed_samples.jsonl — skips generation, still needs vLLM.
+#         Loads parsed_samples.jsonl
 # ===========================================================================
 echo ""
 echo "######################################################################"
@@ -102,7 +102,7 @@ done
 
 # ===========================================================================
 # Pass 3: Reclassify with ModernBERT intent classifier
-#         Loads parsed_samples.jsonl — skips generation AND skips vLLM load.
+#         Loads parsed_samples.jsonl
 # ===========================================================================
 echo ""
 echo "######################################################################"
