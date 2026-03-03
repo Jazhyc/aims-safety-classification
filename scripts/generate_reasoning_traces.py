@@ -17,11 +17,54 @@ Usage:
 import json
 import re
 import warnings
+import os
 from pathlib import Path
+
+# Must be set before vLLM is imported so get_mp_context() picks it up.
+# vLLM defaults to 'fork' on Linux, which crashes when CUDA is initialized
+# in the parent before the EngineCore subprocess is forked.
+os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
 
 import torch
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+
+# ---------------------------------------------------------------------------
+# Monkey-patch: allow MIG / GPU UUIDs in CUDA_VISIBLE_DEVICES with vLLM.
+#
+# vLLM's Platform.device_id_to_physical_device_id() calls int() on the value
+# from CUDA_VISIBLE_DEVICES, which crashes when it contains a UUID such as
+#   CUDA_VISIBLE_DEVICES=MIG-ec73ed57-6aa0-541d-9909-e4f6518cbd33
+#
+# The patch detects UUID-format entries and resolves them to the correct
+# physical GPU index via nvml before vLLM tries to cast them to int.
+# ---------------------------------------------------------------------------
+def _uuid_aware_device_id_to_physical(cls, device_id: int) -> int:
+    device_control = getattr(cls, "device_control_env_var", "CUDA_VISIBLE_DEVICES")
+    raw = os.environ.get(device_control, "")
+    if not raw:
+        return device_id
+    entries = raw.split(",")
+    entry = entries[device_id]
+    if entry.lstrip("-").isdigit():
+        return int(entry)
+    # UUID path (MIG-* or GPU-*)
+    from vllm.third_party import pynvml
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByUUID(entry)
+    try:
+        # MIG device → get the parent physical GPU
+        parent = pynvml.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(handle)
+        return pynvml.nvmlDeviceGetIndex(parent)
+    except pynvml.NVMLError:
+        # Regular GPU UUID
+        return pynvml.nvmlDeviceGetIndex(handle)
+
+import vllm.platforms.interface as _vllm_platform_iface
+_vllm_platform_iface.Platform.device_id_to_physical_device_id = classmethod(
+    _uuid_aware_device_id_to_physical
+)
+# ---------------------------------------------------------------------------
 
 from datasets import load_dataset
 from vllm import LLM, SamplingParams

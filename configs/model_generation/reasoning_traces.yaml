@@ -54,9 +54,12 @@ vllm:
   max_model_len: 2048
   dtype: "bfloat16"
   enforce_eager: false
-  # Number of GPUs for tensor parallelism. null = use all available GPUs.
-  # Override with e.g. tensor_parallel_size=1 to restrict to a single GPU.
-  tensor_parallel_size: null
+  # Number of GPUs for tensor parallelism.
+  # Set to null to auto-detect via torch.cuda.device_count(), but only do this
+  # if all detected devices are distinct physical GPUs (check with nvidia-smi).
+  # On this cluster, both CUDA device indices map to the same physical GPU
+  # (MIG or virtualisation), so multi-GPU via NCCL fails with "duplicate GPU".
+  tensor_parallel_size: 1
 
 paths:
   output_dir: "data/reasoning_traces"
