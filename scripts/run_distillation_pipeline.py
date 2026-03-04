@@ -66,18 +66,31 @@ def traces_cached(teacher_model: str, traces_dir: Path) -> tuple[bool, Path]:
     return False, path
 
 
-def distillation_cached(teacher_model: str, condition: str, models_dir: Path) -> tuple[bool, Path]:
+def _run_name(teacher_model: str, condition: str, suffix: str | None) -> str:
+    parts = ["reasoning-distillation", _teacher_slug(teacher_model), _condition_slug(condition)]
+    if suffix:
+        parts.append(suffix)
+    return "-".join(parts)
+
+
+def _teacher_run_name(teacher_model: str, suffix: str | None) -> str:
+    slug = _teacher_slug(teacher_model)
+    return f"{slug}-{suffix}" if suffix else slug
+
+
+def distillation_cached(teacher_model: str, condition: str, models_dir: Path, suffix: str | None = None) -> tuple[bool, Path]:
     """Step 2 cache: LoRA adapter_config.json exists inside the adapter directory."""
-    run_name = f"reasoning-distillation-{_teacher_slug(teacher_model)}-{_condition_slug(condition)}"
+    run_name = _run_name(teacher_model, condition, suffix)
     adapter_dir = models_dir / f"{run_name}_adapter"
     if (adapter_dir / "adapter_config.json").exists():
         return True, adapter_dir
     return False, adapter_dir
 
 
-def safety_cached(teacher_model: str, safety_dir: Path) -> tuple[bool, Path]:
+def safety_cached(teacher_model: str, safety_dir: Path, suffix: str | None = None) -> tuple[bool, Path]:
     """Step 3 cache: .done sentinel file exists."""
-    sentinel = safety_dir / "pipeline" / _teacher_slug(teacher_model) / ".done"
+    subdir = f"{_teacher_slug(teacher_model)}-{suffix}" if suffix else _teacher_slug(teacher_model)
+    sentinel = safety_dir / "pipeline" / subdir / ".done"
     return sentinel.exists(), sentinel
 
 
@@ -116,6 +129,7 @@ def step1_teacher(
         sys.executable, "scripts/generate_reasoning_traces.py",
         f"model.name={teacher_model}",
         f"conditions=[{conditions_str}]",
+        f"paths.output_dir={traces_dir}",
         f"wandb.enabled={str(wandb_cfg.get('enabled', False)).lower()}",
         f"wandb.project={wandb_cfg.get('reasoning_traces_project', 'reasoning-traces-generation')}",
         f"wandb.run_name={_teacher_slug(teacher_model)}",
@@ -136,14 +150,18 @@ def step2_distill(
     wandb_cfg: dict,
     extra_env: dict,
     project_root: Path,
+    suffix: str | None = None,
 ) -> tuple[bool, Path]:
-    cached, adapter_dir = distillation_cached(teacher_model, condition, models_dir)
+    cached, adapter_dir = distillation_cached(teacher_model, condition, models_dir, suffix)
     if cached:
         print(f"[CACHE HIT] Step 2 – adapter already exists: {adapter_dir}")
         return True, adapter_dir
 
-    run_name = f"reasoning-distillation-{_teacher_slug(teacher_model)}-{_condition_slug(condition)}"
+    run_name = _run_name(teacher_model, condition, suffix)
     model_save_dir = models_dir / run_name
+    wandb_run_name = f"{_teacher_slug(teacher_model)}-{_condition_slug(condition)}"
+    if suffix:
+        wandb_run_name += f"-{suffix}"
 
     cmd = [
         sys.executable, "scripts/train_generator.py",
@@ -156,13 +174,18 @@ def step2_distill(
         f"paths.predictions_dir=data/predictions/causal/{run_name}",
         f"wandb.enabled={str(wandb_cfg.get('enabled', False)).lower()}",
         f"wandb.project={wandb_cfg.get('distillation_project', 'reasoning-distillation')}",
-        f"wandb.run_name={_teacher_slug(teacher_model)}-{_condition_slug(condition)}",
+        f"wandb.run_name={wandb_run_name}",
     ]
     if wandb_cfg.get("entity"):
         cmd.append(f"wandb.entity={wandb_cfg['entity']}")
 
     label = f"Step 2 – distillation: {teacher_model} / {condition}"
     ok = _run(cmd, project_root, label, extra_env)
+    # Training may have succeeded even if the subprocess exited non-zero (e.g. post-
+    # training vLLM eval OOM).  If the adapter was saved, treat the step as success.
+    if not ok and (adapter_dir / "adapter_config.json").exists():
+        print(f"  NOTE: subprocess exited with error but adapter was saved — continuing to step 3")
+        ok = True
     return ok, adapter_dir
 
 
@@ -173,13 +196,15 @@ def step3_safety(
     wandb_cfg: dict,
     extra_env: dict,
     project_root: Path,
+    suffix: str | None = None,
 ) -> bool:
-    cached, sentinel = safety_cached(teacher_model, safety_dir)
+    cached, sentinel = safety_cached(teacher_model, safety_dir, suffix)
     if cached:
         print(f"[CACHE HIT] Step 3 – safety results already exist: {sentinel.parent}")
         return True
 
-    output_dir = safety_dir / "pipeline" / _teacher_slug(teacher_model)
+    subdir = f"{_teacher_slug(teacher_model)}-{suffix}" if suffix else _teacher_slug(teacher_model)
+    output_dir = safety_dir / "pipeline" / subdir
     safety_conditions = [CONDITION_MAP[c]["safety_condition"] for c in adapter_map]
     conditions_str = ",".join(safety_conditions)
 
@@ -189,7 +214,7 @@ def step3_safety(
         f"paths.output_dir={output_dir}",
         "wandb.enabled=true",  # always log safety results regardless of pipeline wandb.enabled
         f"wandb.project={wandb_cfg.get('safety_project', 'distillation-teacher-sweep')}",
-        f"wandb.run_name={_teacher_slug(teacher_model)}",
+        f"wandb.run_name={_teacher_run_name(teacher_model, suffix)}",
     ]
     if wandb_cfg.get("entity"):
         cmd.append(f"wandb.entity={wandb_cfg['entity']}")
@@ -215,6 +240,9 @@ def main(cfg: DictConfig) -> None:
     conditions: list[str] = config.get("conditions", ["without_intent", "with_intent"])
     num_samples = config.get("num_samples")
     cuda_device = config.get("cuda_visible_devices")
+    run_suffix: str | None = config.get("run_suffix") or None
+    # Maps teacher model name → existing parsed_results.json path (skips step 1 for that model)
+    trace_overrides: dict[str, str] = config.get("teacher_trace_overrides", {}) or {}
     wandb_cfg: dict = config.get("wandb", {})
     cache_cfg: dict = config.get("cache", {})
 
@@ -238,6 +266,8 @@ def main(cfg: DictConfig) -> None:
     print(f"  Distillation Pipeline")
     print(f"  Teachers  : {len(teacher_models)}")
     print(f"  Conditions: {conditions}")
+    if run_suffix:
+        print(f"  Run suffix: {run_suffix}")
     if cuda_device:
         print(f"  CUDA (step 1 only): {cuda_device}")
     print(f"{'#'*60}")
@@ -252,23 +282,27 @@ def main(cfg: DictConfig) -> None:
         summary[slug] = {}
 
         # ── Step 1: teacher traces (large model — use MIG device if set) ──────
-        ok1 = step1_teacher(
-            teacher_model, conditions, num_samples,
-            traces_dir, wandb_cfg, teacher_env, project_root,
-        )
-        summary[slug]["step1_traces"] = "ok" if ok1 else "FAILED"
-        if not ok1:
-            print(f"  Skipping steps 2 & 3 for {teacher_model} — step 1 failed.")
-            continue
-
-        _, traces_path = traces_cached(teacher_model, traces_dir)
+        if teacher_model in trace_overrides:
+            traces_path = project_root / trace_overrides[teacher_model]
+            print(f"[OVERRIDE] Step 1 – using pre-existing traces: {traces_path}")
+            summary[slug]["step1_traces"] = "override"
+        else:
+            ok1 = step1_teacher(
+                teacher_model, conditions, num_samples,
+                traces_dir, wandb_cfg, teacher_env, project_root,
+            )
+            summary[slug]["step1_traces"] = "ok" if ok1 else "FAILED"
+            if not ok1:
+                print(f"  Skipping steps 2 & 3 for {teacher_model} — step 1 failed.")
+                continue
+            _, traces_path = traces_cached(teacher_model, traces_dir)
 
         # ── Step 2: distillation per condition (8B student — default GPU) ──
         adapter_map: dict[str, Path] = {}
         for condition in conditions:
             ok2, adapter_dir = step2_distill(
                 teacher_model, condition, traces_path,
-                models_dir, wandb_cfg, {}, project_root,
+                models_dir, wandb_cfg, {}, project_root, run_suffix,
             )
             summary[slug][f"step2_{condition}"] = "ok" if ok2 else "FAILED"
             if ok2:
@@ -278,7 +312,7 @@ def main(cfg: DictConfig) -> None:
         if adapter_map:
             ok3 = step3_safety(
                 teacher_model, adapter_map,
-                safety_dir, wandb_cfg, {}, project_root,
+                safety_dir, wandb_cfg, {}, project_root, run_suffix,
             )
             summary[slug]["step3_safety"] = "ok" if ok3 else "FAILED"
         else:
@@ -292,7 +326,7 @@ def main(cfg: DictConfig) -> None:
     for slug, steps in summary.items():
         print(f"\n  {slug}")
         for step, status in steps.items():
-            marker = "✓" if status == "ok" else ("–" if status == "skipped" else "✗")
+            marker = "✓" if status in ("ok", "override") else ("–" if status == "skipped" else "✗")
             print(f"    {marker} {step}: {status}")
 
 

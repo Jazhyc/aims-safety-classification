@@ -64,6 +64,27 @@ import vllm.platforms.interface as _vllm_platform_iface
 _vllm_platform_iface.Platform.device_id_to_physical_device_id = classmethod(
     _uuid_aware_device_id_to_physical
 )
+
+# ---------------------------------------------------------------------------
+# Second patch: vLLM inspects model architectures in a *fresh subprocess*
+# (python -m vllm.model_executor.models.registry) to avoid CUDA init in the
+# parent.  That subprocess inherits CUDA_VISIBLE_DEVICES=MIG-UUID but has no
+# monkey-patch, so it still crashes.  The inspection only reads Python class
+# metadata — it doesn't need a GPU at all — so we temporarily hide
+# CUDA_VISIBLE_DEVICES from the subprocess env and restore it afterward.
+# ---------------------------------------------------------------------------
+import vllm.model_executor.models.registry as _vllm_registry
+_original_run_in_subprocess = _vllm_registry._run_in_subprocess
+
+def _patched_run_in_subprocess(fn):
+    cuda_vis = os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+    try:
+        return _original_run_in_subprocess(fn)
+    finally:
+        if cuda_vis is not None:
+            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_vis
+
+_vllm_registry._run_in_subprocess = _patched_run_in_subprocess
 # ---------------------------------------------------------------------------
 
 from datasets import load_dataset
@@ -110,11 +131,11 @@ The intent should be a kind of summary of the user request, focusing on its core
 {taxonomy}"""
 
 _OUTPUT_FORMAT = """Use the taxonomy to determine which is the underlying intent and the final harm label for the prompt, including the harmful categories that are involved. Output your answer in the following format:
-"Prompt intent: <output the intent as a string to justify the prompt harm>
-Prompt harm: <harmful/unharmful>
-Reasoning: <output the reasoning process as a string to justify the prompt intent and prompt harm>"
+"Reasoning: <output the reasoning process as a string to justify the prompt intent and prompt harm>
+Prompt intent: <output the intent as a string to justify the prompt harm>
+Prompt harm: <harmful/unharmful>"
 
-Output the answer in the format specified above after thinking about the request, its underlying intent and the final harm label."""
+Think through the request in the Reasoning field first, then state the intent and harm label."""
 
 # Condition 1: Ground truth harm label provided, no ground truth intent
 PROMPT_TEMPLATE = _PREAMBLE.format(taxonomy=TAXONOMY) + """
@@ -164,7 +185,7 @@ def parse_model_output(raw_text: str) -> dict:
     """
     Parse the model output to extract the intent, harm classification, and reasoning.
 
-    Output format (in order): Prompt intent → Prompt harm → Reasoning
+    Output format (in order): Reasoning → Prompt intent → Prompt harm
 
     Returns a dict with:
         - prompt_intent: str or None
@@ -173,10 +194,19 @@ def parse_model_output(raw_text: str) -> dict:
     """
     text = raw_text.strip()
 
-    # Extract Prompt intent field (ends when Prompt harm: or Reasoning: begins)
+    # Extract Reasoning field (now first — ends at Prompt intent: or Prompt harm:)
+    reasoning = ""
+    reasoning_match = re.search(
+        r'Reasoning:\s*(.+?)(?=Prompt intent:|Prompt harm:|$)',
+        text, re.IGNORECASE | re.DOTALL,
+    )
+    if reasoning_match:
+        reasoning = reasoning_match.group(1).strip()
+
+    # Extract Prompt intent field (ends when Prompt harm: begins)
     prompt_intent = None
     intent_match = re.search(
-        r'Prompt intent:\s*(.+?)(?=Prompt harm:|Reasoning:|$)',
+        r'Prompt intent:\s*(.+?)(?=Prompt harm:|$)',
         text, re.IGNORECASE | re.DOTALL,
     )
     if intent_match:
@@ -196,12 +226,6 @@ def parse_model_output(raw_text: str) -> dict:
             prompt_harm = 'unharmful'
         elif 'harmful' in label:
             prompt_harm = 'harmful'
-
-    # Extract Reasoning field (now last — runs to end of text)
-    reasoning = ""
-    reasoning_match = re.search(r'Reasoning:\s*(.+?)$', text, re.IGNORECASE | re.DOTALL)
-    if reasoning_match:
-        reasoning = reasoning_match.group(1).strip()
 
     return {
         "prompt_intent": prompt_intent,

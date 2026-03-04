@@ -701,6 +701,11 @@ def run_causal_flow(config):
         
         print("Freed PyTorch model from GPU memory")
 
+    skip_vllm_eval = bool(train_cfg.get("skip_vllm_eval", False))
+    if skip_vllm_eval:
+        print("Skipping post-training vLLM evaluation (skip_vllm_eval=True)")
+        return
+
     # Determine paths for VLLM loading
     if skip_training:
         adapter_dir = model_save_dir + "_adapter"

@@ -21,17 +21,28 @@ defaults:
 # Add one entry per teacher you want to benchmark.
 teacher_models:
   - "RedHatAI/gemma-3-27b-it-quantized.w4a16"
-  - "openai/gpt-oss-120b"
   - "RedHatAI/Qwen3-32B-quantized.w4a16"
-  - "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
+  # - "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
+  # - "openai/gpt-oss-120b"   # v1 traces/adapters already correct — no rerun needed
+  # - "cyankiwi/Qwen3.5-27B-AWQ-4bit"
+
+# ── Per-teacher trace overrides ────────────────────────────────────────────────
+# Models listed here skip step 1 and use the provided parsed_results.json directly.
+# Useful when existing traces are already in the correct format.
+teacher_trace_overrides: {}
 
 
 # ── Conditions ─────────────────────────────────────────────────────────────────
-# "without_intent" → MODE D: student outputs Reasoning + Prompt harm
-# "with_intent"    → MODE E: student outputs Reasoning + Intent + Prompt harm
+# "without_intent" → student outputs Reasoning + Prompt harm
+# "with_intent"    → student outputs Reasoning + Intent + Prompt harm
 conditions:
   - "without_intent"
   - "with_intent"
+
+# ── Run suffix ─────────────────────────────────────────────────────────────────
+# Appended to adapter directory names and WandB run names to version experiments.
+# Set to null (or omit) for no suffix.
+run_suffix: "v2"
 
 # ── Teacher generation ─────────────────────────────────────────────────────────
 # num_samples: null uses the full dataset; set an integer to subsample.
@@ -48,8 +59,8 @@ wandb:
   enabled: false
   entity: "intention-analysis"
   reasoning_traces_project: "reasoning-traces-generation"
-  distillation_project: "reasoning-distillation"
-  safety_project: "distillation-teacher-sweep"
+  distillation_project: "reasoning-distillation-v2"
+  safety_project: "distillation-teacher-sweep-v2"
 
 # ── Cache directories (relative to project root) ───────────────────────────────
 cache:
