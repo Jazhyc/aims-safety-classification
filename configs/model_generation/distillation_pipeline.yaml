@@ -22,7 +22,7 @@ defaults:
 teacher_models:
   - "RedHatAI/gemma-3-27b-it-quantized.w4a16"
   - "openai/gpt-oss-120b"
-  - "cyankiwi/Qwen3.5-27B-AWQ-4bit"
+  - "RedHatAI/Qwen3-32B-quantized.w4a16"
   - "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
 
 
@@ -46,10 +46,10 @@ cuda_visible_devices: MIG-ec73ed57-6aa0-541d-9909-e4f6518cbd33
 # Separate project per step for easy side-by-side comparison in the W&B UI.
 wandb:
   enabled: false
-  entity: null
+  entity: "intention-analysis"
   reasoning_traces_project: "reasoning-traces-generation"
   distillation_project: "reasoning-distillation"
-  safety_project: "safety-experiment-distilled"
+  safety_project: "distillation-teacher-sweep"
 
 # ── Cache directories (relative to project root) ───────────────────────────────
 cache:

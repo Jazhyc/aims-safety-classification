@@ -187,8 +187,8 @@ def step3_safety(
         sys.executable, "scripts/safety_experiment.py",
         f"experiment.conditions=[{conditions_str}]",
         f"paths.output_dir={output_dir}",
-        f"wandb.enabled={str(wandb_cfg.get('enabled', False)).lower()}",
-        f"wandb.project={wandb_cfg.get('safety_project', 'safety-experiment-distilled')}",
+        "wandb.enabled=true",  # always log safety results regardless of pipeline wandb.enabled
+        f"wandb.project={wandb_cfg.get('safety_project', 'distillation-teacher-sweep')}",
         f"wandb.run_name={_teacher_slug(teacher_model)}",
     ]
     if wandb_cfg.get("entity"):

@@ -291,7 +291,7 @@ def main(cfg: DictConfig):
             project=wandb_cfg.get("project", "reasoning-traces-generation"),
             name=wandb_cfg.get("run_name"),
             tags=wandb_cfg.get("tags", []),
-            dir=wandb_cfg.get("dir", "logs/wandb"),
+            dir=str(Path(hydra.utils.get_original_cwd()) / wandb_cfg.get("dir", "logs/wandb")),
             mode=wandb_cfg.get("mode", "online"),
             config=config,
         )

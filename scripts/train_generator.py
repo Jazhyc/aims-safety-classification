@@ -8,6 +8,7 @@ Usage:
 """
 
 import os
+from pathlib import Path
 
 from wandb import config
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -46,7 +47,7 @@ def main(cfg: DictConfig):
         wandb.init(
             entity=wandb_cfg.get("entity"),
             project=wandb_cfg.get("project"),
-            dir=wandb_cfg.get("dir", "logs/wandb"),
+            dir=str(Path(hydra.utils.get_original_cwd()) / wandb_cfg.get("dir", "logs/wandb")),
             name=wandb_cfg.get("run_name"),
             tags=wandb_cfg.get("tags", []),
             mode=wandb_cfg.get("mode", "online"),

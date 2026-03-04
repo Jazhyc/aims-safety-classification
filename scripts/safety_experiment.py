@@ -1377,11 +1377,11 @@ def main(cfg: DictConfig):
             project=wandb_cfg.get("project", "safety-experiment"),
             name=wandb_cfg.get("run_name"),
             tags=wandb_cfg.get("tags", []) + conditions,
-            dir=wandb_cfg.get("dir", "logs/wandb"),
+            dir=str(Path(hydra.utils.get_original_cwd()) / wandb_cfg.get("dir", "logs/wandb")),
             mode=wandb_cfg.get("mode", "online"),
             config=config,
         )
-    
+
     # Load model
     print(f"\n=== Loading Model: {model_cfg['name']} ===")
     
