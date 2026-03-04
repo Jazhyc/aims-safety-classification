@@ -378,6 +378,8 @@ def run_analysis(args):
 
         overridden = sum(1 for l in new_labels if l is not None)
         print(f"  Harm labels assigned: {overridden} / {len(flat_intents)}")
+        # Save per-sample reclassified labels so the notebook can show them
+        _save_parsed_samples(all_parsed_data, output_dir / "parsed_samples.jsonl")
 
     # ------------------------------------------------------------------
     # Phase 3: Sentence-transformer for diversity
