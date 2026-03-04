@@ -28,12 +28,6 @@ source .venv/bin/activate
 #     each intent with the trained ModernBERT intent classifier.  vLLM is NOT
 #     loaded for this pass.
 #
-# Temperature intuition:
-#   0.3  -> near-greedy; expect very low diversity, almost no DPO pairs
-#   0.6  -> moderate diversity; outputs still clean and structured
-#   0.8  -> standard DPO sampling point from the literature
-#   1.0  -> high diversity; watch parse_failures in summary.json
-#   1.2  -> stress test; some outputs may lose the Intent/Harm format
 # ---------------------------------------------------------------------------
 
 ADAPTER_PATH="trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter"
