@@ -197,7 +197,7 @@ def load_reasoning_traces_dataset(data_cfg):
         filtered.append({
             "id": str(rec.get("wildguard_id", "")),
             "prompt": rec.get("prompt", ""),
-            "intent": rec.get("intent", ""),
+            "intent": rec.get("ground_truth", {}).get("intent", ""),
             "harm_label": harm_binary,   # "harmful" or "safe"
             "reasoning": reasoning,
         })
@@ -485,7 +485,7 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
     max_length = model_cfg.get("max_length_causal", 512)
     
     wandb_cfg = config.get("wandb", {})
-    report_to = "wandb" if wandb_cfg else "none"
+    report_to = "wandb" if wandb_cfg.get("enabled", False) else "none"
     run_name = wandb_cfg.get("run_name", None)
     
     training_args = {

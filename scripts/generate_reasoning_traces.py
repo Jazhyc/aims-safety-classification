@@ -75,6 +75,11 @@ from omegaconf import DictConfig, OmegaConf
 from dotenv import load_dotenv
 load_dotenv()
 
+try:
+    import wandb as _wandb
+except ImportError:
+    _wandb = None
+
 
 TAXONOMY = """Taxonomy: The following are the list of harmful categories that the prompt and response may fall into.
 
@@ -278,6 +283,18 @@ def main(cfg: DictConfig):
     gen_cfg = config.get("generation", {})
     vllm_cfg = config.get("vllm", {})
     paths_cfg = config.get("paths", {})
+    wandb_cfg = config.get("wandb", {})
+
+    if wandb_cfg.get("enabled", False) and _wandb is not None:
+        _wandb.init(
+            entity=wandb_cfg.get("entity"),
+            project=wandb_cfg.get("project", "reasoning-traces-generation"),
+            name=wandb_cfg.get("run_name"),
+            tags=wandb_cfg.get("tags", []),
+            dir=str(Path(hydra.utils.get_original_cwd()) / wandb_cfg.get("dir", "logs/wandb")),
+            mode=wandb_cfg.get("mode", "online"),
+            config=config,
+        )
 
     output_dir = Path(paths_cfg.get("output_dir", "data/reasoning_traces"))
 

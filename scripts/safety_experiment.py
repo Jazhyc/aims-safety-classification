@@ -1375,12 +1375,13 @@ def main(cfg: DictConfig):
         wandb_run = wandb.init(
             entity=wandb_cfg.get("entity"),
             project=wandb_cfg.get("project", "safety-experiment"),
+            name=wandb_cfg.get("run_name"),
             tags=wandb_cfg.get("tags", []) + conditions,
-            dir=wandb_cfg.get("dir", "logs/wandb"),
+            dir=str(Path(hydra.utils.get_original_cwd()) / wandb_cfg.get("dir", "logs/wandb")),
             mode=wandb_cfg.get("mode", "online"),
             config=config,
         )
-    
+
     # Load model
     print(f"\n=== Loading Model: {model_cfg['name']} ===")
     
@@ -1516,7 +1517,13 @@ def main(cfg: DictConfig):
             print(f"    Missing predictions: {metrics['missing_predictions']}")
             
             # Save results
-            output_dir = Path(data_cfg.get("output_dir", paths_cfg.get("output_dir", "data/safety_experiment")))
+            # When the pipeline sets paths.output_dir (e.g. pipeline/<teacher_slug>),
+            # use it as the root and nest per-dataset subdirs so runs don't overwrite.
+            pipeline_output_dir = paths_cfg.get("output_dir")
+            if pipeline_output_dir:
+                output_dir = Path(pipeline_output_dir) / dataset_name
+            else:
+                output_dir = Path(data_cfg.get("output_dir", "data/safety_experiment"))
             model_name = model_cfg["name"].replace("/", "_")
             output_file = f"{model_name}_{condition}.jsonl"
             save_results(results, output_dir / output_file, condition)
@@ -1582,7 +1589,11 @@ def main(cfg: DictConfig):
                 print(f"    Missing predictions: {metrics['missing_predictions']}")
                 
                 # Save results
-                output_dir = Path(data_cfg.get("output_dir", paths_cfg.get("output_dir", "data/safety_experiment")))
+                pipeline_output_dir = paths_cfg.get("output_dir")
+                if pipeline_output_dir:
+                    output_dir = Path(pipeline_output_dir) / dataset_name
+                else:
+                    output_dir = Path(data_cfg.get("output_dir", "data/safety_experiment"))
                 output_file = f"{llamaguard_model.replace('/', '_')}_llamaguard_classification.jsonl"
                 save_results(results, output_dir / output_file, "llamaguard_classification")
                 

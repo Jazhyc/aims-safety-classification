@@ -30,6 +30,7 @@ training:
   bf16: true
   optim: "paged_adamw_8bit"
   gradient_checkpointing: true
+  torch_compile: false
 
 # ==============================================================
 # DISTILLATION MODE — pick one condition and uncomment it below.
@@ -103,5 +104,6 @@ quantization:
   bnb_4bit_use_double_quant: true
 
 wandb:
+  enabled: true
   project: "reasoning-distillation"
-  name: null
+  run_name: null

@@ -139,9 +139,10 @@ vllm:
 
 # Weights & Biases configuration
 wandb:
-  enabled: false
+  enabled: true
   entity: null
   project: "safety-experiment"
+  run_name: null
   tags: ["safety", "classification"]
   dir: "logs/wandb"
   mode: "online"

@@ -1,0 +1,58 @@
+# Pipeline: teacher reasoning-trace generation → student distillation → safety evaluation.
+#
+# For each teacher model the pipeline runs three steps:
+#   1. Teacher  – generate reasoning traces via generate_reasoning_traces.py
+#   2. Distill  – fine-tune the student on those traces via train_generator.py
+#   3. Evaluate – run safety_experiment.py with the distilled adapters
+#
+# Caching: each step writes a sentinel so it is skipped on re-runs:
+#   Step 1: data/reasoning_traces/<teacher_slug>/parsed_results.json  (non-empty)
+#   Step 2: trained_models/causal/<run_name>_adapter/adapter_config.json
+#   Step 3: data/safety_experiment/pipeline/<teacher_slug>/.done
+#
+# WandB run names are "<teacher_slug>" for steps 1 & 3, and
+# "<teacher_slug>-<condition>" for step 2.
+
+defaults:
+  - base_hydra@hydra
+  - _self_
+
+# ── Teacher models ─────────────────────────────────────────────────────────────
+# Add one entry per teacher you want to benchmark.
+teacher_models:
+  - "RedHatAI/gemma-3-27b-it-quantized.w4a16"
+  - "openai/gpt-oss-120b"
+  - "RedHatAI/Qwen3-32B-quantized.w4a16"
+  - "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
+
+
+# ── Conditions ─────────────────────────────────────────────────────────────────
+# "without_intent" → MODE D: student outputs Reasoning + Prompt harm
+# "with_intent"    → MODE E: student outputs Reasoning + Intent + Prompt harm
+conditions:
+  - "without_intent"
+  - "with_intent"
+
+# ── Teacher generation ─────────────────────────────────────────────────────────
+# num_samples: null uses the full dataset; set an integer to subsample.
+num_samples: null
+
+# ── CUDA device ────────────────────────────────────────────────────────────────
+# Passed as CUDA_VISIBLE_DEVICES to every subprocess.
+# Accepts an integer index, a MIG UUID, or null (inherit from environment).
+cuda_visible_devices: MIG-ec73ed57-6aa0-541d-9909-e4f6518cbd33
+
+# ── WandB ──────────────────────────────────────────────────────────────────────
+# Separate project per step for easy side-by-side comparison in the W&B UI.
+wandb:
+  enabled: false
+  entity: "intention-analysis"
+  reasoning_traces_project: "reasoning-traces-generation"
+  distillation_project: "reasoning-distillation"
+  safety_project: "distillation-teacher-sweep"
+
+# ── Cache directories (relative to project root) ───────────────────────────────
+cache:
+  reasoning_traces_dir: "data/reasoning_traces"
+  distilled_models_dir: "trained_models/causal"
+  safety_dir: "data/safety_experiment"
