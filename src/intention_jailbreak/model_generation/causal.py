@@ -18,6 +18,7 @@ from vllm.lora.request import LoRARequest
 from .preprocessing import preprocess_data
 from .data_utils import train_val_test_split, align_tokenizer_with_model, apply_binary_harm_mapping
 from .evaluate_generations import compute_and_log_metrics
+from .prompt_templates import build_student_prompt
 
 try:
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -579,7 +580,12 @@ def run_causal_flow(config):
         raw_dataset = load_reasoning_traces_dataset(data_cfg)
 
         def create_prompt_completion(examples):
-            prompts = [format_prompt(p) for p in examples["prompt"]]
+            # Use the shared student prompt template: preamble + taxonomy + output format
+            # so that training and inference see the same input structure.
+            prompts = [
+                build_student_prompt(p, with_intent=with_intent) + "\n"
+                for p in examples["prompt"]
+            ]
             intents = examples["intent"] if with_intent else [None] * len(examples["prompt"])
             completions = [
                 format_completion_with_reasoning(r, h, i)
@@ -618,13 +624,15 @@ def run_causal_flow(config):
     )
     
     # Print example of training data
-    print("\n" + "=" * 40)
+    print("\n" + "=" * 60)
     print("EXAMPLE TRAINING DATA:")
-    print("=" * 40)
+    print("=" * 60)
     example = dataset_with_cols[0]
-    print(f"Prompt: {example['prompt'][:100]}...")
-    print(f"Completion: {example['completion']}")
-    print("=" * 40 + "\n")
+    print("── PROMPT ──")
+    print(example["prompt"])
+    print("── COMPLETION ──")
+    print(example["completion"])
+    print("=" * 60 + "\n")
     
     train_dataset, val_dataset, test_dataset = train_val_test_split(
         dataset_with_cols, config

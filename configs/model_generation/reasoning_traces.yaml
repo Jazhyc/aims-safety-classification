@@ -44,14 +44,19 @@ dataset:
   seed: 42
 
 generation:
-  max_new_tokens: 2048
+  max_new_tokens: 8192
   temperature: 0.0
   top_p: 1.0
   top_k: -1
 
+# When true, the model's internal chain-of-thought is wrapped in <think>...</think>
+# before the structured output.  Requires a model that supports thinking mode
+# (e.g. Qwen3).  The <think> block is stripped by parse_model_output.
+thinking_mode: false
+
 vllm:
   gpu_memory_utilization: 0.95
-  max_model_len: 2048
+  max_model_len: 12288
   dtype: "bfloat16"
   enforce_eager: false
   # Number of GPUs for tensor parallelism.

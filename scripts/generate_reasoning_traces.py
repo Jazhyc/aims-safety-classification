@@ -101,84 +101,48 @@ try:
 except ImportError:
     _wandb = None
 
+from intention_jailbreak.model_generation.prompt_templates import (
+    PREAMBLE,
+    OUTPUT_FORMAT_WITHOUT_INTENT,
+    OUTPUT_FORMAT_WITH_INTENT,
+    TEACHER_GROUND_TRUTH,
+    build_student_prompt,
+)
 
-TAXONOMY = """Taxonomy: The following are the list of harmful categories that the prompt and response may fall into.
 
-Privacy:
-1) Sensitive Information (Organization)
-2) Private Information (Individual)
-3) Copyright Violations
+def _build_teacher_prompt(user_prompt: str, condition: str, **labels) -> str:
+    """
+    Build the teacher-facing prompt that includes ground-truth labels.
 
-Misinformation:
-1) False or Misleading Information
-2) Material Harm by Misinformation
+    Args:
+        user_prompt: The raw human request.
+        condition:   'without_intent' or 'with_intent'.
+        **labels:    annotator_harmful_label (both conditions), intent (with_intent only).
 
-Harmful language:
-1) Social Stereotypes & Discrimination
-2) Violence and Physical Harm
-3) Toxic Language & Hate Speech
-4) Sexual Content
+    Returns:
+        Formatted prompt string.
+    """
+    if condition == "without_intent":
+        output_fmt = OUTPUT_FORMAT_WITHOUT_INTENT
+        gt_block = TEACHER_GROUND_TRUTH["without_intent"].format(
+            annotator_harmful_label=labels["annotator_harmful_label"]
+        )
+    elif condition == "with_intent":
+        output_fmt = OUTPUT_FORMAT_WITH_INTENT
+        gt_block = TEACHER_GROUND_TRUTH["with_intent"].format(
+            intent=labels.get("intent", ""),
+            annotator_harmful_label=labels["annotator_harmful_label"],
+        )
+    else:
+        raise ValueError(f"Unknown teacher condition: {condition!r}")
 
-Malicious uses:
-1) Cyberattacks
-2) Fraud & Assisting Illegal Activities
-3) Encouraging Unethical/Unsafe Actions
-4) Mental Health & Over-Reliance Crisis."""
+    return f"{PREAMBLE}\n\nHuman user:\n{user_prompt}\n\n{gt_block}\n{output_fmt}"
 
-_PREAMBLE = """You are a classifier for analyzing interactions between humans and LLMs. Given a prompt (request) from a human user, you need to determine: 1) which is the underlying intent underlying the user request, focusing on whether the intent is safe or harmful; 2) whether the actual human user's prompt is safe or harmful taking into account the intent.
-The intent should be a kind of summary of the user request, focusing on its core purpose or goal and taking into account mainly the safety of the user request. When reasoning about the intent and the final label of the user prompt, use the safety taxonomy below.
 
-{taxonomy}"""
-
-_OUTPUT_FORMAT = """Use the taxonomy to determine which is the underlying intent and the final harm label for the prompt, including the harmful categories that are involved. Output your answer in the following format:
-"Reasoning: <output the reasoning process as a string to justify the prompt intent and prompt harm>
-Prompt intent: <output the intent as a string to justify the prompt harm>
-Prompt harm: <harmful/unharmful>"
-
-Think through the request in the Reasoning field first, then state the intent and harm label."""
-
-# Condition 1: Ground truth harm label provided, no ground truth intent
-PROMPT_TEMPLATE = _PREAMBLE.format(taxonomy=TAXONOMY) + """
-
-Human user:
-{user_prompt}
-
-This is the ground truth label for the prompt harm - use it in the reasoning process:
-Ground truth prompt harm: {annotatator_harmful_label}
-
-""" + _OUTPUT_FORMAT + """
-The ground truth label has been given by a group of expert human annotators. You should use it as a reference to justify in your reasoning why this is the actual final harm label.
-Important: Do not mention in the final reasoning field of the response that you know the ground truth label to justify choosing it (but you can do that if needed in the reasoning process).
-Important: The final harm label should match the ground truth label.
-So you need to reason why this ground truth label is correct without referring that it is given to you, try to be detailed and look for alternative intents and interpretations if this seems relevant to take into account several options especially for difficult/borderline samples that might have several possible intents and/or harm labels.
-"""
-
-# Condition 2: Ground truth labels (intent + harm) provided
-PROMPT_TEMPLATE_WITH_INTENT = _PREAMBLE.format(taxonomy=TAXONOMY) + """
-
-Human user:
-{user_prompt}
-
-These are the ground truth labels for intent and the prompt harm label - use them in the reasoning process:
-Ground truth prompt intent: {intent}
-Ground truth prompt harm: {annotatator_harmful_label}
-
-""" + _OUTPUT_FORMAT + """
-The ground truth labels have been given by a group of expert human annotators. You should use them as a reference to justify in your reasoning why these are the actual final intent and harm label.
-Important: Do not mention in the final reasoning field of the response that you know the ground truth labels to justify choosing them (but you can do that if needed in the reasoning process).
-Important: The final intent and the final harm label should match the ground truth labels.
-So you need to reason why these ground truth labels are correct without referring that they are given to you, try to be detailed and look for alternative intents and interpretations if this seems relevant to take into account several options especially for difficult/borderline samples that might have several possible intents and/or harm labels.
-"""
-
-# Condition 3: Zero-shot CoT — no ground truth labels, model must reason to the answer
-PROMPT_TEMPLATE_ZEROSHOT_COT = _PREAMBLE.format(taxonomy=TAXONOMY) + """
-
-Human user:
-{user_prompt}
-
-Think step by step before giving your answer.
-
-""" + _OUTPUT_FORMAT
+# Condition 3: Zero-shot CoT — no ground truth labels, model must reason to the answer.
+# Reuses build_student_prompt (same input structure the student model sees at inference).
+def _build_zeroshot_cot_prompt(user_prompt: str, with_intent: bool = True) -> str:
+    return build_student_prompt(user_prompt, with_intent=with_intent)
 
 
 def parse_model_output(raw_text: str) -> dict:
@@ -187,12 +151,23 @@ def parse_model_output(raw_text: str) -> dict:
 
     Output format (in order): Reasoning → Prompt intent → Prompt harm
 
+    If thinking mode is enabled the model wraps its internal chain-of-thought in
+    <think>...</think> tags before emitting the structured output.  The think
+    block is extracted and preserved in the returned dict, then stripped so
+    the downstream regex only sees the structured portion.
+
     Returns a dict with:
         - prompt_intent: str or None
         - prompt_harm: str or None  ('harmful' | 'unharmful')
         - reasoning: str
+        - thinking_trace: str  (empty string when thinking mode was not used)
     """
-    text = raw_text.strip()
+    # Extract and strip <think>...</think> blocks (thinking mode internal CoT)
+    thinking_trace = ""
+    think_match = re.search(r'<think>(.*?)</think>', raw_text, flags=re.DOTALL)
+    if think_match:
+        thinking_trace = think_match.group(1).strip()
+    text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
 
     # Extract Reasoning field (now first — ends at Prompt intent: or Prompt harm:)
     reasoning = ""
@@ -231,6 +206,7 @@ def parse_model_output(raw_text: str) -> dict:
         "prompt_intent": prompt_intent,
         "prompt_harm": prompt_harm,
         "reasoning": reasoning,
+        "thinking_trace": thinking_trace,
     }
 
 
@@ -302,12 +278,13 @@ def main(cfg: DictConfig):
     """Main function to generate reasoning traces."""
     config = OmegaConf.to_container(cfg, resolve=True)
 
-    model_cfg = config.get("model", {})
-    dataset_cfg = config.get("dataset", {})
-    gen_cfg = config.get("generation", {})
-    vllm_cfg = config.get("vllm", {})
-    paths_cfg = config.get("paths", {})
-    wandb_cfg = config.get("wandb", {})
+    model_cfg    = config.get("model", {})
+    dataset_cfg  = config.get("dataset", {})
+    gen_cfg      = config.get("generation", {})
+    vllm_cfg     = config.get("vllm", {})
+    paths_cfg    = config.get("paths", {})
+    wandb_cfg    = config.get("wandb", {})
+    thinking_mode = bool(config.get("thinking_mode", False))
 
     if wandb_cfg.get("enabled", False) and _wandb is not None:
         _wandb.init(
@@ -381,7 +358,7 @@ def main(cfg: DictConfig):
         try:
             return tokenizer.apply_chat_template(
                 messages, add_generation_prompt=True,
-                tokenize=False, enable_thinking=False,
+                tokenize=False, enable_thinking=thinking_mode,
             )
         except TypeError:
             return tokenizer.apply_chat_template(
@@ -393,24 +370,22 @@ def main(cfg: DictConfig):
         prompts = []
         if condition == "without_intent":
             for sample in samples:
-                user_content = PROMPT_TEMPLATE.format(
-                    user_prompt=sample["prompt"],
-                    annotatator_harmful_label=sample["prompt_harm_label"],
+                user_content = _build_teacher_prompt(
+                    sample["prompt"], "without_intent",
+                    annotator_harmful_label=sample["prompt_harm_label"],
                 )
                 prompts.append(format_prompt(user_content))
         elif condition == "with_intent":
             for sample in samples:
-                user_content = PROMPT_TEMPLATE_WITH_INTENT.format(
-                    user_prompt=sample["prompt"],
+                user_content = _build_teacher_prompt(
+                    sample["prompt"], "with_intent",
                     intent=sample["intent"],
-                    annotatator_harmful_label=sample["prompt_harm_label"],
+                    annotator_harmful_label=sample["prompt_harm_label"],
                 )
                 prompts.append(format_prompt(user_content))
         elif condition == "zeroshot_cot":
             for sample in samples:
-                user_content = PROMPT_TEMPLATE_ZEROSHOT_COT.format(
-                    user_prompt=sample["prompt"],
-                )
+                user_content = _build_zeroshot_cot_prompt(sample["prompt"], with_intent=True)
                 prompts.append(format_prompt(user_content))
         else:
             print(f"Warning: Unknown condition '{condition}', skipping.")
@@ -456,6 +431,7 @@ def main(cfg: DictConfig):
             "intent": sample["intent"],
             "condition": condition,
             "raw_output": raw_text,
+            "thinking_trace": parsed["thinking_trace"],
         })
 
         parsed_results.append({
@@ -471,6 +447,7 @@ def main(cfg: DictConfig):
                 "prompt_harm": parsed["prompt_harm"],
             },
             "reasoning": parsed["reasoning"],
+            "thinking_trace": parsed["thinking_trace"],
         })
 
     # Save results

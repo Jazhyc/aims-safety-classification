@@ -118,6 +118,7 @@ def step1_teacher(
     wandb_cfg: dict,
     extra_env: dict,
     project_root: Path,
+    thinking_mode: bool = False,
 ) -> bool:
     cached, path = traces_cached(teacher_model, traces_dir)
     if cached:
@@ -130,6 +131,7 @@ def step1_teacher(
         f"model.name={teacher_model}",
         f"conditions=[{conditions_str}]",
         f"paths.output_dir={traces_dir}",
+        f"thinking_mode={str(thinking_mode).lower()}",
         f"wandb.enabled={str(wandb_cfg.get('enabled', False)).lower()}",
         f"wandb.project={wandb_cfg.get('reasoning_traces_project', 'reasoning-traces-generation')}",
         f"wandb.run_name={_teacher_slug(teacher_model)}",
@@ -241,6 +243,7 @@ def main(cfg: DictConfig) -> None:
     num_samples = config.get("num_samples")
     cuda_device = config.get("cuda_visible_devices")
     run_suffix: str | None = config.get("run_suffix") or None
+    thinking_mode: bool = bool(config.get("thinking_mode", False))
     # Maps teacher model name → existing parsed_results.json path (skips step 1 for that model)
     trace_overrides: dict[str, str] = config.get("teacher_trace_overrides", {}) or {}
     wandb_cfg: dict = config.get("wandb", {})
@@ -268,6 +271,8 @@ def main(cfg: DictConfig) -> None:
     print(f"  Conditions: {conditions}")
     if run_suffix:
         print(f"  Run suffix: {run_suffix}")
+    if thinking_mode:
+        print(f"  Thinking mode: enabled")
     if cuda_device:
         print(f"  CUDA (step 1 only): {cuda_device}")
     print(f"{'#'*60}")
@@ -290,6 +295,7 @@ def main(cfg: DictConfig) -> None:
             ok1 = step1_teacher(
                 teacher_model, conditions, num_samples,
                 traces_dir, wandb_cfg, teacher_env, project_root,
+                thinking_mode=thinking_mode,
             )
             summary[slug]["step1_traces"] = "ok" if ok1 else "FAILED"
             if not ok1:

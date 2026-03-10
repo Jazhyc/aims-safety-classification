@@ -20,16 +20,21 @@ defaults:
 # ── Teacher models ─────────────────────────────────────────────────────────────
 # Add one entry per teacher you want to benchmark.
 teacher_models:
-  - "RedHatAI/gemma-3-27b-it-quantized.w4a16"
-  - "RedHatAI/Qwen3-32B-quantized.w4a16"
+  # - "RedHatAI/gemma-3-27b-it-quantized.w4a16"
+  # - "RedHatAI/Qwen3-32B-quantized.w4a16"
   # - "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
-  # - "openai/gpt-oss-120b"   # v1 traces/adapters already correct — no rerun needed
-  # - "cyankiwi/Qwen3.5-27B-AWQ-4bit"
+  # - "openai/gpt-oss-120b"
+  - "cyankiwi/Qwen3.5-27B-AWQ-4bit"
 
 # ── Per-teacher trace overrides ────────────────────────────────────────────────
 # Models listed here skip step 1 and use the provided parsed_results.json directly.
 # Useful when existing traces are already in the correct format.
 teacher_trace_overrides: {}
+
+# ── Thinking mode ───────────────────────────────────────────────────────────────
+# When true, models that support it (e.g. Qwen3) emit <think>...</think> blocks
+# before the structured output.  The pipeline passes this flag to step 1.
+thinking_mode: true
 
 
 # ── Conditions ─────────────────────────────────────────────────────────────────
@@ -42,7 +47,7 @@ conditions:
 # ── Run suffix ─────────────────────────────────────────────────────────────────
 # Appended to adapter directory names and WandB run names to version experiments.
 # Set to null (or omit) for no suffix.
-run_suffix: "v2"
+run_suffix: "v3"
 
 # ── Teacher generation ─────────────────────────────────────────────────────────
 # num_samples: null uses the full dataset; set an integer to subsample.
@@ -59,11 +64,11 @@ wandb:
   enabled: false
   entity: "intention-analysis"
   reasoning_traces_project: "reasoning-traces-generation"
-  distillation_project: "reasoning-distillation-v2"
-  safety_project: "distillation-teacher-sweep-v2"
+  distillation_project: "reasoning-distillation-v3"
+  safety_project: "distillation-teacher-sweep-v3"
 
 # ── Cache directories (relative to project root) ───────────────────────────────
 cache:
-  reasoning_traces_dir: "data/reasoning_traces"
+  reasoning_traces_dir: "data/reasoning_traces_v3"
   distilled_models_dir: "trained_models/causal"
   safety_dir: "data/safety_experiment"

@@ -45,6 +45,8 @@ except ImportError:
 from dotenv import load_dotenv
 load_dotenv()
 
+from intention_jailbreak.model_generation.prompt_templates import build_student_prompt
+
 
 # WildGuard harm categories for structured decoding
 HARM_CATEGORIES = [
@@ -1144,7 +1146,7 @@ def run_finetuned_reasoning_classification(
     print("\n=== Running: Fine-tuned Reasoning Classification (reasoning + harm) ===")
 
     examples = list(test_dataset)
-    prompts = [f"{ex['prompt']}\n" for ex in examples]
+    prompts = [build_student_prompt(ex["prompt"], with_intent=False) + "\n" for ex in examples]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     results = []
@@ -1183,7 +1185,7 @@ def run_finetuned_reasoning_generation(
     print("\n=== Running: Fine-tuned Reasoning Generation (reasoning + intent + harm) ===")
 
     examples = list(test_dataset)
-    prompts = [f"{ex['prompt']}\n" for ex in examples]
+    prompts = [build_student_prompt(ex["prompt"], with_intent=True) + "\n" for ex in examples]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     results = []
