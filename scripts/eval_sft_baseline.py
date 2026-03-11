@@ -25,8 +25,46 @@ from intention_jailbreak.model_generation.data_utils import (
     apply_binary_harm_mapping,
     train_val_test_split,
 )
-from intention_jailbreak.model_generation.causal import extract_intent_and_harm
 from sklearn.metrics import classification_report, f1_score, accuracy_score
+
+# Inline parser — extract_intent_and_harm lives in intent_diversity_analysis.py,
+# not in causal.py, so we inline it here to avoid cross-script imports.
+import re
+from typing import Optional
+
+def _norm_harm(s: str) -> Optional[str]:
+    s = s.strip().lower().rstrip(".").rstrip(";")
+    if s in {"safe", "harmless", "benign"}:
+        return "safe"
+    if s in {"harmful", "unsafe", "dangerous"}:
+        return "harmful"
+    return None
+
+def extract_intent_and_harm(raw_text: str):
+    text = raw_text.strip()
+    if "<think>" in text and "</think>" in text:
+        text = text.split("</think>")[-1].strip()
+    m = re.search(r"Intent:\s*(.+?);\s*Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip(), _norm_harm(m.group(2))
+    m = re.search(r"Intent:\s*(.+?)\n\s*Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip(), _norm_harm(m.group(2))
+    m = re.search(r"Intent:\s*(.+?)\s+Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip(), _norm_harm(m.group(2))
+    m = re.search(r"^(.+?);\s*Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip(), _norm_harm(m.group(2))
+    m = re.search(r"[;\n]\s*Harm:\s*(\S+)", text, re.IGNORECASE)
+    if m:
+        harm = _norm_harm(m.group(1))
+        intent = re.sub(r"^Intent:\s*", "", text[:m.start()].strip(), flags=re.IGNORECASE).strip()
+        return intent or text, harm
+    m = re.search(r"^Intent:\s*(.+?)(?:;|$)", text, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip(), None
+    return text or None, None
 
 
 def parse_args():

@@ -374,8 +374,29 @@ def _run_vllm_eval(args, adapter_dir: str):
         apply_binary_harm_mapping,
         train_val_test_split,
     )
-    from intention_jailbreak.model_generation.causal import extract_intent_and_harm
     from intention_jailbreak.model_generation.evaluate_generations import compute_and_log_metrics
+
+    import re as _re
+    def _norm(s):
+        s = s.strip().lower().rstrip(".;")
+        return "safe" if s in {"safe","harmless","benign"} else ("harmful" if s in {"harmful","unsafe","dangerous"} else None)
+    def extract_intent_and_harm(raw):
+        t = raw.strip()
+        if "<think>" in t and "</think>" in t:
+            t = t.split("</think>")[-1].strip()
+        for pat in [
+            r"Intent:\s*(.+?);\s*Harm:\s*(\S+)",
+            r"Intent:\s*(.+?)\n\s*Harm:\s*(\S+)",
+            r"Intent:\s*(.+?)\s+Harm:\s*(\S+)",
+            r"^(.+?);\s*Harm:\s*(\S+)",
+        ]:
+            m = _re.search(pat, t, _re.IGNORECASE | _re.DOTALL)
+            if m:
+                return m.group(1).strip(), _norm(m.group(2))
+        m = _re.search(r"[;\n]\s*Harm:\s*(\S+)", t, _re.IGNORECASE)
+        if m:
+            return _re.sub(r"^Intent:\s*", "", t[:m.start()].strip(), flags=_re.IGNORECASE).strip() or t, _norm(m.group(1))
+        return t or None, None
 
     print("\n=== Loading test dataset for evaluation ===")
     raw = preprocess_data()
