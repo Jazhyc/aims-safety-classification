@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=preference-pipeline
-#SBATCH --time=16:00:00
-#SBATCH --mem=48GB
-#SBATCH --partition=gpu
+#SBATCH --time=1:00:00
+#SBATCH --mem=32GB
+#SBATCH --partition=gpumedium
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --output=logs/slurm/%x-%j.out
 
