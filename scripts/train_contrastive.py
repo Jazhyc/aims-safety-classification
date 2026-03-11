@@ -317,8 +317,8 @@ def train(args):
                 continue  # prompt too long — skip
 
             nce_loss = infonce_loss(chosen_score, rejected_scores)
-            # KL penalty: penalise drifting above SFT reference on chosen completion
-            kl_loss  = chosen_score - ref_chosen_score.detach()
+            # KL penalty: penalise ANY deviation from SFT reference (not just upward)
+            kl_loss  = (chosen_score - ref_chosen_score.detach()).abs()
             loss     = nce_loss + args.kl_beta * kl_loss
 
             loss = loss / args.grad_accum
@@ -385,7 +385,7 @@ def train(args):
                 except ValueError:
                     continue
                 nce = infonce_loss(cs, rs)
-                kl  = cs - ref_cs
+                kl  = (cs - ref_cs).abs()
                 val_loss += (nce + args.kl_beta * kl).item()
                 n_val    += 1
 

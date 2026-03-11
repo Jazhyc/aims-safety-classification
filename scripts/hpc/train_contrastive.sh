@@ -28,14 +28,14 @@ python scripts/train_contrastive.py \
     --adapter-path   "${ADAPTER_PATH}" \
     --base-model     "${BASE_MODEL}" \
     --output-dir     "${OUTPUT_DIR}" \
-    --epochs         3 \
+    --epochs         2 \
     --learning-rate  5e-5 \
     --grad-accum     8 \
     --max-length     512 \
-    --kl-beta        0.1 \
+    --kl-beta        0.5 \
     --seed           22 \
     --wandb-project  intention-jailbreak \
-    --wandb-run      contrastive-kl-beta0.1
+    --wandb-run      contrastive-kl-abs-beta0.5
 
 echo ""
 echo "======================================================================"

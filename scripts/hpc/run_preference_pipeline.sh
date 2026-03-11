@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=preference-pipeline
-#SBATCH --time=1:00:00
+#SBATCH --time=5:00:00
 #SBATCH --mem=32GB
 #SBATCH --partition=gpumedium
 #SBATCH --gpus-per-node=a100:1
@@ -25,17 +25,17 @@ python scripts/run_preference_pipeline.py \
     --dpo-output-dir         trained_models/causal/llama-dpo \
     --contrastive-output-dir trained_models/causal/llama-contrastive \
     --sft-pred-dir           data/predictions/sft_baseline \
-    --epochs                 3 \
+    --epochs                 2 \
     --learning-rate          5e-5 \
     --batch-size             2 \
     --grad-accum             8 \
     --dpo-beta               0.1 \
-    --kl-beta                0.1 \
+    --kl-beta                0.5 \
     --temperature            0.8 \
     --k-samples              5 \
     --seed                   22 \
-    --wandb-project          intention-jailbreak \
-    --force-from             2
+    --wandb-project          dpo-contrastive-pipeline \
+    --force-from             3
 
 echo ""
 echo "======================================================================"
