@@ -179,6 +179,12 @@ def parse_model_output(raw_text: str) -> dict:
         parts = raw_text.split('</think>', 1)
         thinking_trace = parts[0].strip()
         text = parts[1].strip()
+    elif 'assistantfinal' in raw_text:
+        # GPT-OSS-120B wraps its CoT with 'analysis' (open) and 'assistantfinal' (close).
+        # Neither is stripped by skip_special_tokens, so split on the closing marker.
+        parts = raw_text.split('assistantfinal', 1)
+        thinking_trace = parts[0].removeprefix('analysis').strip()
+        text = parts[1].strip()
     else:
         text = raw_text
 
