@@ -162,26 +162,41 @@ def parse_model_output(raw_text: str) -> dict:
         - reasoning: str
         - thinking_trace: str  (empty string when thinking mode was not used)
     """
-    # Extract and strip <think>...</think> blocks (thinking mode internal CoT)
+    # Extract and strip thinking CoT.
+    # When thinking mode is on, vLLM strips the <think> *opening* token via
+    # skip_special_tokens=True but leaves the </think> closing tag in the text.
+    # So the output looks like: "<CoT text>...</think>\n\n<structured output>"
+    # We also handle the (unlikely) case where both tags are present.
     thinking_trace = ""
-    think_match = re.search(r'<think>(.*?)</think>', raw_text, flags=re.DOTALL)
-    if think_match:
-        thinking_trace = think_match.group(1).strip()
-    text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
+    if '<think>' in raw_text:
+        # Both tags present
+        think_match = re.search(r'<think>(.*?)</think>', raw_text, flags=re.DOTALL)
+        if think_match:
+            thinking_trace = think_match.group(1).strip()
+        text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
+    elif '</think>' in raw_text:
+        # Opening tag stripped as special token; everything before </think> is the CoT
+        parts = raw_text.split('</think>', 1)
+        thinking_trace = parts[0].strip()
+        text = parts[1].strip()
+    else:
+        text = raw_text
 
-    # Extract Reasoning field (now first — ends at Prompt intent: or Prompt harm:)
+    # Extract Reasoning field — stops before Intent:, Prompt intent:, or Prompt harm:
     reasoning = ""
     reasoning_match = re.search(
-        r'Reasoning:\s*(.+?)(?=Prompt intent:|Prompt harm:|$)',
+        r'Reasoning:\s*(.+?)(?=(?:Prompt )?intent:|Prompt harm:|$)',
         text, re.IGNORECASE | re.DOTALL,
     )
     if reasoning_match:
         reasoning = reasoning_match.group(1).strip()
 
-    # Extract Prompt intent field (ends when Prompt harm: begins)
+    # Extract Intent field (ends when Prompt harm: begins).
+    # The output template uses "Intent:" — match that but also accept the legacy
+    # "Prompt intent:" prefix in case an older teacher produced it.
     prompt_intent = None
     intent_match = re.search(
-        r'Prompt intent:\s*(.+?)(?=Prompt harm:|$)',
+        r'(?:Prompt intent|Intent):\s*(.+?)(?=Prompt harm:|$)',
         text, re.IGNORECASE | re.DOTALL,
     )
     if intent_match:
@@ -263,6 +278,23 @@ def load_samples(data_cfg: dict) -> list:
 
     available = list(seen_ids.values())
     print(f"  Unique samples with harm labels: {len(available)}")
+
+    # Exclude holdout test split to prevent leakage into distillation training.
+    # Uses HuggingFace train_test_split with the same parameters as
+    # safety_experiment.py so the excluded IDs match exactly.
+    holdout_test_size = data_cfg.get("holdout_test_size", 0.0)
+    holdout_seed = data_cfg.get("holdout_seed", 22)
+    if holdout_test_size and holdout_test_size > 0:
+        splits = annotated_ds.train_test_split(test_size=holdout_test_size, seed=holdout_seed)
+        # Collect the Wildguard IDs that fall in the test split
+        holdout_ids = set(
+            row["Wildguard ID"] for row in splits["test"]
+            if row.get("Wildguard ID") is not None
+        )
+        before = len(available)
+        available = [s for s in available if s["wildguard_id"] not in holdout_ids]
+        print(f"  Holdout excluded: {before - len(available)} samples "
+              f"(test_size={holdout_test_size}, seed={holdout_seed})")
 
     # Shuffle and select with fixed seed
     import random
@@ -429,6 +461,7 @@ def main(cfg: DictConfig):
             "wildguard_id": sample["wildguard_id"],
             "prompt": sample["prompt"],
             "intent": sample["intent"],
+            "prompt_harm_label": sample["prompt_harm_label"],
             "condition": condition,
             "raw_output": raw_text,
             "thinking_trace": parsed["thinking_trace"],
@@ -447,7 +480,6 @@ def main(cfg: DictConfig):
                 "prompt_harm": parsed["prompt_harm"],
             },
             "reasoning": parsed["reasoning"],
-            "thinking_trace": parsed["thinking_trace"],
         })
 
     # Save results

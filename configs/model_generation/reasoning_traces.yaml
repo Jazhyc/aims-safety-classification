@@ -44,7 +44,7 @@ dataset:
   seed: 42
 
 generation:
-  max_new_tokens: 8192
+  max_new_tokens: 16384
   temperature: 0.0
   top_p: 1.0
   top_k: -1
@@ -56,7 +56,8 @@ thinking_mode: false
 
 vllm:
   gpu_memory_utilization: 0.95
-  max_model_len: 12288
+  max_model_len: 20480
+  max_num_seqs: 32
   dtype: "bfloat16"
   enforce_eager: false
   # Number of GPUs for tensor parallelism.

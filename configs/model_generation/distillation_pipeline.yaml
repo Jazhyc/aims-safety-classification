@@ -24,12 +24,25 @@ teacher_models:
   # - "RedHatAI/Qwen3-32B-quantized.w4a16"
   # - "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
   # - "openai/gpt-oss-120b"
-  - "cyankiwi/Qwen3.5-27B-AWQ-4bit"
+  # - "cyankiwi/Qwen3.5-27B-AWQ-4bit"
+  # - "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4"
+  - "Qwen/Qwen3.5-27B"
 
 # ── Per-teacher trace overrides ────────────────────────────────────────────────
 # Models listed here skip step 1 and use the provided parsed_results.json directly.
 # Useful when existing traces are already in the correct format.
 teacher_trace_overrides: {}
+
+# ── Pipeline stages ─────────────────────────────────────────────────────────────
+# Set any stage to false to skip it entirely (regardless of cache sentinels).
+# Useful for debugging individual steps without running the full pipeline.
+#   step1_teacher:  generate reasoning traces
+#   step2_distill:  fine-tune student on traces
+#   step3_safety:   run safety evaluation
+stages:
+  step1_teacher: true
+  step2_distill: true
+  step3_safety: true
 
 # ── Thinking mode ───────────────────────────────────────────────────────────────
 # When true, models that support it (e.g. Qwen3) emit <think>...</think> blocks

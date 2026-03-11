@@ -32,7 +32,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 from datasets import load_dataset
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from vllm.sampling_params import GuidedDecodingParams
+from vllm.sampling_params import StructuredOutputsParams as GuidedDecodingParams
 from transformers import AutoTokenizer
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -506,7 +506,7 @@ def run_vanilla_classification(
         top_p=sampling_params.top_p,
         top_k=sampling_params.top_k,
         skip_special_tokens=True,
-        guided_decoding=GuidedDecodingParams(choice=BINARY_LABELS),
+        structured_outputs=GuidedDecodingParams(choice=BINARY_LABELS),
     )
     
     # Format prompts with chat template
@@ -576,7 +576,7 @@ def run_vanilla_generation(
         top_p=sampling_params.top_p,
         top_k=sampling_params.top_k,
         skip_special_tokens=True,
-        guided_decoding=GuidedDecodingParams(json=json_schema),
+        structured_outputs=GuidedDecodingParams(json=json_schema),
     )
     
     # Update system prompt to ask for JSON output
@@ -672,7 +672,7 @@ def run_vanilla_classification_with_intent(
         top_p=sampling_params.top_p,
         top_k=sampling_params.top_k,
         skip_special_tokens=True,
-        guided_decoding=GuidedDecodingParams(choice=BINARY_LABELS),
+        structured_outputs=GuidedDecodingParams(choice=BINARY_LABELS),
     )
     
     # Format prompts with chat template including intent
@@ -864,7 +864,7 @@ def run_zeroshot_cot_classification(
         top_p=sampling_params.top_p,
         top_k=sampling_params.top_k,
         skip_special_tokens=True,
-        guided_decoding=GuidedDecodingParams(json=COT_CLASSIFICATION_SCHEMA),
+        structured_outputs=GuidedDecodingParams(json=COT_CLASSIFICATION_SCHEMA),
     )
 
     formatted_prompts = []
@@ -920,7 +920,7 @@ def run_zeroshot_cot_generation(
         top_p=sampling_params.top_p,
         top_k=sampling_params.top_k,
         skip_special_tokens=True,
-        guided_decoding=GuidedDecodingParams(json=COT_GENERATION_SCHEMA),
+        structured_outputs=GuidedDecodingParams(json=COT_GENERATION_SCHEMA),
     )
 
     formatted_prompts = []
@@ -980,7 +980,7 @@ def run_zeroshot_cot_classification_with_intent(
         top_p=sampling_params.top_p,
         top_k=sampling_params.top_k,
         skip_special_tokens=True,
-        guided_decoding=GuidedDecodingParams(json=COT_CLASSIFICATION_SCHEMA),
+        structured_outputs=GuidedDecodingParams(json=COT_CLASSIFICATION_SCHEMA),
     )
 
     formatted_prompts = []

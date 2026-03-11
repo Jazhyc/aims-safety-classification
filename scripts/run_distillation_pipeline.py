@@ -244,6 +244,10 @@ def main(cfg: DictConfig) -> None:
     cuda_device = config.get("cuda_visible_devices")
     run_suffix: str | None = config.get("run_suffix") or None
     thinking_mode: bool = bool(config.get("thinking_mode", False))
+    stages_cfg: dict = config.get("stages", {})
+    run_step1: bool = bool(stages_cfg.get("step1_teacher", True))
+    run_step2: bool = bool(stages_cfg.get("step2_distill", True))
+    run_step3: bool = bool(stages_cfg.get("step3_safety", True))
     # Maps teacher model name → existing parsed_results.json path (skips step 1 for that model)
     trace_overrides: dict[str, str] = config.get("teacher_trace_overrides", {}) or {}
     wandb_cfg: dict = config.get("wandb", {})
@@ -273,6 +277,8 @@ def main(cfg: DictConfig) -> None:
         print(f"  Run suffix: {run_suffix}")
     if thinking_mode:
         print(f"  Thinking mode: enabled")
+    active = [s for s, on in [("step1", run_step1), ("step2", run_step2), ("step3", run_step3)] if on]
+    print(f"  Stages    : {', '.join(active) if active else 'none'}")
     if cuda_device:
         print(f"  CUDA (step 1 only): {cuda_device}")
     print(f"{'#'*60}")
@@ -291,6 +297,13 @@ def main(cfg: DictConfig) -> None:
             traces_path = project_root / trace_overrides[teacher_model]
             print(f"[OVERRIDE] Step 1 – using pre-existing traces: {traces_path}")
             summary[slug]["step1_traces"] = "override"
+        elif not run_step1:
+            print(f"  [SKIP] Step 1 disabled in config.")
+            summary[slug]["step1_traces"] = "skipped"
+            _, traces_path = traces_cached(teacher_model, traces_dir)
+            if traces_path is None:
+                print(f"  No cached traces found — skipping steps 2 & 3.")
+                continue
         else:
             ok1 = step1_teacher(
                 teacher_model, conditions, num_samples,
@@ -305,17 +318,25 @@ def main(cfg: DictConfig) -> None:
 
         # ── Step 2: distillation per condition (8B student — default GPU) ──
         adapter_map: dict[str, Path] = {}
-        for condition in conditions:
-            ok2, adapter_dir = step2_distill(
-                teacher_model, condition, traces_path,
-                models_dir, wandb_cfg, {}, project_root, run_suffix,
-            )
-            summary[slug][f"step2_{condition}"] = "ok" if ok2 else "FAILED"
-            if ok2:
-                adapter_map[condition] = adapter_dir
+        if not run_step2:
+            print(f"  [SKIP] Step 2 disabled in config.")
+            for condition in conditions:
+                summary[slug][f"step2_{condition}"] = "skipped"
+        else:
+            for condition in conditions:
+                ok2, adapter_dir = step2_distill(
+                    teacher_model, condition, traces_path,
+                    models_dir, wandb_cfg, {}, project_root, run_suffix,
+                )
+                summary[slug][f"step2_{condition}"] = "ok" if ok2 else "FAILED"
+                if ok2:
+                    adapter_map[condition] = adapter_dir
 
         # ── Step 3: safety experiment (8B student — default GPU) ───────────
-        if adapter_map:
+        if not run_step3:
+            print(f"  [SKIP] Step 3 disabled in config.")
+            summary[slug]["step3_safety"] = "skipped"
+        elif adapter_map:
             ok3 = step3_safety(
                 teacher_model, adapter_map,
                 safety_dir, wandb_cfg, {}, project_root, run_suffix,
