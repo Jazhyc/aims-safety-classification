@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=eval-sft
 #SBATCH --time=01:00:00
-#SBATCH --mem=1GB
+#SBATCH --mem=4GB
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --output=logs/slurm/%x-%j.out
