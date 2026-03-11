@@ -1,14 +1,17 @@
 """
-Contrastive (InfoNCE) fine-tuning on top of the SFT Llama 3.1-8B LoRA adapter.
+Contrastive (InfoNCE) fine-tuning on top of the SFT Llama 3.1-8B LoRA adapter,
+with KL regularization against a frozen SFT reference model to prevent format collapse.
 
-For each training prompt the loss is:
-    L = -log( exp(s_+) / (exp(s_+) + Σ_j exp(s_j^-)) )
+Total loss per example:
+    L = L_InfoNCE + β_kl * (s_θ(chosen) - s_ref(chosen))
 
-where s(x) = Σ log p_θ(x_t | x_<t, prompt) is the mean per-token log-prob
-of a completion under the current policy.
+where:
+  L_InfoNCE = -log( exp(s_+) / (exp(s_+) + Σ_j exp(s_j^-)) )
+  s(x)      = mean per-token log-prob of completion x under the policy
+  β_kl      = KL penalty coefficient (anchors policy close to SFT reference)
 
-This explicitly increases the margin between the chosen (ground-truth) and
-every rejected (model-sampled, wrong-label) completion.
+The KL term penalises the policy for drifting above the SFT reference on the
+chosen completion, preventing the model from collapsing to a degenerate format.
 
 Data format (contrastive_pairs.jsonl):
   {
@@ -25,7 +28,8 @@ Usage (from project root):
         --pairs-path     data/dpo_pairs/train_t0.8/contrastive_pairs.jsonl \\
         --adapter-path   trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \\
         --base-model     meta-llama/Llama-3.1-8B-Instruct \\
-        --output-dir     trained_models/causal/llama-contrastive
+        --output-dir     trained_models/causal/llama-contrastive \\
+        --kl-beta        0.1
 """
 
 import argparse
@@ -40,6 +44,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
 import torch.nn.functional as F
+import wandb
 from peft import PeftModel, prepare_model_for_kbit_training
 from torch.utils.data import DataLoader, Dataset as TorchDataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, get_cosine_schedule_with_warmup
@@ -173,6 +178,24 @@ def train(args):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # ── Weights & Biases ──────────────────────────────────────────────────
+    wandb.init(
+        project=args.wandb_project,
+        name=args.wandb_run,
+        config={
+            "base_model":    args.base_model,
+            "adapter_path":  args.adapter_path,
+            "pairs_path":    args.pairs_path,
+            "epochs":        args.epochs,
+            "learning_rate": args.learning_rate,
+            "grad_accum":    args.grad_accum,
+            "max_length":    args.max_length,
+            "kl_beta":       args.kl_beta,
+            "val_split":     args.val_split,
+            "seed":          args.seed,
+        },
+    )
+
     # ── Data ──────────────────────────────────────────────────────────────
     records = load_contrastive_records(args.pairs_path)
 
@@ -190,7 +213,7 @@ def train(args):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # ── Model (policy only — no frozen reference needed for InfoNCE) ───────
+    # ── Policy model (trainable) ───────────────────────────────────────────
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -211,6 +234,17 @@ def train(args):
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Trainable parameters: {trainable:,}")
+
+    # ── Reference model (frozen SFT adapter — for KL regularization) ──────
+    ref_base = AutoModelForCausalLM.from_pretrained(
+        args.base_model,
+        quantization_config=bnb_config,
+        device_map="auto",
+        attn_implementation="sdpa",
+    )
+    ref_model = PeftModel.from_pretrained(ref_base, args.adapter_path, is_trainable=False)
+    ref_model.eval()
+    print(f"Reference model loaded (frozen). KL β={args.kl_beta}")
 
     # ── Optimiser & scheduler ─────────────────────────────────────────────
     optimizer = torch.optim.AdamW(
@@ -234,17 +268,20 @@ def train(args):
     best_val_loss  = float("inf")
     best_ckpt_dir  = str(output_dir) + "_adapter_best"
 
-    print(f"\n=== Starting contrastive (InfoNCE) training ===")
+    print(f"\n=== Starting contrastive (InfoNCE + KL) training ===")
     print(f"  Epochs            : {args.epochs}")
     print(f"  LR                : {args.learning_rate}")
     print(f"  Grad accumulation : {args.grad_accum}")
     print(f"  Max length        : {args.max_length}")
+    print(f"  KL beta           : {args.kl_beta}")
 
     for epoch in range(1, args.epochs + 1):
         model.train()
-        epoch_loss   = 0.0
-        n_steps      = 0
-        accum_loss   = torch.tensor(0.0, device=device)
+        epoch_loss      = 0.0
+        epoch_nce_loss  = 0.0
+        epoch_kl_loss   = 0.0
+        n_steps         = 0
+        accum_loss      = torch.tensor(0.0, device=device)
 
         # Shuffle manually (no DataLoader batching — each example is variable-size)
         import random
@@ -269,13 +306,26 @@ def train(args):
                     )
                     for rej in rec["rejecteds"]
                 ]
+                # KL reference score (no grad — frozen reference)
+                with torch.no_grad():
+                    ref_chosen_score = compute_completion_logprob(
+                        ref_model, tokenizer,
+                        rec["prompt"], rec["chosen"],
+                        args.max_length, device,
+                    )
             except ValueError:
                 continue  # prompt too long — skip
 
-            loss = infonce_loss(chosen_score, rejected_scores)
+            nce_loss = infonce_loss(chosen_score, rejected_scores)
+            # KL penalty: penalise drifting above SFT reference on chosen completion
+            kl_loss  = chosen_score - ref_chosen_score.detach()
+            loss     = nce_loss + args.kl_beta * kl_loss
+
             loss = loss / args.grad_accum
             loss.backward()
             accum_loss = accum_loss + loss.detach()
+            epoch_nce_loss += nce_loss.item() / args.grad_accum
+            epoch_kl_loss  += kl_loss.item()  / args.grad_accum
 
             if (step_idx + 1) % args.grad_accum == 0:
                 torch.nn.utils.clip_grad_norm_(
@@ -288,11 +338,24 @@ def train(args):
                 n_steps    += 1
                 accum_loss  = torch.tensor(0.0, device=device)
 
+                global_step = (epoch - 1) * steps_per_epoch + n_steps
+                wandb.log({
+                    "train/loss":     epoch_loss     / n_steps,
+                    "train/nce_loss": epoch_nce_loss / n_steps,
+                    "train/kl_loss":  epoch_kl_loss  / n_steps,
+                    "train/lr":       scheduler.get_last_lr()[0],
+                    "epoch":          epoch,
+                }, step=global_step)
+
                 if n_steps % 50 == 0:
                     print(f"  Epoch {epoch} step {n_steps}/{steps_per_epoch} "
-                          f"loss={epoch_loss/n_steps:.4f}")
+                          f"loss={epoch_loss/n_steps:.4f} "
+                          f"nce={epoch_nce_loss/n_steps:.4f} "
+                          f"kl={epoch_kl_loss/n_steps:.4f}")
 
-        avg_train_loss = epoch_loss / max(n_steps, 1)
+        avg_train_loss = epoch_loss     / max(n_steps, 1)
+        avg_nce_loss   = epoch_nce_loss / max(n_steps, 1)
+        avg_kl_loss    = epoch_kl_loss  / max(n_steps, 1)
 
         # ── Validation ────────────────────────────────────────────────────
         model.eval()
@@ -314,14 +377,31 @@ def train(args):
                         )
                         for rej in rec["rejecteds"]
                     ]
+                    ref_cs = compute_completion_logprob(
+                        ref_model, tokenizer,
+                        rec["prompt"], rec["chosen"],
+                        args.max_length, device,
+                    )
                 except ValueError:
                     continue
-                val_loss += infonce_loss(cs, rs).item()
+                nce = infonce_loss(cs, rs)
+                kl  = cs - ref_cs
+                val_loss += (nce + args.kl_beta * kl).item()
                 n_val    += 1
 
         avg_val_loss = val_loss / max(n_val, 1)
         print(f"Epoch {epoch}/{args.epochs}  "
-              f"train_loss={avg_train_loss:.4f}  val_loss={avg_val_loss:.4f}")
+              f"train_loss={avg_train_loss:.4f} (nce={avg_nce_loss:.4f} kl={avg_kl_loss:.4f})  "
+              f"val_loss={avg_val_loss:.4f}")
+
+        epoch_end_step = epoch * steps_per_epoch
+        wandb.log({
+            "epoch/train_loss": avg_train_loss,
+            "epoch/nce_loss":   avg_nce_loss,
+            "epoch/kl_loss":    avg_kl_loss,
+            "epoch/val_loss":   avg_val_loss,
+            "epoch":            epoch,
+        }, step=epoch_end_step)
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -329,6 +409,8 @@ def train(args):
             model.save_pretrained(best_ckpt_dir)
             tokenizer.save_pretrained(best_ckpt_dir)
             print(f"  → Best checkpoint saved (val_loss={best_val_loss:.4f})")
+            wandb.run.summary["best_val_loss"] = best_val_loss
+            wandb.run.summary["best_epoch"]    = epoch
 
     # ── Final adapter save ─────────────────────────────────────────────────
     adapter_save_dir = str(output_dir) + "_adapter"
@@ -338,22 +420,25 @@ def train(args):
     print(f"Final adapter saved to {adapter_save_dir}")
 
     summary = {
-        "base_model":      args.base_model,
-        "sft_adapter":     args.adapter_path,
+        "base_model":          args.base_model,
+        "sft_adapter":         args.adapter_path,
         "contrastive_adapter": adapter_save_dir,
-        "best_adapter":    best_ckpt_dir,
-        "pairs_path":      args.pairs_path,
-        "epochs":          args.epochs,
-        "learning_rate":   args.learning_rate,
-        "n_train":         len(train_recs),
-        "n_val":           len(val_recs),
-        "best_val_loss":   best_val_loss,
+        "best_adapter":        best_ckpt_dir,
+        "pairs_path":          args.pairs_path,
+        "epochs":              args.epochs,
+        "learning_rate":       args.learning_rate,
+        "kl_beta":             args.kl_beta,
+        "n_train":             len(train_recs),
+        "n_val":               len(val_recs),
+        "best_val_loss":       best_val_loss,
     }
     with open(output_dir / "training_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
 
+    wandb.finish()
+
     # ── vLLM evaluation ────────────────────────────────────────────────────
-    del model
+    del model, ref_model
     torch.cuda.empty_cache()
     gc.collect()
     torch.cuda.empty_cache()
@@ -485,10 +570,16 @@ def parse_args():
     p.add_argument("--grad-accum",      type=int,   default=8,
                    help="Gradient accumulation steps (effective batch size = grad_accum).")
     p.add_argument("--max-length",      type=int,   default=512)
+    p.add_argument("--kl-beta",         type=float, default=0.1,
+                   help="KL penalty coefficient against frozen SFT reference.")
 
     # Misc
-    p.add_argument("--seed",       type=int,  default=22)
-    p.add_argument("--skip-eval",  action="store_true")
+    p.add_argument("--seed",          type=int,  default=22)
+    p.add_argument("--skip-eval",     action="store_true")
+    p.add_argument("--wandb-project", type=str,  default="intention-jailbreak",
+                   help="Weights & Biases project name.")
+    p.add_argument("--wandb-run",     type=str,  default=None,
+                   help="W&B run name (auto-generated if not set).")
 
     return p.parse_args()
 

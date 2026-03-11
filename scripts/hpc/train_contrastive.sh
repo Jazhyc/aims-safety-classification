@@ -17,7 +17,7 @@ PAIRS_PATH="data/dpo_pairs/train_t0.8/contrastive_pairs.jsonl"
 OUTPUT_DIR="trained_models/causal/llama-contrastive"
 
 echo "======================================================================"
-echo " Contrastive (InfoNCE) fine-tuning"
+echo " Contrastive (InfoNCE + KL) fine-tuning"
 echo "  Pairs    : ${PAIRS_PATH}"
 echo "  SFT init : ${ADAPTER_PATH}"
 echo "  Output   : ${OUTPUT_DIR}"
@@ -32,7 +32,10 @@ python scripts/train_contrastive.py \
     --learning-rate  5e-5 \
     --grad-accum     8 \
     --max-length     512 \
-    --seed           22
+    --kl-beta        0.1 \
+    --seed           22 \
+    --wandb-project  intention-jailbreak \
+    --wandb-run      contrastive-kl-beta0.1
 
 echo ""
 echo "======================================================================"

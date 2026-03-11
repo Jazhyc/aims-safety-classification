@@ -32,6 +32,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
+import wandb
 from datasets import Dataset
 from peft import LoraConfig, PeftModel, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -123,6 +124,25 @@ def train(args):
     set_all_seeds(args.seed)
     print_gpu_info()
 
+    # ── Weights & Biases ──────────────────────────────────────────────────
+    wandb.init(
+        project=args.wandb_project,
+        name=args.wandb_run,
+        config={
+            "base_model":    args.base_model,
+            "adapter_path":  args.adapter_path,
+            "pairs_path":    args.pairs_path,
+            "beta":          args.beta,
+            "epochs":        args.epochs,
+            "learning_rate": args.learning_rate,
+            "batch_size":    args.batch_size,
+            "gradient_accumulation": args.gradient_accumulation,
+            "max_length":    args.max_length,
+            "val_split":     args.val_split,
+            "seed":          args.seed,
+        },
+    )
+
     # ── Data ──────────────────────────────────────────────────────────────
     dataset = load_dpo_dataset(args.pairs_path)
 
@@ -178,7 +198,7 @@ def train(args):
         # Misc
         gradient_checkpointing=True,
         remove_unused_columns=False,
-        report_to="none",
+        report_to="wandb",
         seed=args.seed,
     )
 
@@ -196,6 +216,7 @@ def train(args):
 
     eval_results = trainer.evaluate()
     print(f"Final eval loss: {eval_results['eval_loss']:.4f}")
+    wandb.run.summary["final_eval_loss"] = eval_results["eval_loss"]
 
     # ── Save adapter ───────────────────────────────────────────────────────
     adapter_save_dir = str(output_dir) + "_adapter"
@@ -219,6 +240,8 @@ def train(args):
     }
     with open(output_dir / "training_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
+
+    wandb.finish()
 
     # ── Clean up before vLLM eval ──────────────────────────────────────────
     del trainer, policy_model, ref_model
@@ -367,9 +390,13 @@ def parse_args():
                    help="Max prompt length; completion gets the remaining tokens.")
 
     # Misc
-    p.add_argument("--seed",       type=int,  default=22)
-    p.add_argument("--skip-eval",  action="store_true",
+    p.add_argument("--seed",          type=int,  default=22)
+    p.add_argument("--skip-eval",     action="store_true",
                    help="Skip vLLM evaluation after training.")
+    p.add_argument("--wandb-project", type=str,  default="intention-jailbreak",
+                   help="Weights & Biases project name.")
+    p.add_argument("--wandb-run",     type=str,  default=None,
+                   help="W&B run name (auto-generated if not set).")
 
     return p.parse_args()
 

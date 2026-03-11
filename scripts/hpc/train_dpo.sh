@@ -35,7 +35,9 @@ python scripts/train_dpo.py \
     --gradient-accumulation 8 \
     --max-length            512 \
     --max-prompt-length     448 \
-    --seed                  22
+    --seed                  22 \
+    --wandb-project         intention-jailbreak \
+    --wandb-run             dpo-beta0.1
 
 echo ""
 echo "======================================================================"
