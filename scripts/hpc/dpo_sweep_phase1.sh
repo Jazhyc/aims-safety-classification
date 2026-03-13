@@ -26,8 +26,8 @@ module purge
 module load CUDA/12.1.1
 module load Python/3.11.3-GCCcore-12.3.0
 
-source "$HOME/PY/intention-jailbreak/bin/activate"
 cd "$HOME/repos/intent-gen"
+source .venv/bin/activate
 
 export HF_HOME="$HOME/.cache/huggingface"
 export WANDB_MODE=online
