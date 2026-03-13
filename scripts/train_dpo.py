@@ -133,6 +133,8 @@ def train(args):
             "adapter_path":  args.adapter_path,
             "pairs_path":    args.pairs_path,
             "beta":          args.beta,
+            "loss_type":     args.loss_type,
+            "label_smoothing": args.label_smoothing,
             "epochs":        args.epochs,
             "learning_rate": args.learning_rate,
             "batch_size":    args.batch_size,
@@ -168,6 +170,8 @@ def train(args):
     dpo_config = DPOConfig(
         output_dir=str(output_dir / "checkpoints"),
         beta=args.beta,
+        loss_type=args.loss_type,
+        label_smoothing=args.label_smoothing,
 
         # Optimisation
         num_train_epochs=args.epochs,
@@ -380,6 +384,11 @@ def parse_args():
 
     # DPO hyperparameters
     p.add_argument("--beta",                type=float, default=0.1)
+    p.add_argument("--loss-type",           type=str,   default="sigmoid",
+                   choices=["sigmoid", "ipo", "hinge", "robust"],
+                   help="DPO loss formulation.")
+    p.add_argument("--label-smoothing",     type=float, default=0.0,
+                   help="Label smoothing for DPO loss (0.0 = standard).")
     p.add_argument("--epochs",              type=int,   default=3)
     p.add_argument("--learning-rate",       type=float, default=5e-5)
     p.add_argument("--batch-size",          type=int,   default=2)
