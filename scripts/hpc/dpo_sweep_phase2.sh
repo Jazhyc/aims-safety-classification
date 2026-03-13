@@ -8,17 +8,20 @@
 #SBATCH --output=logs/slurm/dpo-sweep-p2-%A_%a.out
 #SBATCH --error=logs/slurm/dpo-sweep-p2-%A_%a.err
 
-# ── Phase 2: lr + epochs + label_smoothing sweep ─────────────────────────────
-# Fill in BEST_BETA and BEST_LOSS from Phase 1 W&B results before submitting.
+# ── Phase 2: β extension + lr + epochs + label_smoothing sweep ───────────────
+# Fill in BEST_LOSS from Phase 1 W&B results before submitting.
+# Phase 1 winner: sigmoid β=0.5 → extending β upward + tuning other params
 #
-# Run | lr    | epochs | label_smoothing | seed
-#  1  | 1e-5  | 3      | 0.0             | 22
-#  2  | 5e-5  | 3      | 0.0             | 22   ← reference (same as Phase 1 best)
-#  3  | 5e-5  | 1      | 0.0             | 22
-#  4  | 5e-5  | 3      | 0.1             | 22
-#  5  | 5e-5  | 3      | 0.2             | 22
-#  6  | best  | best   | best            | 22   ← combined best, seed 22
-#  7  | best  | best   | best            | 42   ← combined best, seed 42
+# Run | β    | lr    | epochs | label_smoothing | seed
+#  1  | 0.5  | 1e-5  | 3      | 0.0             | 22
+#  2  | 0.5  | 5e-5  | 3      | 0.0             | 22   ← reference (Phase 1 best)
+#  3  | 0.5  | 5e-5  | 1      | 0.0             | 22
+#  4  | 0.5  | 5e-5  | 3      | 0.1             | 22
+#  5  | 0.5  | 5e-5  | 3      | 0.2             | 22
+#  6  | 0.7  | 5e-5  | 3      | 0.0             | 22   ← higher β
+#  7  | 1.0  | 5e-5  | 3      | 0.0             | 22   ← even higher β
+#  8  | best | best  | best   | best            | 22   ← combined best, seed 22
+#  9  | best | best  | best   | best            | 42   ← combined best, seed 42
 
 set -euo pipefail
 mkdir -p logs/slurm
@@ -33,27 +36,28 @@ source .venv/bin/activate
 export HF_HOME="$HOME/.cache/huggingface"
 export WANDB_MODE=online
 
-# ── SET THESE FROM PHASE 1 RESULTS ───────────────────────────────────────────
-BEST_BETA=0.3       # <-- update after Phase 1
-BEST_LOSS=sigmoid   # <-- update after Phase 1
+# ── Phase 1 winner ───────────────────────────────────────────────────────────
+BEST_LOSS=sigmoid
 # ─────────────────────────────────────────────────────────────────────────────
 
 case $SLURM_ARRAY_TASK_ID in
-  1) LR=1e-5; EPOCHS=3; LS=0.0;  SEED=22 ;;
-  2) LR=5e-5; EPOCHS=3; LS=0.0;  SEED=22 ;;
-  3) LR=5e-5; EPOCHS=1; LS=0.0;  SEED=22 ;;
-  4) LR=5e-5; EPOCHS=3; LS=0.1;  SEED=22 ;;
-  5) LR=5e-5; EPOCHS=3; LS=0.2;  SEED=22 ;;
-  6) LR=5e-5; EPOCHS=3; LS=0.0;  SEED=22 ;;   
-  7) LR=5e-5; EPOCHS=3; LS=0.0;  SEED=42 ;;   
+  1) BETA=0.5; LR=1e-5; EPOCHS=3; LS=0.0;  SEED=22 ;;
+  2) BETA=0.5; LR=5e-5; EPOCHS=3; LS=0.0;  SEED=22 ;;
+  3) BETA=0.5; LR=5e-5; EPOCHS=1; LS=0.0;  SEED=22 ;;
+  4) BETA=0.5; LR=5e-5; EPOCHS=3; LS=0.1;  SEED=22 ;;
+  5) BETA=0.5; LR=5e-5; EPOCHS=3; LS=0.2;  SEED=22 ;;
+  6) BETA=0.7; LR=5e-5; EPOCHS=3; LS=0.0;  SEED=22 ;;
+  7) BETA=1.0; LR=5e-5; EPOCHS=3; LS=0.0;  SEED=22 ;;
+  8) BETA=0.5; LR=5e-5; EPOCHS=3; LS=0.0;  SEED=22 ;;  
+  9) BETA=0.5; LR=5e-5; EPOCHS=3; LS=0.0;  SEED=42 ;;  
 esac
 
-RUN_NAME="dpo-sweep-p2-run${SLURM_ARRAY_TASK_ID}-beta${BEST_BETA}-${BEST_LOSS}-lr${LR}-e${EPOCHS}-ls${LS}-s${SEED}"
-OUTPUT_DIR="trained_models/causal/dpo_sweep/p2_run_$(printf '%02d' $SLURM_ARRAY_TASK_ID)_lr${LR}_e${EPOCHS}_ls${LS}_s${SEED}"
+RUN_NAME="dpo-sweep-p2-run${SLURM_ARRAY_TASK_ID}-beta${BETA}-${BEST_LOSS}-lr${LR}-e${EPOCHS}-ls${LS}-s${SEED}"
+OUTPUT_DIR="trained_models/causal/dpo_sweep/p2_run_$(printf '%02d' $SLURM_ARRAY_TASK_ID)_beta${BETA}_lr${LR}_e${EPOCHS}_ls${LS}_s${SEED}"
 
 echo "========================================"
 echo "SLURM array task : $SLURM_ARRAY_TASK_ID"
-echo "β                : $BEST_BETA"
+echo "β                : $BETA"
 echo "loss_type        : $BEST_LOSS"
 echo "lr               : $LR"
 echo "epochs           : $EPOCHS"
@@ -67,7 +71,7 @@ python scripts/train_dpo.py \
     --adapter-path   trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \
     --base-model     meta-llama/Llama-3.1-8B-Instruct \
     --output-dir     "$OUTPUT_DIR" \
-    --beta           "$BEST_BETA" \
+    --beta           "$BETA" \
     --loss-type      "$BEST_LOSS" \
     --label-smoothing "$LS" \
     --epochs         "$EPOCHS" \
