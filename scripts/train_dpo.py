@@ -36,7 +36,54 @@ import wandb
 from datasets import Dataset
 from peft import LoraConfig, PeftModel, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+import torch.nn as nn
 from trl import DPOConfig, DPOTrainer
+
+
+# ---------------------------------------------------------------------------
+# Weighted DPO trainer
+# ---------------------------------------------------------------------------
+
+class WeightedDPOTrainer(DPOTrainer):
+    """DPOTrainer that up-weights harmful pairs to correct class imbalance.
+
+    The standard DPO loss averages uniformly over the batch. When chosen labels
+    are skewed (e.g. 58% safe), the model learns a safe-bias. Setting
+    harmful_weight > 1 rescales the per-sample loss so harmful pairs contribute
+    proportionally more, without discarding any data.
+
+    harmful_weight = n_safe / n_harmful  (≈ 1.4 for the unbalanced pairs file)
+    """
+
+    def __init__(self, *args, harmful_weight: float = 1.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._harmful_weight = harmful_weight
+        self._batch_weights: torch.Tensor | None = None
+
+    def get_batch_loss_metrics(self, model, batch, train_eval="train"):
+        # Stash per-sample weights so dpo_loss can apply them
+        if self._harmful_weight != 1.0 and "gold_harm" in batch:
+            w = [self._harmful_weight if h == "harmful" else 1.0
+                 for h in batch["gold_harm"]]
+            self._batch_weights = torch.tensor(w, dtype=torch.float32)
+        else:
+            self._batch_weights = None
+        return super().get_batch_loss_metrics(model, batch, train_eval)
+
+    def dpo_loss(self, chosen_logps, rejected_logps,
+                 ref_chosen_logps, ref_rejected_logps,
+                 loss_type="sigmoid", model_output=None):
+        losses, chosen_rewards, rejected_rewards = super().dpo_loss(
+            chosen_logps, rejected_logps,
+            ref_chosen_logps, ref_rejected_logps,
+            loss_type=loss_type, model_output=model_output,
+        )
+        if self._batch_weights is not None:
+            w = self._batch_weights.to(losses.device)
+            # Normalise so weighted mean ≈ unweighted mean in scale
+            w = w / w.mean()
+            losses = losses * w
+        return losses, chosen_rewards, rejected_rewards
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from intention_jailbreak.training import set_all_seeds, print_gpu_info
@@ -46,10 +93,11 @@ from intention_jailbreak.training import set_all_seeds, print_gpu_info
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_dpo_dataset(pairs_path: str, prompt_suffix: str = "\n") -> Dataset:
+def load_dpo_dataset(pairs_path: str, prompt_suffix: str = "\n",
+                     include_gold_harm: bool = False) -> Dataset:
     """
     Load dpo_pairs.jsonl and return a HuggingFace Dataset with columns:
-      prompt, chosen, rejected
+      prompt, chosen, rejected  (and optionally gold_harm for weighted loss)
     The prompt is formatted with the same trailing newline used during SFT.
     """
     records = []
@@ -59,11 +107,14 @@ def load_dpo_dataset(pairs_path: str, prompt_suffix: str = "\n") -> Dataset:
             if not line:
                 continue
             d = json.loads(line)
-            records.append({
+            rec = {
                 "prompt":   d["prompt"] + prompt_suffix,
                 "chosen":   d["chosen"],
                 "rejected": d["rejected"],
-            })
+            }
+            if include_gold_harm:
+                rec["gold_harm"] = d.get("gold_harm", "safe")
+            records.append(rec)
     print(f"Loaded {len(records)} DPO pairs from {pairs_path}")
     if records:
         print("  Example prompt  :", records[0]["prompt"][:80])
@@ -142,11 +193,13 @@ def train(args):
             "max_length":    args.max_length,
             "val_split":     args.val_split,
             "seed":          args.seed,
+            "harmful_weight":args.harmful_weight,
         },
     )
 
     # ── Data ──────────────────────────────────────────────────────────────
-    dataset = load_dpo_dataset(args.pairs_path)
+    use_weighted = args.harmful_weight > 1.0
+    dataset = load_dpo_dataset(args.pairs_path, include_gold_harm=use_weighted)
 
     split = dataset.train_test_split(test_size=args.val_split, seed=args.seed)
     train_dataset = split["train"]
@@ -216,7 +269,8 @@ def train(args):
         seed=args.seed,
     )
 
-    trainer = DPOTrainer(
+    trainer_cls = WeightedDPOTrainer if use_weighted else DPOTrainer
+    trainer_kwargs = dict(
         model=policy_model,
         ref_model=ref_model,
         args=dpo_config,
@@ -224,6 +278,10 @@ def train(args):
         eval_dataset=val_dataset,
         processing_class=tokenizer,
     )
+    if use_weighted:
+        trainer_kwargs["harmful_weight"] = args.harmful_weight
+        print(f"Using WeightedDPOTrainer (harmful_weight={args.harmful_weight:.2f})")
+    trainer = trainer_cls(**trainer_kwargs)
 
     print("\n=== Starting DPO training ===")
     trainer.train()
@@ -250,6 +308,7 @@ def train(args):
         "learning_rate": args.learning_rate,
         "n_train":       len(train_dataset),
         "n_val":         len(val_dataset),
+        "harmful_weight":args.harmful_weight,
         "eval_loss":     eval_results["eval_loss"],
     }
     with open(output_dir / "training_summary.json", "w") as f:
@@ -399,6 +458,10 @@ def parse_args():
                    help="DPO loss formulation.")
     p.add_argument("--label-smoothing",     type=float, default=0.0,
                    help="Label smoothing for DPO loss (0.0 = standard).")
+    p.add_argument("--harmful-weight",      type=float, default=1.0,
+                   help="Loss weight for harmful pairs (1.0 = uniform). "
+                        "Set to n_safe/n_harmful (e.g. 1.4) to correct class imbalance "
+                        "without discarding any pairs.")
     p.add_argument("--epochs",              type=int,   default=3)
     p.add_argument("--learning-rate",       type=float, default=5e-5)
     p.add_argument("--batch-size",          type=int,   default=2)

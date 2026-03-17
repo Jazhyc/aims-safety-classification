@@ -35,30 +35,34 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
 # Map run ID → adapter path (must match output dirs from dpo_sweep.sh)
+# Adapter dir = OUTPUT_DIR + "_adapter"  (set by train_dpo.py)
+# Use: find trained_models/causal/dpo_sweep/ -maxdepth 1 -name "run_XX*adapter" -type d
 case $SLURM_ARRAY_TASK_ID in
-  # Phase 1 (unbalanced)
-  1)  ADAPTER="trained_models/causal/dpo_sweep/run_01_sigmoid_b0.1_lr5e-5_e3_ls0.0_unbal_adapter" ;;
-  2)  ADAPTER="trained_models/causal/dpo_sweep/run_02_sigmoid_b0.2_lr5e-5_e3_ls0.0_unbal_adapter" ;;
-  3)  ADAPTER="trained_models/causal/dpo_sweep/run_03_sigmoid_b0.3_lr5e-5_e3_ls0.0_unbal_adapter" ;;
-  4)  ADAPTER="trained_models/causal/dpo_sweep/run_04_sigmoid_b0.5_lr5e-5_e3_ls0.0_unbal_adapter" ;;
-  5)  ADAPTER="trained_models/causal/dpo_sweep/run_05_ipo_b0.1_lr5e-5_e3_ls0.0_unbal_adapter"     ;;
-  6)  ADAPTER="trained_models/causal/dpo_sweep/run_06_ipo_b0.2_lr5e-5_e3_ls0.0_unbal_adapter"     ;;
-  7)  ADAPTER="trained_models/causal/dpo_sweep/run_07_ipo_b0.3_lr5e-5_e3_ls0.0_unbal_adapter"     ;;
-  8)  ADAPTER="trained_models/causal/dpo_sweep/run_08_ipo_b0.5_lr5e-5_e3_ls0.0_unbal_adapter"     ;;
-  # Phase 2 (unbalanced)
-  9)  ADAPTER="trained_models/causal/dpo_sweep/run_09_sigmoid_b0.5_lr1e-5_e3_ls0.0_unbal_adapter" ;;
-  10) ADAPTER="trained_models/causal/dpo_sweep/run_10_sigmoid_b0.5_lr5e-5_e3_ls0.0_unbal_adapter" ;;
-  11) ADAPTER="trained_models/causal/dpo_sweep/run_11_sigmoid_b0.5_lr5e-5_e1_ls0.0_unbal_adapter" ;;
-  12) ADAPTER="trained_models/causal/dpo_sweep/run_12_sigmoid_b0.5_lr5e-5_e3_ls0.1_unbal_adapter" ;;
-  13) ADAPTER="trained_models/causal/dpo_sweep/run_13_sigmoid_b0.5_lr5e-5_e3_ls0.2_unbal_adapter" ;;
-  14) ADAPTER="trained_models/causal/dpo_sweep/run_14_sigmoid_b0.7_lr5e-5_e3_ls0.0_unbal_adapter" ;;
-  15) ADAPTER="trained_models/causal/dpo_sweep/run_15_sigmoid_b1.0_lr5e-5_e3_ls0.0_unbal_adapter" ;;
-  # Phase 3 (balanced) — use existing adapter dirs
-  16) ADAPTER="trained_models/causal/dpo_sweep/p3_run_01_sigmoid_beta0.5_lr5e-5_e1_ls0.0_adapter" ;;
-  17) ADAPTER="trained_models/causal/dpo_sweep/p3_run_02_sigmoid_beta0.5_lr5e-5_e1_ls0.1_adapter" ;;
-  18) ADAPTER="trained_models/causal/dpo_sweep/p3_run_03_ipo_beta0.5_lr5e-5_e1_ls0.0_adapter"     ;;
-  19) ADAPTER="trained_models/causal/dpo_sweep/p3_run_04_ipo_beta0.3_lr5e-5_e1_ls0.0_adapter"     ;;
+  # Group A: unbalanced reference
+  1)  ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_01_*_adapter 2>/dev/null | head -1) ;;
+  # Group B: balancing method comparison
+  2)  ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_02_*_adapter 2>/dev/null | head -1) ;;
+  3)  ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_03_*_adapter 2>/dev/null | head -1) ;;
+  4)  ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_04_*_adapter 2>/dev/null | head -1) ;;
+  5)  ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_05_*_adapter 2>/dev/null | head -1) ;;
+  # Group C: β sweep
+  6)  ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_06_*_adapter 2>/dev/null | head -1) ;;
+  7)  ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_07_*_adapter 2>/dev/null | head -1) ;;
+  8)  ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_08_*_adapter 2>/dev/null | head -1) ;;
+  9)  ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_09_*_adapter 2>/dev/null | head -1) ;;
+  10) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_10_*_adapter 2>/dev/null | head -1) ;;
+  11) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_11_*_adapter 2>/dev/null | head -1) ;;
+  # Group D: epochs + ls
+  12) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_12_*_adapter 2>/dev/null | head -1) ;;
+  13) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_13_*_adapter 2>/dev/null | head -1) ;;
+  14) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_14_*_adapter 2>/dev/null | head -1) ;;
+  15) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_15_*_adapter 2>/dev/null | head -1) ;;
 esac
+
+if [ -z "$ADAPTER" ] || [ ! -d "$ADAPTER" ]; then
+    echo "ERROR: adapter not found for run $SLURM_ARRAY_TASK_ID"
+    exit 1
+fi
 
 OUTPUT_DIR="data/predictions/dpo_sweep/run_$(printf '%02d' $SLURM_ARRAY_TASK_ID)"
 

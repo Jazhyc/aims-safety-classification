@@ -18,28 +18,25 @@ from sklearn.metrics import f1_score, accuracy_score, precision_recall_fscore_su
 
 # Run metadata — matches dpo_sweep.sh numbering
 RUN_META = {
-    # Phase 1
-    1:  dict(phase=1, loss="sigmoid", beta=0.1, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    2:  dict(phase=1, loss="sigmoid", beta=0.2, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    3:  dict(phase=1, loss="sigmoid", beta=0.3, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    4:  dict(phase=1, loss="sigmoid", beta=0.5, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    5:  dict(phase=1, loss="ipo",     beta=0.1, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    6:  dict(phase=1, loss="ipo",     beta=0.2, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    7:  dict(phase=1, loss="ipo",     beta=0.3, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    8:  dict(phase=1, loss="ipo",     beta=0.5, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    # Phase 2
-    9:  dict(phase=2, loss="sigmoid", beta=0.5, lr="1e-5", epochs=3, ls=0.0, pairs="unbal"),
-    10: dict(phase=2, loss="sigmoid", beta=0.5, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    11: dict(phase=2, loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.0, pairs="unbal"),
-    12: dict(phase=2, loss="sigmoid", beta=0.5, lr="5e-5", epochs=3, ls=0.1, pairs="unbal"),
-    13: dict(phase=2, loss="sigmoid", beta=0.5, lr="5e-5", epochs=3, ls=0.2, pairs="unbal"),
-    14: dict(phase=2, loss="sigmoid", beta=0.7, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    15: dict(phase=2, loss="sigmoid", beta=1.0, lr="5e-5", epochs=3, ls=0.0, pairs="unbal"),
-    # Phase 3
-    16: dict(phase=3, loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.0, pairs="bal"),
-    17: dict(phase=3, loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.1, pairs="bal"),
-    18: dict(phase=3, loss="ipo",     beta=0.5, lr="5e-5", epochs=1, ls=0.0, pairs="bal"),
-    19: dict(phase=3, loss="ipo",     beta=0.3, lr="5e-5", epochs=1, ls=0.0, pairs="bal"),
+    # Group A: unbalanced reference
+    1:  dict(group="A-ref",   loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.0, hw=1.0, pairs="unbal"),
+    # Group B: balancing method comparison
+    2:  dict(group="B-us",    loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.0, hw=1.0, pairs="bal"),
+    3:  dict(group="B-us+ls", loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.1, hw=1.0, pairs="bal"),
+    4:  dict(group="B-wl",    loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.0, hw=1.4, pairs="unbal"),
+    5:  dict(group="B-wl+ls", loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.1, hw=1.4, pairs="unbal"),
+    # Group C: β sweep
+    6:  dict(group="C-β",     loss="sigmoid", beta=0.2, lr="5e-5", epochs=1, ls=0.0, hw=None, pairs="best"),
+    7:  dict(group="C-β",     loss="sigmoid", beta=0.3, lr="5e-5", epochs=1, ls=0.0, hw=None, pairs="best"),
+    8:  dict(group="C-β",     loss="sigmoid", beta=0.4, lr="5e-5", epochs=1, ls=0.0, hw=None, pairs="best"),
+    9:  dict(group="C-β",     loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.0, hw=None, pairs="best"),
+    10: dict(group="C-β",     loss="sigmoid", beta=0.6, lr="5e-5", epochs=1, ls=0.0, hw=None, pairs="best"),
+    11: dict(group="C-β",     loss="sigmoid", beta=0.7, lr="5e-5", epochs=1, ls=0.0, hw=None, pairs="best"),
+    # Group D: epochs + label smoothing
+    12: dict(group="D-ep",    loss="sigmoid", beta=0.5, lr="5e-5", epochs=2, ls=0.0, hw=None, pairs="best"),
+    13: dict(group="D-ep",    loss="sigmoid", beta=0.5, lr="5e-5", epochs=3, ls=0.0, hw=None, pairs="best"),
+    14: dict(group="D-ls",    loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.05,hw=None, pairs="best"),
+    15: dict(group="D-seed",  loss="sigmoid", beta=0.5, lr="5e-5", epochs=1, ls=0.0, hw=None, pairs="best", seed=42),
 }
 
 
@@ -109,21 +106,21 @@ def main(args):
     # Print ranked table
     sorted_runs = sorted(results.items(), key=lambda x: -x[1]["f1_macro"])
 
-    header = f"{'Run':<12} {'Ph':>2} {'Loss':<8} {'β':>4} {'lr':<6} {'ep':>2} {'ls':>4} {'pairs':<6} │ {'F1mac':>6} {'RecH':>6} {'F1H':>6} {'F1S':>6} {'Acc':>6}"
+    header = f"{'Run':<12} {'Grp':<8} {'Loss':<8} {'β':>4} {'ep':>2} {'ls':>5} {'hw':>4} {'pairs':<7} │ {'F1mac':>6} {'RecH':>6} {'F1H':>6} {'F1S':>6} {'Acc':>6}"
     print("\n" + "=" * len(header))
     print(header)
     print("─" * len(header))
 
     for name, m in sorted_runs:
-        ph   = str(m.get("phase", "-"))
+        grp  = str(m.get("group", "-"))
         loss = str(m.get("loss",  "-"))
         beta = str(m.get("beta",  "-"))
-        lr   = str(m.get("lr",    "-"))
         ep   = str(m.get("epochs","-"))
         ls   = str(m.get("ls",    "-"))
+        hw   = str(m.get("hw",    "-"))
         pairs= str(m.get("pairs", "-"))
         marker = " ←best" if name == sorted_runs[0][0] else ""
-        print(f"{name:<12} {ph:>2} {loss:<8} {beta:>4} {lr:<6} {ep:>2} {ls:>4} {pairs:<6} │ "
+        print(f"{name:<12} {grp:<8} {loss:<8} {beta:>4} {ep:>2} {ls:>5} {hw:>4} {pairs:<7} │ "
               f"{m['f1_macro']:>6.3f} {m['rec_harmful']:>6.3f} {m['f1_harmful']:>6.3f} "
               f"{m['f1_safe']:>6.3f} {m['accuracy']:>6.3f}{marker}")
 
