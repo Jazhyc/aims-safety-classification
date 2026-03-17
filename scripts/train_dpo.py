@@ -164,7 +164,7 @@ def train(args):
         _tok_path = _os.path.join(_snapshots, _snap)
     else:
         _tok_path = args.base_model
-    tokenizer = AutoTokenizer.from_pretrained(_tok_path)
+    tokenizer = AutoTokenizer.from_pretrained(_tok_path, local_files_only=True)
     tokenizer.padding_side = "left"
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
