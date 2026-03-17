@@ -11,7 +11,7 @@ PROJECTS_DIR="${PROJECTS_DIR:-/scratch/s4351495}"
 HF_HOME_CHECK="${HF_HOME:-${PROJECTS_DIR}/huggingface_cache}"
 SFT_ADAPTER="${SFT_ADAPTER:-${PROJECTS_DIR}/trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter}"
 BASE_MODEL="meta-llama/Llama-3.1-8B-Instruct"
-MODEL_ID="${BASE_MODEL//\//-}"   # meta-llama--Llama-3.1-8B-Instruct
+MODEL_ID="${BASE_MODEL//\//--}"  # meta-llama--Llama-3.1-8B-Instruct
 
 pass() { echo "[OK]   $1"; }
 fail() { echo "[FAIL] $1"; FAILED=1; }
