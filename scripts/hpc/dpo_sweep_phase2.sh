@@ -68,7 +68,7 @@ echo "========================================"
 
 python scripts/train_dpo.py \
     --pairs-path     data/dpo_pairs/train_t0.8/dpo_pairs.jsonl \
-    --adapter-path   trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \
+    --adapter-path   "$HOME/repos/intent-gen/trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter" \
     --base-model     meta-llama/Llama-3.1-8B-Instruct \
     --output-dir     "$OUTPUT_DIR" \
     --beta           "$BETA" \
