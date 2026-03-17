@@ -34,7 +34,7 @@ cd "$HOME/repos/intent-gen"
 source .venv/bin/activate
 
 # ── User-specific paths (override these for different users/clusters) ────────
-PROJECTS_DIR="${PROJECTS_DIR:-/projects/s4351495}"
+PROJECTS_DIR="${PROJECTS_DIR:-/scratch/s4351495}"
 export HF_HOME="${HF_HOME:-${PROJECTS_DIR}/huggingface_cache}"
 SFT_ADAPTER="${SFT_ADAPTER:-${PROJECTS_DIR}/trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter}"
 # ─────────────────────────────────────────────────────────────────────────────
