@@ -154,7 +154,17 @@ def train(args):
     print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
 
     # ── Tokenizer ─────────────────────────────────────────────────────────
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model)
+    # Resolve local snapshot path to avoid network calls (is_base_mistral check)
+    import os as _os
+    _hf_home = _os.environ.get("HF_HOME", _os.path.expanduser("~/.cache/huggingface"))
+    _model_id = args.base_model.replace("/", "--")
+    _snapshots = _os.path.join(_hf_home, "hub", f"models--{_model_id}", "snapshots")
+    if _os.path.isdir(_snapshots):
+        _snap = sorted(_os.listdir(_snapshots))[-1]
+        _tok_path = _os.path.join(_snapshots, _snap)
+    else:
+        _tok_path = args.base_model
+    tokenizer = AutoTokenizer.from_pretrained(_tok_path)
     tokenizer.padding_side = "left"
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
