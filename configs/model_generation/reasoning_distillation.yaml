@@ -23,8 +23,8 @@ model:
 training:
   epochs: 5
   batch_size: 4
-  learning_rate: 2e-4
-  weight_decay: 0.01
+  learning_rate: 5e-5
+  weight_decay: 0.00
   gradient_accumulation: 1
   fp16: false
   bf16: true
@@ -93,8 +93,8 @@ generation:
 
 peft:
   use_lora: true
-  r: 16
-  lora_alpha: 32
+  r: 32
+  lora_alpha: 64
   lora_dropout: 0
   bias: "none"
 
