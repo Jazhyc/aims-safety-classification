@@ -1,5 +1,5 @@
 """
-W&B artifact helpers for LoRA adapter upload/download.
+W&B artifact helpers for LoRA adapter upload/download and eval result upload/download.
 
 All adapters are stored in a single registry project (e.g. "intention-jailbreak-models")
 independent of the experiment-tracking project used for a given run. This means adapters
@@ -57,6 +57,7 @@ from pathlib import Path
 import wandb
 
 ARTIFACT_TYPE = "lora-adapter"
+RESULTS_ARTIFACT_TYPE = "eval-results"
 
 
 def artifact_exists(
@@ -173,4 +174,104 @@ def download_adapter(
     artifact = api.artifact(full_ref, type=ARTIFACT_TYPE)
     artifact.download(root=str(dest))
     print(f"[artifacts] Downloaded '{full_ref}' → {dest}")
+    return dest
+
+
+def upload_results(
+    files: list[Path],
+    name: str,
+    project: str,
+    entity: str | None = None,
+    run: "wandb.Run | None" = None,
+) -> "wandb.Artifact":
+    """
+    Upload a list of result files (JSONL) as a W&B artifact.
+
+    Unlike adapters, results do not use a collision guard — uploading always
+    creates a new version and ``latest`` points to the most recent run. This
+    lets notebooks always pull the freshest results with a fixed artifact name.
+
+    Args:
+        files:   List of Path objects to include. Relative structure inside the
+                 artifact mirrors the paths relative to their common ancestor.
+        name:    Artifact name, e.g. "safety-experiment-results".
+        project: W&B registry project name.
+        entity:  W&B entity. Defaults to the account used by the active run.
+        run:     Active wandb.Run. Defaults to wandb.run.
+
+    Returns:
+        The logged wandb.Artifact.
+    """
+    active_run = run or wandb.run
+    if active_run is None:
+        raise RuntimeError(
+            "No active wandb run. Call wandb.init() before upload_results()."
+        )
+    if not files:
+        raise ValueError("No files provided to upload_results().")
+
+    # Use the common ancestor as the root so relative paths are preserved.
+    common = Path(files[0].anchor)
+    try:
+        from pathlib import PurePath
+        parts = [list(f.parts) for f in files]
+        min_len = min(len(p) for p in parts)
+        common_parts = []
+        for i in range(min_len):
+            if len(set(p[i] for p in parts)) == 1:
+                common_parts.append(parts[0][i])
+            else:
+                break
+        common = Path(*common_parts) if common_parts else Path(".")
+    except Exception:
+        common = Path(".")
+
+    artifact = wandb.Artifact(name=name, type=RESULTS_ARTIFACT_TYPE)
+    for f in sorted(files):
+        try:
+            rel = f.relative_to(common)
+        except ValueError:
+            rel = Path(f.name)
+        artifact.add_file(str(f), name=str(rel))
+
+    qualifier = f"{entity}/{project}" if entity else project
+    active_run.log_artifact(artifact, aliases=["latest"], project=qualifier)
+    print(f"[artifacts] Uploaded results '{name}' to {qualifier} ({len(files)} files)")
+    return artifact
+
+
+def download_results(
+    name: str,
+    project: str,
+    target_dir: str | Path,
+    entity: str | None = None,
+    version: str = "latest",
+) -> Path:
+    """
+    Download a results artifact from the W&B registry project.
+
+    Skips the download if target_dir/name already exists and contains .jsonl files.
+
+    Args:
+        name:       Artifact name, e.g. "safety-experiment-results".
+        project:    W&B registry project name.
+        target_dir: Local directory to download into (files placed at target_dir/name/).
+        entity:     W&B entity. Defaults to the account used by wandb.Api.
+        version:    Artifact version alias (default "latest").
+
+    Returns:
+        Path to the downloaded results directory (target_dir/name).
+    """
+    dest = Path(target_dir) / name
+    if dest.exists() and any(dest.rglob("*.jsonl")):
+        print(f"[artifacts] Results already present locally, skipping download: {dest}")
+        return dest
+
+    api = wandb.Api()
+    qualifier = f"{entity}/{project}" if entity else project
+    full_ref = f"{qualifier}/{name}:{version}"
+
+    artifact = api.artifact(full_ref, type=RESULTS_ARTIFACT_TYPE)
+    artifact.download(root=str(dest))
+    print(f"[artifacts] Downloaded results '{full_ref}' → {dest}")
     return dest

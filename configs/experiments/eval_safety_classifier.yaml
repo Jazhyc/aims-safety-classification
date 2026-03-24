@@ -1,15 +1,24 @@
 # Configuration for safety classification experiment
-# Supports 12 conditions:
-#   - finetuned_generation: Fine-tuned model outputs (intent, harm)
-#   - finetuned_classification: Fine-tuned model outputs harm only
+# Supports 13 conditions:
+#
+# Prompting baselines (no fine-tuning, single model instance):
 #   - vanilla_classification: Vanilla model with system prompt -> harm only
 #   - vanilla_generation: Vanilla model with system prompt -> intent + harm
 #   - vanilla_with_human_intent: Vanilla model with prompt + human intent -> harm
 #   - vanilla_with_model_intent: Vanilla model with prompt + model-generated intent -> harm
-#   - llamaguard_classification: LlamaGuard baseline with same system prompt -> harm only
 #   - zeroshot_cot_classification: CoT prompt -> reasoning + harm (JSON output)
 #   - zeroshot_cot_generation: CoT prompt -> reasoning + intent + harm (JSON output)
-#   - zeroshot_cot_classification_with_intent: CoT prompt + human intent -> reasoning + harm (JSON output)
+#   - zeroshot_cot_classification_with_intent: CoT prompt + human intent -> reasoning + harm
+#
+# Prior-work baselines (separate model, loaded after main model is freed):
+#   - llamaguard_classification: LlamaGuard 4 (12B) native safety classification
+#   - wildguard_classification: WildGuard (7B) safety classification
+#
+# Fine-tuned (intent/harm, no reasoning):
+#   - finetuned_generation: Fine-tuned model outputs (intent, harm)
+#   - finetuned_classification: Fine-tuned model outputs harm only
+#
+# Reasoning distillation:
 #   - finetuned_reasoning_classification: Distilled model (MODE D) -> reasoning + harm
 #   - finetuned_reasoning_generation: Distilled model (MODE E) -> reasoning + intent + harm
 
@@ -41,17 +50,16 @@ experiment:
   #   - "finetuned_reasoning_classification"  # MODE D: reasoning + harm
   #   - "finetuned_reasoning_generation"      # MODE E: reasoning + intent + harm
   conditions:
+    # Prompting baselines
     - "vanilla_classification"
     - "vanilla_generation"
     - "vanilla_with_human_intent"
-    - "llamaguard_classification"
-    - "finetuned_generation"
-    - "finetuned_classification"
     - "zeroshot_cot_classification"
     - "zeroshot_cot_generation"
     - "zeroshot_cot_classification_with_intent"
-    - "finetuned_reasoning_classification"
-    - "finetuned_reasoning_generation"
+    # Prior-work baselines (separate model instances)
+    - "llamaguard_classification"
+    - "wildguard_classification"
 
 # Model configuration
 model:
@@ -84,7 +92,11 @@ lora:
 
 # LlamaGuard baseline configuration
 llamaguard:
-  name: "meta-llama/Llama-Guard-3-8B"
+  name: "meta-llama/Llama-Guard-4-12B"
+
+# WildGuard baseline configuration
+wildguard:
+  name: "allenai/wildguard"
 
 # Dataset configurations - cycles through all datasets
 datasets:
@@ -102,9 +114,6 @@ datasets:
     split: "test"
     harm_column: "prompt_harm_label"
     use_manual_split: false
-    seed: 22
-    test_size: 0.1
-    val_size: 0.1
     output_dir: "data/safety_experiment/wildguardmix"
 
   - name: "xstest"
@@ -113,9 +122,6 @@ datasets:
     split: "test"
     harm_column: "label"
     use_manual_split: false
-    seed: 22
-    test_size: 0.1
-    val_size: 0.1
     output_dir: "data/safety_experiment/xstest"
 
   # - name: "strongreject"
@@ -148,11 +154,14 @@ vllm:
   dtype: "bfloat16"
   enforce_eager: true
 
-# Artifact registry — set enabled: true to auto-download missing fine-tuned adapters
+# Artifact registry
 artifacts:
   enabled: false
   registry_project: "intention-jailbreak-models"
   entity: null  # defaults to your wandb account
+  # Set results_name to upload all prediction JSONL files as a W&B artifact after the run.
+  # Notebooks can then call download_results(results_name, ...) to pull them remotely.
+  results_name: null  # e.g. "safety-experiment-baselines"
 
 # Weights & Biases configuration
 wandb:
