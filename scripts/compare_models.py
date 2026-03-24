@@ -1,16 +1,18 @@
 """
 Compare SFT, DPO, and Contrastive models on harm classification and intent quality.
 
-Loads the test_predictions.jsonl from each model and prints:
-  1. Harm classification metrics (accuracy, F1, precision, recall per class)
-  2. Intent quality metrics (ROUGE-L, semantic similarity vs gold intent)
-  3. A compact summary table
+Loads prediction files from each model and prints per-dataset metrics + summary tables.
+
+Datasets evaluated (if prediction files exist):
+  - Annotated Intents (test_predictions.jsonl)
+  - WildGuardTest     (wildguardtest_predictions.jsonl)
+  - XSTest            (xstest_predictions.jsonl)
 
 Usage (from project root):
     python scripts/compare_models.py \\
-        --sft         data/predictions/sft_baseline/test_predictions.jsonl \\
-        --dpo         trained_models/causal/llama-dpo/predictions/test_predictions.jsonl \\
-        --contrastive trained_models/causal/llama-contrastive/predictions/test_predictions.jsonl \\
+        --sft         data/predictions/sft_baseline \\
+        --dpo         trained_models/causal/llama-dpo/predictions \\
+        --contrastive trained_models/causal/llama-contrastive/predictions \\
         --output-dir  data/comparison
 """
 
@@ -207,80 +209,100 @@ def print_summary_table(results: dict[str, dict], intent_results: dict[str, dict
 # Main
 # ---------------------------------------------------------------------------
 
+DATASETS = [
+    ("annotated_intents", "test_predictions.jsonl"),
+    ("wildguardtest",     "wildguardtest_predictions.jsonl"),
+    ("xstest",            "xstest_predictions.jsonl"),
+]
+
+DATASET_LABELS = {
+    "annotated_intents": "Annotated Intents",
+    "wildguardtest":     "WildGuardTest",
+    "xstest":            "XSTest",
+}
+
+
 def main():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--sft",         type=str,
-                   default="data/predictions/sft_baseline/test_predictions.jsonl")
-    p.add_argument("--dpo",         type=str,
-                   default="trained_models/causal/llama-dpo/predictions/test_predictions.jsonl")
-    p.add_argument("--contrastive", type=str,
-                   default="trained_models/causal/llama-contrastive/predictions/test_predictions.jsonl")
+    p.add_argument("--sft",         type=str, default="data/predictions/sft_baseline")
+    p.add_argument("--dpo",         type=str, default="trained_models/causal/llama-dpo/predictions")
+    p.add_argument("--contrastive", type=str, default="trained_models/causal/llama-contrastive/predictions")
     p.add_argument("--output-dir",  type=str, default="data/comparison")
     p.add_argument("--no-intent",   action="store_true",
                    help="Skip intent quality metrics (faster if sentence-transformers is slow).")
     args = p.parse_args()
 
-    model_paths = {
-        "SFT baseline":  args.sft,
-        "DPO":           args.dpo,
-        "Contrastive":   args.contrastive,
+    model_dirs = {
+        "SFT baseline": args.sft,
+        "DPO":          args.dpo,
+        "Contrastive":  args.contrastive,
     }
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    harm_results   = {}
-    intent_results = {}
+    # results[dataset_key][model_name] = harm_metrics dict
+    all_harm    = {ds: {} for ds, _ in DATASETS}
+    all_intent  = {ds: {} for ds, _ in DATASETS}
 
-    for name, path in model_paths.items():
-        if not Path(path).exists():
-            print(f"[WARN] {name}: file not found — {path}")
-            harm_results[name]   = {}
-            intent_results[name] = {}
-            continue
+    for ds_key, filename in DATASETS:
+        ds_label = DATASET_LABELS[ds_key]
+        print(f"\n{'#'*60}")
+        print(f"  DATASET: {ds_label}")
+        print(f"{'#'*60}")
 
-        print(f"\nLoading {name} from {path}")
-        records = load_predictions(path)
-        print(f"  {len(records)} records")
+        for model_name, pred_dir in model_dirs.items():
+            path = Path(pred_dir) / filename
+            if not path.exists():
+                print(f"[WARN] {model_name} / {ds_label}: file not found — {path}")
+                all_harm[ds_key][model_name]   = {}
+                all_intent[ds_key][model_name] = {}
+                continue
 
-        harm_results[name] = harm_metrics(records)
-        print_harm_report(name, harm_results[name])
+            print(f"\nLoading {model_name} from {path}")
+            records = load_predictions(path)
+            print(f"  {len(records)} records")
 
-        if not args.no_intent:
-            print(f"  Computing intent quality metrics for {name}...")
-            intent_results[name] = intent_metrics(records)
-            ir = intent_results[name]
-            if ir:
-                rL = f"{ir['rougeL']:.4f}" if ir.get("rougeL") is not None else "N/A"
-                ss = f"{ir['sem_sim']:.4f}" if ir.get("sem_sim") is not None else "N/A"
-                print(f"  ROUGE-L: {rL}   Sem-sim: {ss}   (n={ir['n']})")
-        else:
-            intent_results[name] = {}
+            all_harm[ds_key][model_name] = harm_metrics(records)
+            print_harm_report(model_name, all_harm[ds_key][model_name])
 
-    # ── Summary table ─────────────────────────────────────────────────────
-    if any(harm_results.values()):
-        print_summary_table(harm_results, intent_results)
+            if not args.no_intent:
+                all_intent[ds_key][model_name] = intent_metrics(records)
+                ir = all_intent[ds_key][model_name]
+                if ir:
+                    rL = f"{ir['rougeL']:.4f}" if ir.get("rougeL") is not None else "N/A"
+                    ss = f"{ir['sem_sim']:.4f}" if ir.get("sem_sim") is not None else "N/A"
+                    print(f"  ROUGE-L: {rL}   Sem-sim: {ss}   (n={ir['n']})")
+            else:
+                all_intent[ds_key][model_name] = {}
+
+        if any(all_harm[ds_key].values()):
+            print(f"\n--- Summary table: {ds_label} ---")
+            print_summary_table(all_harm[ds_key], all_intent[ds_key])
 
     # ── Save summary JSON ─────────────────────────────────────────────────
     summary = {}
-    for name in model_paths:
-        m  = harm_results.get(name, {})
-        ir = intent_results.get(name, {})
-        summary[name] = {
-            k: v for k, v in {
-                "accuracy":     m.get("accuracy"),
-                "f1_macro":     m.get("f1_macro"),
-                "f1_binary":    m.get("f1_binary"),
-                "f1_harmful":   m.get("f1_harmful"),
-                "f1_safe":      m.get("f1_safe"),
-                "prec_harmful": m.get("prec_harmful"),
-                "rec_harmful":  m.get("rec_harmful"),
-                "n":            m.get("n"),
-                "n_unparsed":   m.get("n_unparsed"),
-                "rougeL":       ir.get("rougeL"),
-                "sem_sim":      ir.get("sem_sim"),
-            }.items() if v is not None
-        }
+    for ds_key, _ in DATASETS:
+        ds_label = DATASET_LABELS[ds_key]
+        summary[ds_label] = {}
+        for model_name in model_dirs:
+            m  = all_harm[ds_key].get(model_name, {})
+            ir = all_intent[ds_key].get(model_name, {})
+            summary[ds_label][model_name] = {
+                k: v for k, v in {
+                    "accuracy":     m.get("accuracy"),
+                    "f1_macro":     m.get("f1_macro"),
+                    "f1_binary":    m.get("f1_binary"),
+                    "f1_harmful":   m.get("f1_harmful"),
+                    "f1_safe":      m.get("f1_safe"),
+                    "prec_harmful": m.get("prec_harmful"),
+                    "rec_harmful":  m.get("rec_harmful"),
+                    "n":            m.get("n"),
+                    "n_unparsed":   m.get("n_unparsed"),
+                    "rougeL":       ir.get("rougeL"),
+                    "sem_sim":      ir.get("sem_sim"),
+                }.items() if v is not None
+            }
 
     out_path = output_dir / "comparison_summary.json"
     with open(out_path, "w") as f:

@@ -1,10 +1,12 @@
 """
-Evaluate the SFT baseline (Llama 3.1-8B + LoRA) on the held-out test set.
+Evaluate a LoRA adapter on the held-out test set + WildGuardTest + XSTest benchmarks.
 
-Saves predictions in the same format as train_dpo.py and train_contrastive.py
-so compare_models.py can load all three side-by-side.
+Saves predictions so compare_models.py can load all models side-by-side.
 
-Output: data/predictions/sft_baseline/test_predictions.jsonl
+Outputs:
+  <output-dir>/test_predictions.jsonl            <- annotated intents test split
+  <output-dir>/wildguardtest_predictions.jsonl   <- WildGuardTest benchmark
+  <output-dir>/xstest_predictions.jsonl          <- XSTest benchmark
 
 Usage (from project root):
     python scripts/eval_sft_baseline.py \\
@@ -20,22 +22,24 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from datasets import load_dataset
 from intention_jailbreak.model_generation.preprocessing import preprocess_data
 from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
 from sklearn.metrics import classification_report, f1_score, accuracy_score
 
-# Inline parser — extract_intent_and_harm lives in intent_diversity_analysis.py,
-# not in causal.py, so we inline it here to avoid cross-script imports.
 import re
 from typing import Optional
 
+
 def _norm_harm(s: str) -> Optional[str]:
+    """Normalise any harm label string to 'harmful' or 'safe'."""
     s = s.strip().lower().rstrip(".").rstrip(";")
-    if s in {"safe", "harmless", "benign"}:
-        return "safe"
     if s in {"harmful", "unsafe", "dangerous"}:
         return "harmful"
+    if s in {"safe", "harmless", "benign", "unharmful"}:
+        return "safe"
     return None
+
 
 def extract_intent_and_harm(raw_text: str):
     text = raw_text.strip()
@@ -64,6 +68,68 @@ def extract_intent_and_harm(raw_text: str):
     return text or None, None
 
 
+def load_benchmark(name: str):
+    """Load WildGuardTest or XSTest and return (examples, harm_column)."""
+    if name == "wildguardtest":
+        ds = load_dataset("allenai/wildguardmix", "wildguardtest", split="test")
+        ds = ds.filter(lambda x: x["prompt_harm_label"] is not None)
+        # map "unharmful" -> "safe"
+        def _map(ex):
+            ex["true_harm"] = _norm_harm(ex["prompt_harm_label"])
+            return ex
+        ds = ds.map(_map)
+        return list(ds), "true_harm"
+    elif name == "xstest":
+        ds = load_dataset("walledai/XSTest", split="test")
+        ds = ds.filter(lambda x: x["label"] is not None)
+        # map "unsafe" -> "harmful", "safe" -> "safe"
+        def _map(ex):
+            ex["true_harm"] = _norm_harm(ex["label"])
+            return ex
+        ds = ds.map(_map)
+        return list(ds), "true_harm"
+    else:
+        raise ValueError(f"Unknown benchmark: {name}")
+
+
+def run_eval(llm, lora_request, sampling_params, examples, harm_col, pred_path: Path, dataset_name: str):
+    """Run inference on examples, save predictions, print metrics."""
+    prompts = [f"{ex['prompt']}\n" for ex in examples]
+    outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
+
+    pred_path.parent.mkdir(parents=True, exist_ok=True)
+    all_preds, all_refs = [], []
+    with open(pred_path, "w", encoding="utf-8") as f:
+        for ex, output in zip(examples, outputs):
+            raw_text = output.outputs[0].text.strip()
+            intent, pred_harm = extract_intent_and_harm(raw_text)
+            true_harm = ex.get(harm_col)
+            all_preds.append(pred_harm or "")
+            all_refs.append(true_harm or "")
+            f.write(json.dumps({
+                "id":               ex.get("id"),
+                "prompt":           ex["prompt"],
+                "true_harm":        true_harm,
+                "predicted_harm":   pred_harm,
+                "generated_intent": intent,
+                "gold_intent":      ex.get("intent"),
+                "raw_generation":   raw_text,
+            }, ensure_ascii=False) + "\n")
+
+    print(f"Saved {len(examples)} predictions → {pred_path}")
+
+    valid = [(t, p) for t, p in zip(all_refs, all_preds) if t and p]
+    y_true = [t for t, _ in valid]
+    y_pred = [p for _, p in valid]
+    print(f"\n=== {dataset_name} Results ===")
+    print(f"n: {len(y_true)}  unparsed: {len(examples) - len(valid)}")
+    print(f"Accuracy : {accuracy_score(y_true, y_pred):.4f}")
+    print(f"F1 macro : {f1_score(y_true, y_pred, average='macro', zero_division=0):.4f}")
+    print(f"F1 harmful: {f1_score(y_true, y_pred, pos_label='harmful', average='binary', zero_division=0):.4f}")
+    print("\nClassification report:")
+    print(classification_report(y_true, y_pred, zero_division=0))
+
+
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--adapter-path", type=str,
@@ -78,19 +144,14 @@ def parse_args():
 
 def main():
     args = parse_args()
-
-    # ── Dataset ───────────────────────────────────────────────────────────
-    print("=== Loading test dataset (HF test split) ===")
-    test_dataset = preprocess_data(split="test")
-    test_dataset = apply_binary_harm_mapping(test_dataset, binary_harm_mapping=True)
-    print(f"Test set: {len(test_dataset)} examples")
+    output_dir = Path(args.output_dir)
 
     # ── vLLM ─────────────────────────────────────────────────────────────
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
 
-    print(f"\n=== Loading SFT model with vLLM ===")
-    print(f"  Base : {args.base_model}")
+    print(f"\n=== Loading model with vLLM ===")
+    print(f"  Base   : {args.base_model}")
     print(f"  Adapter: {args.adapter_path}")
 
     llm = LLM(
@@ -106,7 +167,6 @@ def main():
         enforce_eager=True,
     )
     lora_request = LoRARequest("sft_lora", 1, args.adapter_path)
-
     sampling_params = SamplingParams(
         max_tokens=args.max_new_tokens,
         temperature=0.0,
@@ -114,47 +174,32 @@ def main():
         skip_special_tokens=True,
     )
 
-    # ── Generate ──────────────────────────────────────────────────────────
-    print("\n=== Generating predictions ===")
-    examples = list(test_dataset)
-    prompts  = [f"{ex['prompt']}\n" for ex in examples]
-    outputs  = llm.generate(prompts, sampling_params, lora_request=lora_request)
+    # ── 1. Annotated intents (HF test split) ─────────────────────────────
+    print("\n=== Loading annotated intents test split ===")
+    test_dataset = preprocess_data(split="test")
+    test_dataset = apply_binary_harm_mapping(test_dataset, binary_harm_mapping=True)
+    run_eval(llm, lora_request, sampling_params,
+             list(test_dataset), "Annotator Harm",
+             output_dir / "test_predictions.jsonl",
+             "Annotated Intents")
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    pred_path = output_dir / "test_predictions.jsonl"
+    # ── 2. WildGuardTest ─────────────────────────────────────────────────
+    print("\n=== Loading WildGuardTest ===")
+    wgt_examples, wgt_harm_col = load_benchmark("wildguardtest")
+    print(f"WildGuardTest: {len(wgt_examples)} examples")
+    run_eval(llm, lora_request, sampling_params,
+             wgt_examples, wgt_harm_col,
+             output_dir / "wildguardtest_predictions.jsonl",
+             "WildGuardTest")
 
-    all_preds, all_refs = [], []
-    with open(pred_path, "w", encoding="utf-8") as f:
-        for ex, output in zip(examples, outputs):
-            raw_text  = output.outputs[0].text.strip()
-            intent, pred_harm = extract_intent_and_harm(raw_text)
-            true_harm = ex.get("Annotator Harm")
-            all_preds.append(pred_harm or "")
-            all_refs.append(true_harm or "")
-            f.write(json.dumps({
-                "id":               ex.get("id"),
-                "prompt":           ex["prompt"],
-                "true_harm":        true_harm,
-                "predicted_harm":   pred_harm,
-                "generated_intent": intent,
-                "gold_intent":      ex.get("intent"),
-                "raw_generation":   raw_text,
-            }, ensure_ascii=False) + "\n")
-
-    print(f"Saved {len(examples)} predictions → {pred_path}")
-
-    # ── Metrics ───────────────────────────────────────────────────────────
-    valid = [(t, p) for t, p in zip(all_refs, all_preds) if t and p]
-    y_true = [t for t, _ in valid]
-    y_pred = [p for _, p in valid]
-
-    print("\n=== SFT Baseline — Test Results ===")
-    print(f"n: {len(y_true)}")
-    print(f"Accuracy : {accuracy_score(y_true, y_pred):.4f}")
-    print(f"F1 macro : {f1_score(y_true, y_pred, average='macro', zero_division=0):.4f}")
-    print("\nClassification report:")
-    print(classification_report(y_true, y_pred, zero_division=0))
+    # ── 3. XSTest ────────────────────────────────────────────────────────
+    print("\n=== Loading XSTest ===")
+    xst_examples, xst_harm_col = load_benchmark("xstest")
+    print(f"XSTest: {len(xst_examples)} examples")
+    run_eval(llm, lora_request, sampling_params,
+             xst_examples, xst_harm_col,
+             output_dir / "xstest_predictions.jsonl",
+             "XSTest")
 
     del llm
 

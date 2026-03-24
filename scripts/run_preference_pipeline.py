@@ -184,14 +184,15 @@ def step7_eval_contrastive(args) -> bool:
 
 
 def step8_compare(args) -> bool:
-    sft_path         = str(Path(args.sft_pred_dir) / "test_predictions.jsonl")
-    dpo_path         = str(Path(args.dpo_output_dir) / "predictions" / "test_predictions.jsonl")
-    contrastive_path = str(Path(args.contrastive_output_dir) / "predictions" / "test_predictions.jsonl")
+    sft_dir         = str(args.sft_pred_dir)
+    dpo_dir         = str(Path(args.dpo_output_dir) / "predictions")
+    contrastive_dir = str(Path(args.contrastive_output_dir) / "predictions")
     cmd = [
         sys.executable, "scripts/compare_models.py",
-        "--sft",         sft_path,
-        "--dpo",         dpo_path,
-        "--contrastive", contrastive_path,
+        "--sft",         sft_dir,
+        "--dpo",         dpo_dir,
+        "--contrastive", contrastive_dir,
+        "--no-intent",
     ]
     return run(cmd, "Step 8 – Compare SFT vs DPO vs Contrastive")
 
