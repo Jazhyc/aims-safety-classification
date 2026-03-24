@@ -157,7 +157,7 @@ def main():
         
         print("\nExpected outputs:")
         for rank, alpha, name, _ in job_ids:
-            print(f"  trained_models/causal/{name}_adapter/")
+            print(f"  models/sft/{name}_adapter/")
         
         print("\nMonitor jobs:")
         print("  squeue -u $USER")

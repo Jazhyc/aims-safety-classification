@@ -87,7 +87,7 @@ def t5_trainer(
     lr_scheduler_type = train_cfg.get("lr_scheduler_type", "cosine")
     warmup_ratio = train_cfg.get("warmup_ratio", 0.0)
 
-    output_dir = paths_cfg.get("output_dir", f"./train_results/seq2seq/{model_name.replace('/', '_')}")
+    output_dir = paths_cfg.get("output_dir", f"data/train_results/seq2seq/{model_name.replace('/', '_')}")
     logs_dir = paths_cfg.get("logs_dir", f"./logs/seq2seq/{model_name.replace('/', '_')}")
 
     training_args = Seq2SeqTrainingArguments(
@@ -199,7 +199,7 @@ def run_seq2seq_flow(config):
 
     model_save_dir = paths_cfg.get(
         "model_save_dir",
-        os.path.join("trained_models/seq2seq/", f"{model_name}-model"),
+        os.path.join("models/sft/seq2seq/", f"{model_name}-model"),
     )
     os.makedirs(model_save_dir, exist_ok=True)
     trainer.save_model(model_save_dir)

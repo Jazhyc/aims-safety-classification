@@ -15,8 +15,8 @@ source .venv/bin/activate
 python scripts/train_generator.py \
     --config-name=llm_sweep \
     model.name="${MODEL_HF_PATH}" \
-    paths.output_dir="train_results/causal/${MODEL_NAME}" \
-    paths.logs_dir="logs/causal/${MODEL_NAME}" \
-    paths.model_save_dir="trained_models/causal/${MODEL_NAME}" \
-    paths.predictions_dir="data/predictions/causal/${MODEL_NAME}" \
+    paths.output_dir="data/train_results/${MODEL_NAME}" \
+    paths.logs_dir="logs/${MODEL_NAME}" \
+    paths.model_save_dir="models/sft/${MODEL_NAME}" \
+    paths.predictions_dir="data/predictions/${MODEL_NAME}" \
     wandb.project="intention-jailbreak-llm-sweep" \

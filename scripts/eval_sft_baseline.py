@@ -10,7 +10,7 @@ Outputs:
 
 Usage (from project root):
     python scripts/eval_sft_baseline.py \\
-        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
+        --adapter-path models/sft/hyperparam_sweep/lr_5e-05_e_5_adapter \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/predictions/sft_baseline
 """
@@ -133,7 +133,7 @@ def run_eval(llm, lora_request, sampling_params, examples, harm_col, pred_path: 
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--adapter-path", type=str,
-                   default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
+                   default="models/sft/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--base-model",   type=str,
                    default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--output-dir",   type=str,

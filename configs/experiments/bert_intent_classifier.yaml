@@ -24,9 +24,9 @@ training:
   fp16: false
 
 paths:
-  output_dir:     ./train_results/bert_intent/ModernBERT-base
+  output_dir:     data/train_results/bert_intent/ModernBERT-base
   logs_dir:       ./logs/bert_intent/ModernBERT-base
-  model_save_dir: ./trained_models/bert_intent/ModernBERT-base
+  model_save_dir: models/bert_intent/ModernBERT-base
   predictions_dir: data/predictions_intent
 
 wandb:

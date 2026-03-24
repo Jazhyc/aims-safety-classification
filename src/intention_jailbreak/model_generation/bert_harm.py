@@ -249,9 +249,9 @@ def run_bert_flow(config):
         use_fp16 = False
 
     out_name      = model_name.replace("/", "_")
-    output_dir    = paths_cfg.get("output_dir",    f"./train_results/bert_harm/{out_name}")
+    output_dir    = paths_cfg.get("output_dir",    f"data/train_results/bert_harm/{out_name}")
     logs_dir      = paths_cfg.get("logs_dir",      f"./logs/bert_harm/{out_name}")
-    model_save_dir = paths_cfg.get("model_save_dir", f"./trained_models/bert_harm/{out_name}")
+    model_save_dir = paths_cfg.get("model_save_dir", f"models/bert_harm/{out_name}")
 
     report_to = "wandb" if wandb_cfg else "none"
     run_name  = wandb_cfg.get("run_name", None)

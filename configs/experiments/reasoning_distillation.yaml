@@ -65,26 +65,29 @@ data:
   # ---- MODE E: generation (reasoning + intent + harm) ----------
   # reasoning_traces_condition: "with_intent"
 
+# Base directory for distillation model adapters. Override this to point to a
+# different teacher's adapter directory without touching each path individually.
+# Must match distillation_pipeline.yaml cache.distilled_models_dir when run via the pipeline.
+distilled_models_dir: "models/distillation"
+
 # Keep paths in sync with the active condition above. The teacher model shorthand
 # is included so runs distilled from different teachers don't overwrite each other.
 # Pattern: reasoning-distillation-<teacher>-<condition>
 #
 #   MODE D (without_intent, gemma-3-27b teacher):
-#     output_dir:      train_results/causal/reasoning-distillation-gemma-3-27b-without-intent
-#     logs_dir:        logs/causal/reasoning-distillation-gemma-3-27b-without-intent
-#     model_save_dir:  trained_models/causal/reasoning-distillation-gemma-3-27b-without-intent
-#     predictions_dir: data/predictions/causal/reasoning-distillation-gemma-3-27b-without-intent
+#     model_save_dir:  ${distilled_models_dir}/reasoning-distillation-gemma-3-27b-without-intent
+#     output_dir:      data/train_results/distillation/reasoning-distillation-gemma-3-27b-without-intent
+#     logs_dir:        logs/distillation/reasoning-distillation-gemma-3-27b-without-intent
 #
 #   MODE E (with_intent, gemma-3-27b teacher):
-#     output_dir:      train_results/causal/reasoning-distillation-gemma-3-27b-with-intent
-#     logs_dir:        logs/causal/reasoning-distillation-gemma-3-27b-with-intent
-#     model_save_dir:  trained_models/causal/reasoning-distillation-gemma-3-27b-with-intent
-#     predictions_dir: data/predictions/causal/reasoning-distillation-gemma-3-27b-with-intent
+#     model_save_dir:  ${distilled_models_dir}/reasoning-distillation-gemma-3-27b-with-intent
+#     output_dir:      data/train_results/distillation/reasoning-distillation-gemma-3-27b-with-intent
+#     logs_dir:        logs/distillation/reasoning-distillation-gemma-3-27b-with-intent
 paths:
-  output_dir:      "train_results/causal/reasoning-distillation-gemma-3-27b-without-intent"
-  logs_dir:        "logs/causal/reasoning-distillation-gemma-3-27b-without-intent"
-  model_save_dir:  "trained_models/causal/reasoning-distillation-gemma-3-27b-without-intent"
-  predictions_dir: "data/predictions/causal/reasoning-distillation-gemma-3-27b-without-intent"
+  output_dir:      "data/train_results/distillation/reasoning-distillation-gemma-3-27b-without-intent"
+  logs_dir:        "logs/distillation/reasoning-distillation-gemma-3-27b-without-intent"
+  model_save_dir:  "${distilled_models_dir}/reasoning-distillation-gemma-3-27b-without-intent"
+  predictions_dir: "data/predictions/reasoning-distillation-gemma-3-27b-without-intent"
 
 generation:
   max_new_tokens: 2048

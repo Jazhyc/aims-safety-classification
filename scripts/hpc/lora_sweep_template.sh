@@ -22,8 +22,8 @@ python scripts/train_generator.py \
     --config-name="${CONFIG_NAME}" \
     peft.lora_rank="${LORA_RANK}" \
     peft.lora_alpha="${LORA_ALPHA}" \
-    paths.output_dir="train_results/causal/${EXPERIMENT_NAME}" \
-    paths.logs_dir="logs/causal/${EXPERIMENT_NAME}" \
-    paths.model_save_dir="trained_models/causal/${EXPERIMENT_NAME}" \
-    paths.predictions_dir="data/predictions/causal/${EXPERIMENT_NAME}" \
+    paths.output_dir="data/train_results/${EXPERIMENT_NAME}" \
+    paths.logs_dir="logs/${EXPERIMENT_NAME}" \
+    paths.model_save_dir="models/sft/${EXPERIMENT_NAME}" \
+    paths.predictions_dir="data/predictions/${EXPERIMENT_NAME}" \
     wandb.name="${EXPERIMENT_NAME}"

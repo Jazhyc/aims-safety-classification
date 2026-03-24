@@ -457,8 +457,8 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
     model_name = model_cfg["name"]
     out_name = model_name.replace("/", "_")
     
-    output_dir = paths_cfg.get("output_dir", f"./train_results/causal/{out_name}")
-    logs_dir = paths_cfg.get("logs_dir", f"./logs/causal/{out_name}")
+    output_dir = paths_cfg.get("output_dir", f"./data/train_results/{out_name}")
+    logs_dir = paths_cfg.get("logs_dir", f"./logs/{out_name}")
     
     epochs = train_cfg.get("epochs", 8)
     lr = train_cfg.get("learning_rate", 5e-5)
@@ -652,7 +652,7 @@ def run_causal_flow(config):
         print("Skipping training (skip_training=True)")
         model_save_dir = paths_cfg.get(
             "model_save_dir",
-            f"./trained_models/causal/{model_name}-model",
+            f"./models/sft/{model_name}-model",
         )
         print(f"Loading pre-trained model from {model_save_dir}")
         tokenizer = AutoTokenizer.from_pretrained(model_save_dir)
@@ -684,7 +684,7 @@ def run_causal_flow(config):
 
         model_save_dir = paths_cfg.get(
             "model_save_dir",
-            f"./trained_models/causal/{model_name}-model",
+            f"./models/sft/{model_name}-model",
         )
         if is_peft:
             print("Saving LoRA adapter for VLLM...")

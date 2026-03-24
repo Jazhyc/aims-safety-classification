@@ -31,11 +31,13 @@ data:
   plot_lengths: false
   predict_harm: true
 
+sft_models_dir: "models/sft"
+
 paths:
-  output_dir: "train_results/causal/llm_sweep"
-  logs_dir: "logs/causal/llm_sweep"
-  model_save_dir: "trained_models/causal/llm_sweep"
-  predictions_dir: "data/predictions/causal/llm_sweep"
+  output_dir: "data/train_results/llm_sweep"
+  logs_dir: "logs/llm_sweep"
+  model_save_dir: "${sft_models_dir}/llm_sweep"
+  predictions_dir: "data/predictions/llm_sweep"
 
 generation:
   max_new_tokens: 64

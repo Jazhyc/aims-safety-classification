@@ -272,7 +272,7 @@ def main():
     parser.add_argument(
         "--input-file",
         type=str,
-        default="data/predictions_with_harm/causal/qwen-small/Qwen_Qwen3-0.6B_val.jsonl",
+        default="data/predictions_with_harm/qwen-small/Qwen_Qwen3-0.6B_val.jsonl",
         help="Path to input JSONL file with prompts"
     )
     parser.add_argument(

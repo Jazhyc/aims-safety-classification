@@ -10,12 +10,17 @@ Research project on jailbreak detection using verbalized intent analysis. The co
 intention-jailbreak/
 ├── configs/                    # Hydra YAML configs for training and generation
 │   ├── train_config.yaml
-│   ├── sweep_config.yaml
 │   ├── prompt_templates.yaml
-│   └── experiments/            # Per-script experiment configs
-├── data/                       # (gitignored) predictions, embeddings, DPO pairs, etc.
+│   └── experiments/            # Per-script experiment configs (one YAML per script)
+├── data/                       # (gitignored) datasets, predictions, reasoning traces, etc.
+│   └── train_results/          # (gitignored) HF Trainer checkpoints per run
+│       └── distillation/       # Distillation training checkpoints
 ├── logs/                       # (gitignored) training logs
-├── models/                     # (gitignored) trained model checkpoints
+├── models/                     # (gitignored) trained LoRA adapters and model weights
+│   ├── distillation/           # Reasoning-distillation adapters (set via distilled_models_dir)
+│   ├── sft/                    # SFT/hyperparam-sweep adapters (set via sft_models_dir)
+│   ├── bert_harm/              # BERT harm classifier checkpoints
+│   └── bert_intent/            # BERT intent classifier checkpoints
 ├── notebooks/                  # Jupyter analysis notebooks — see categories below
 ├── notes/                      # Markdown project notes and experiment logs
 ├── scripts/                    # Training, evaluation, generation scripts — see categories below
@@ -28,9 +33,7 @@ intention-jailbreak/
 │   ├── ensemble/               # Deep ensemble classifier
 │   ├── model_generation/       # LLM generation utils, prompt templates, preprocessing
 │   └── training/               # Training utils, metrics, data prep
-├── tests/
-├── trained_models/
-└── train_results/
+└── tests/
 ```
 
 ## Script Categories

@@ -23,9 +23,9 @@ training:
   fp16: false
 
 paths:
-  output_dir: ./train_results/bert_harm/bert-base-uncased
+  output_dir: data/train_results/bert_harm/bert-base-uncased
   logs_dir: ./logs/bert_harm/bert-base-uncased
-  model_save_dir: ./trained_models/bert_harm/bert-base-uncased
+  model_save_dir: models/bert_harm/bert-base-uncased
   predictions_dir: predictions_harm
 
 wandb:

@@ -8,7 +8,7 @@ Each teacher model is benchmarked through three sequential steps:
 
 Caching prevents duplicate work:
   - Step 1: skipped if data/reasoning_traces/<teacher_slug>/train/parsed_results.json is non-empty
-  - Step 2: skipped if trained_models/causal/<run_name>_adapter/adapter_config.json exists
+  - Step 2: skipped if models/distillation/<run_name>_adapter/adapter_config.json exists
   - Step 3: skipped if data/safety_experiment/pipeline/<teacher_slug>/.done exists
 
 WandB run names are derived from the teacher model name so results are easy to compare.
@@ -176,9 +176,9 @@ def step2_distill(
         f"data.reasoning_traces_val_path={val_traces_path}",
         f"data.reasoning_traces_condition={condition}",
         f"paths.model_save_dir={model_save_dir}",
-        f"paths.output_dir=train_results/causal/{run_name}",
-        f"paths.logs_dir=logs/causal/{run_name}",
-        f"paths.predictions_dir=data/predictions/causal/{run_name}",
+        f"paths.output_dir=data/train_results/distillation/{run_name}",
+        f"paths.logs_dir=logs/distillation/{run_name}",
+        f"paths.predictions_dir=data/predictions/{run_name}",
         f"wandb.enabled={str(wandb_cfg.get('enabled', False)).lower()}",
         f"wandb.project={wandb_cfg.get('distillation_project', 'reasoning-distillation')}",
         f"wandb.run_name={wandb_run_name}",
@@ -259,7 +259,7 @@ def main(cfg: DictConfig) -> None:
     cache_cfg: dict = config.get("cache", {})
 
     traces_dir = project_root / cache_cfg.get("reasoning_traces_dir", "data/reasoning_traces")
-    models_dir = project_root / cache_cfg.get("distilled_models_dir", "trained_models/causal")
+    models_dir = project_root / cache_cfg.get("distilled_models_dir", "models/distillation")
     safety_dir = project_root / cache_cfg.get("safety_dir", "data/safety_experiment")
 
     # Validate conditions

@@ -7,7 +7,7 @@
 #
 # Caching: each step writes a sentinel so it is skipped on re-runs:
 #   Step 1: data/reasoning_traces/<teacher_slug>/train/parsed_results.json  (non-empty)
-#   Step 2: trained_models/causal/<run_name>_adapter/adapter_config.json
+#   Step 2: models/<run_name>_adapter/adapter_config.json
 #   Step 3: data/safety_experiment/pipeline/<teacher_slug>/.done
 #
 # WandB run names are "<teacher_slug>" for steps 1 & 3, and
@@ -83,5 +83,5 @@ wandb:
 # ── Cache directories (relative to project root) ───────────────────────────────
 cache:
   reasoning_traces_dir: "data/reasoning_traces_v3"
-  distilled_models_dir: "trained_models/causal"
+  distilled_models_dir: "models/distillation"
   safety_dir: "data/safety_experiment"

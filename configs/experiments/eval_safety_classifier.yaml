@@ -59,19 +59,24 @@ model:
   name: "meta-llama/Llama-3.1-8B-Instruct"
   max_length: 4096
 
+# Base directory for distillation adapters. Change this one key to point evaluation
+# at a different teacher's adapters. Must match distillation_pipeline.yaml cache.distilled_models_dir.
+distilled_models_dir: "models/distillation"
+sft_models_dir: "models/sft"
+
 # Fine-tuned model configuration
 # These are separate adapters trained for different tasks
 finetuned:
   # Adapter for intent + harm generation (finetuned_generation condition)
-  generation_adapter: "trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter"
+  generation_adapter: "${sft_models_dir}/hyperparam_sweep/lr_5e-05_e_5_adapter"
   # Adapter for harm-only classification (finetuned_classification condition)
-  classification_adapter: "trained_models/causal/classification-r16-a32_adapter"
+  classification_adapter: "${sft_models_dir}/classification-r16-a32_adapter"
 
-  # Reasoning distillation adapters (trained via reasoning_distillation.yaml)
+  # Reasoning distillation adapters (trained via reasoning_distillation.yaml / distillation_pipeline.yaml)
   # MODE D: distilled on without_intent traces -> prompt -> Reasoning + Prompt harm
-  reasoning_classification_adapter: "trained_models/causal/reasoning-distillation-gemma-3-27b-without-intent_adapter"
+  reasoning_classification_adapter: "${distilled_models_dir}/reasoning-distillation-gemma-3-27b-without-intent_adapter"
   # MODE E: distilled on with_intent traces -> prompt -> Reasoning + Intent + Prompt harm
-  reasoning_generation_adapter: "trained_models/causal/reasoning-distillation-gemma-3-27b-with-intent_adapter"
+  reasoning_generation_adapter: "${distilled_models_dir}/reasoning-distillation-gemma-3-27b-with-intent_adapter"
 
 # LoRA configuration
 lora:

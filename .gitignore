@@ -215,8 +215,7 @@ data/*
 *.pt
 *.pth
 *.ckpt
-models/*
-!models/.gitkeep
+models/
 checkpoints/
 
 # Logs
@@ -230,6 +229,4 @@ scripts/outputs
 .vscode
 notebooks/clustering_analysis_copy.ipynb
 
-trained_models/
-train_results/
 logs/
