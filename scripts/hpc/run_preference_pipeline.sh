@@ -25,18 +25,18 @@ python scripts/run_preference_pipeline.py \
     --dpo-output-dir         trained_models/causal/llama-dpo \
     --contrastive-output-dir trained_models/causal/llama-contrastive \
     --sft-pred-dir           data/predictions/sft_baseline \
-    --epochs                 2 \
+    --epochs                 1 \
     --learning-rate          5e-5 \
     --batch-size             2 \
     --grad-accum             8 \
-    --dpo-beta               0.1 \
+    --dpo-beta               0.5 \
     --kl-beta                0.5 \
     --temperature            0.8 \
     --k-samples              5 \
     --seed                   22 \
     --wandb-project          dpo-contrastive-pipeline \
     --force-from             1 \
-    --skip-steps             3,6
+    --skip-steps             4,7
 
 echo ""
 echo "======================================================================"

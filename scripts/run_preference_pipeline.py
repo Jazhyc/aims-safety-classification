@@ -77,14 +77,28 @@ def step1_generate_pairs(args) -> bool:
     return run(cmd, "Step 1 – Generate DPO / contrastive pairs")
 
 
-def step2_train_dpo(args) -> bool:
+def step2_balance_pairs(args) -> bool:
+    balanced_path = Path(args.balanced_pairs_dir) / "dpo_pairs.jsonl"
+    if _cached(balanced_path):
+        print(f"\n[SKIP] Step 2 – balanced pairs already exist at {balanced_path}")
+        return True
+    cmd = [
+        sys.executable, "scripts/balance_dpo_pairs.py",
+        "--input",  str(Path(args.pairs_dir) / "dpo_pairs.jsonl"),
+        "--output", str(balanced_path),
+        "--seed",   str(args.seed),
+    ]
+    return run(cmd, "Step 2 – Balance DPO pairs (undersample majority class)")
+
+
+def step3_train_dpo(args) -> bool:
     adapter_out = Path(args.dpo_output_dir + "_adapter") / "adapter_config.json"
     if _cached(adapter_out):
-        print(f"\n[SKIP] Step 2 – DPO adapter already exists at {args.dpo_output_dir}_adapter")
+        print(f"\n[SKIP] Step 3 – DPO adapter already exists at {args.dpo_output_dir}_adapter")
         return True
     cmd = [
         sys.executable, "scripts/train_dpo.py",
-        "--pairs-path",           str(Path(args.pairs_dir) / "dpo_pairs.jsonl"),
+        "--pairs-path",           str(Path(args.balanced_pairs_dir) / "dpo_pairs.jsonl"),
         "--adapter-path",         args.adapter_path,
         "--base-model",           args.base_model,
         "--output-dir",           args.dpo_output_dir,
@@ -98,10 +112,10 @@ def step2_train_dpo(args) -> bool:
         "--wandb-project",        args.wandb_project,
         "--wandb-run",            f"dpo-beta{args.dpo_beta}",
     ]
-    return run(cmd, "Step 2 – DPO training")
+    return run(cmd, "Step 3 – DPO training")
 
 
-def step3_train_contrastive(args) -> bool:
+def step4_train_contrastive(args) -> bool:
     best_adapter = Path(args.contrastive_output_dir + "_adapter_best") / "adapter_config.json"
     if _cached(best_adapter):
         print(f"\n[SKIP] Step 3 – Contrastive adapter already exists at "
@@ -122,10 +136,10 @@ def step3_train_contrastive(args) -> bool:
         "--wandb-project",  args.wandb_project,
         "--wandb-run",      f"contrastive-kl-beta{args.kl_beta}",
     ]
-    return run(cmd, "Step 3 – Contrastive (InfoNCE + KL) training")
+    return run(cmd, "Step 4 – Contrastive (InfoNCE + KL) training")
 
 
-def step4_eval_sft(args) -> bool:
+def step5_eval_sft(args) -> bool:
     pred_path = Path(args.sft_pred_dir) / "test_predictions.jsonl"
     if _cached(pred_path):
         print(f"\n[SKIP] Step 4 – SFT predictions already exist at {pred_path}")
@@ -136,10 +150,10 @@ def step4_eval_sft(args) -> bool:
         "--base-model",     args.base_model,
         "--output-dir",     args.sft_pred_dir,
     ]
-    return run(cmd, "Step 4 – Evaluate SFT baseline")
+    return run(cmd, "Step 5 – Evaluate SFT baseline")
 
 
-def step5_eval_dpo(args) -> bool:
+def step6_eval_dpo(args) -> bool:
     pred_path = Path(args.dpo_output_dir) / "predictions" / "test_predictions.jsonl"
     if _cached(pred_path):
         print(f"\n[SKIP] Step 5 – DPO predictions already exist at {pred_path}")
@@ -151,10 +165,10 @@ def step5_eval_dpo(args) -> bool:
         "--base-model",     args.base_model,
         "--output-dir",     str(Path(args.dpo_output_dir) / "predictions"),
     ]
-    return run(cmd, "Step 5 – Evaluate DPO adapter")
+    return run(cmd, "Step 6 – Evaluate DPO adapter")
 
 
-def step6_eval_contrastive(args) -> bool:
+def step7_eval_contrastive(args) -> bool:
     pred_path = Path(args.contrastive_output_dir) / "predictions" / "test_predictions.jsonl"
     if _cached(pred_path):
         print(f"\n[SKIP] Step 6 – Contrastive predictions already exist at {pred_path}")
@@ -166,10 +180,10 @@ def step6_eval_contrastive(args) -> bool:
         "--base-model",     args.base_model,
         "--output-dir",     str(Path(args.contrastive_output_dir) / "predictions"),
     ]
-    return run(cmd, "Step 6 – Evaluate Contrastive adapter")
+    return run(cmd, "Step 7 – Evaluate Contrastive adapter")
 
 
-def step7_compare(args) -> bool:
+def step8_compare(args) -> bool:
     sft_path         = str(Path(args.sft_pred_dir) / "test_predictions.jsonl")
     dpo_path         = str(Path(args.dpo_output_dir) / "predictions" / "test_predictions.jsonl")
     contrastive_path = str(Path(args.contrastive_output_dir) / "predictions" / "test_predictions.jsonl")
@@ -179,7 +193,7 @@ def step7_compare(args) -> bool:
         "--dpo",         dpo_path,
         "--contrastive", contrastive_path,
     ]
-    return run(cmd, "Step 7 – Compare SFT vs DPO vs Contrastive")
+    return run(cmd, "Step 8 – Compare SFT vs DPO vs Contrastive")
 
 
 # ---------------------------------------------------------------------------
@@ -188,22 +202,24 @@ def step7_compare(args) -> bool:
 
 STEPS = {
     1: step1_generate_pairs,
-    2: step2_train_dpo,
-    3: step3_train_contrastive,
-    4: step4_eval_sft,
-    5: step5_eval_dpo,
-    6: step6_eval_contrastive,
-    7: step7_compare,
+    2: step2_balance_pairs,
+    3: step3_train_dpo,
+    4: step4_train_contrastive,
+    5: step5_eval_sft,
+    6: step6_eval_dpo,
+    7: step7_eval_contrastive,
+    8: step8_compare,
 }
 
 STEP_NAMES = {
     1: "generate pairs",
-    2: "train DPO",
-    3: "train contrastive",
-    4: "eval SFT",
-    5: "eval DPO",
-    6: "eval contrastive",
-    7: "compare models",
+    2: "balance pairs",
+    3: "train DPO",
+    4: "train contrastive",
+    5: "eval SFT",
+    6: "eval DPO",
+    7: "eval contrastive",
+    8: "compare models",
 }
 
 
@@ -229,7 +245,7 @@ def main():
         ok = step_fn(args)
         results[step_num] = "ok" if ok else "FAILED"
 
-        if not ok and step_num in {2, 3}:
+        if not ok and step_num in {3, 4}:
             print(f"\n[ABORT] Training step {step_num} failed — skipping dependent eval steps.")
             break
 
@@ -250,12 +266,13 @@ def _clear_cache(step_num: int, args) -> None:
             Path(args.pairs_dir) / "dpo_pairs.jsonl",
             Path(args.pairs_dir) / "contrastive_pairs.jsonl",
         ],
-        2: [Path(args.dpo_output_dir + "_adapter") / "adapter_config.json"],
-        3: [Path(args.contrastive_output_dir + "_adapter_best") / "adapter_config.json"],
-        4: [Path(args.sft_pred_dir) / "test_predictions.jsonl"],
-        5: [Path(args.dpo_output_dir) / "predictions" / "test_predictions.jsonl"],
-        6: [Path(args.contrastive_output_dir) / "predictions" / "test_predictions.jsonl"],
-        7: [Path("data/comparison/comparison_summary.json")],
+        2: [Path(args.balanced_pairs_dir) / "dpo_pairs.jsonl"],
+        3: [Path(args.dpo_output_dir + "_adapter") / "adapter_config.json"],
+        4: [Path(args.contrastive_output_dir + "_adapter_best") / "adapter_config.json"],
+        5: [Path(args.sft_pred_dir) / "test_predictions.jsonl"],
+        6: [Path(args.dpo_output_dir) / "predictions" / "test_predictions.jsonl"],
+        7: [Path(args.contrastive_output_dir) / "predictions" / "test_predictions.jsonl"],
+        8: [Path("data/comparison/comparison_summary.json")],
     }
     for path in sentinels.get(step_num, []):
         if path.exists():
@@ -274,6 +291,7 @@ def parse_args():
     p.add_argument("--adapter-path",            default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--base-model",              default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--pairs-dir",               default="data/dpo_pairs/train_t0.8")
+    p.add_argument("--balanced-pairs-dir",      default="data/dpo_pairs/train_t0.8_balanced")
     p.add_argument("--dpo-output-dir",          default="trained_models/causal/llama-dpo")
     p.add_argument("--contrastive-output-dir",  default="trained_models/causal/llama-contrastive")
     p.add_argument("--sft-pred-dir",            default="data/predictions/sft_baseline")
