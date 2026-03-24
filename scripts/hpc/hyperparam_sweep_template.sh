@@ -10,6 +10,7 @@ module load Python/3.12.3-GCCcore-13.3.0
 module load CUDA/12.8.0
 
 source .venv/bin/activate
+source ~/.wandb_secrets
 
 # Run training with the specified hyperparameters
 python scripts/baselines/train_generator.py \
