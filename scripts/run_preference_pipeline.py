@@ -73,7 +73,6 @@ def step1_generate_pairs(args) -> bool:
         "--output-dir",     args.pairs_dir,
         "--temperature",    str(args.temperature),
         "--k-samples",      str(args.k_samples),
-        "--seed",           str(args.seed),
     ]
     return run(cmd, "Step 1 – Generate DPO / contrastive pairs")
 
@@ -136,9 +135,6 @@ def step4_eval_sft(args) -> bool:
         "--adapter-path",   args.adapter_path,
         "--base-model",     args.base_model,
         "--output-dir",     args.sft_pred_dir,
-        "--test-size",      str(args.test_size),
-        "--val-size",       str(args.val_size),
-        "--seed",           str(args.seed),
     ]
     return run(cmd, "Step 4 – Evaluate SFT baseline")
 
@@ -154,9 +150,6 @@ def step5_eval_dpo(args) -> bool:
         "--adapter-path",   adapter_path,
         "--base-model",     args.base_model,
         "--output-dir",     str(Path(args.dpo_output_dir) / "predictions"),
-        "--test-size",      str(args.test_size),
-        "--val-size",       str(args.val_size),
-        "--seed",           str(args.seed),
     ]
     return run(cmd, "Step 5 – Evaluate DPO adapter")
 
@@ -172,9 +165,6 @@ def step6_eval_contrastive(args) -> bool:
         "--adapter-path",   adapter_path,
         "--base-model",     args.base_model,
         "--output-dir",     str(Path(args.contrastive_output_dir) / "predictions"),
-        "--test-size",      str(args.test_size),
-        "--val-size",       str(args.val_size),
-        "--seed",           str(args.seed),
     ]
     return run(cmd, "Step 6 – Evaluate Contrastive adapter")
 
@@ -281,7 +271,7 @@ def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     # Paths
-    p.add_argument("--adapter-path",            default="trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter")
+    p.add_argument("--adapter-path",            default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--base-model",              default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--pairs-dir",               default="data/dpo_pairs/train_t0.8")
     p.add_argument("--dpo-output-dir",          default="trained_models/causal/llama-dpo")
@@ -293,17 +283,13 @@ def parse_args():
     p.add_argument("--k-samples",    type=int,   default=5)
 
     # Training
+    p.add_argument("--seed",            type=int,   default=22)
     p.add_argument("--epochs",          type=int,   default=3)
     p.add_argument("--learning-rate",   type=float, default=5e-5)
     p.add_argument("--batch-size",      type=int,   default=2)
     p.add_argument("--grad-accum",      type=int,   default=8)
     p.add_argument("--dpo-beta",        type=float, default=0.1)
     p.add_argument("--kl-beta",         type=float, default=0.1)
-
-    # Data split (eval)
-    p.add_argument("--test-size",  type=float, default=0.1)
-    p.add_argument("--val-size",   type=float, default=0.1)
-    p.add_argument("--seed",       type=int,   default=22)
 
     # Pipeline control
     p.add_argument("--force",       action="store_true",

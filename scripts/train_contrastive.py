@@ -26,7 +26,7 @@ Data format (contrastive_pairs.jsonl):
 Usage (from project root):
     python scripts/train_contrastive.py \\
         --pairs-path     data/dpo_pairs/train_t0.8/contrastive_pairs.jsonl \\
-        --adapter-path   trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \\
+        --adapter-path   trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
         --base-model     meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir     trained_models/causal/llama-contrastive \\
         --kl-beta        0.1
@@ -455,10 +455,7 @@ def _run_vllm_eval(args, adapter_dir: str):
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
     from intention_jailbreak.model_generation.preprocessing import preprocess_data
-    from intention_jailbreak.model_generation.data_utils import (
-        apply_binary_harm_mapping,
-        train_val_test_split,
-    )
+    from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
     from intention_jailbreak.model_generation.evaluate_generations import compute_and_log_metrics
 
     import re as _re
@@ -483,11 +480,9 @@ def _run_vllm_eval(args, adapter_dir: str):
             return _re.sub(r"^Intent:\s*", "", t[:m.start()].strip(), flags=_re.IGNORECASE).strip() or t, _norm(m.group(1))
         return t or None, None
 
-    print("\n=== Loading test dataset for evaluation ===")
-    raw = preprocess_data()
-    raw = apply_binary_harm_mapping(raw, binary_harm_mapping=True)
-    split_cfg = {"data": {"test_size": 0.1, "val_size": 0.1, "seed": 22}}
-    _, _, test_dataset = train_val_test_split(raw, split_cfg)
+    print("\n=== Loading test dataset for evaluation (HF test split) ===")
+    test_dataset = preprocess_data(split="test")
+    test_dataset = apply_binary_harm_mapping(test_dataset, binary_harm_mapping=True)
     print(f"Test set: {len(test_dataset)} examples")
 
     print(f"\n=== Loading contrastive model with vLLM ===")
@@ -556,7 +551,7 @@ def parse_args():
 
     # Model
     p.add_argument("--adapter-path", type=str,
-                   default="trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter")
+                   default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--base-model",   type=str,
                    default="meta-llama/Llama-3.1-8B-Instruct")
 

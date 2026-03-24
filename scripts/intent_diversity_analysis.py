@@ -14,7 +14,7 @@ What it does:
 Usage:
     # Original mode (harm label from the same generation)
     python scripts/intent_diversity_analysis.py \
-        --adapter-path trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \
+        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \
         --base-model meta-llama/Llama-3.1-8B-Instruct \
         --output-dir data/diversity_analysis/t0.8 \
         --num-samples 5 \
@@ -22,7 +22,7 @@ Usage:
 
     # LLM-at-t0 reclassification (skips generation, loads parsed_samples.jsonl)
     python scripts/intent_diversity_analysis.py \
-        --adapter-path trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \
+        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \
         --base-model meta-llama/Llama-3.1-8B-Instruct \
         --from-samples data/diversity_analysis/t0.8/parsed_samples.jsonl \
         --harm-source llm_t0 \
@@ -52,10 +52,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from intention_jailbreak.model_generation.preprocessing import preprocess_data
-from intention_jailbreak.model_generation.data_utils import (
-    train_val_test_split,
-    apply_binary_harm_mapping,
-)
+from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
 
 
 # ---------------------------------------------------------------------------
@@ -248,15 +245,11 @@ def run_analysis(args):
     need_llm = (args.from_samples is None) or (args.harm_source == "llm_t0")
 
     # ------------------------------------------------------------------
-    # 1. Dataset — reproduce exact test split from training
+    # 1. Dataset — use canonical HF test split
     # ------------------------------------------------------------------
-    print("\n=== Loading dataset ===")
-    raw_dataset = preprocess_data()
-    raw_dataset = apply_binary_harm_mapping(raw_dataset, binary_harm_mapping=True)
-
-    split_config = {"data": {"test_size": args.test_size, "val_size": args.val_size,
-                              "seed": args.seed}}
-    _, _, test_dataset = train_val_test_split(raw_dataset, split_config)
+    print("\n=== Loading dataset (HF test split) ===")
+    test_dataset = preprocess_data(split="test")
+    test_dataset = apply_binary_harm_mapping(test_dataset, binary_harm_mapping=True)
 
     if args.max_prompts is not None and args.max_prompts < len(test_dataset):
         test_dataset = test_dataset.select(range(args.max_prompts))
@@ -597,7 +590,7 @@ def parse_args():
 
     # Generation
     p.add_argument("--adapter-path",   type=str,
-                   default="trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter")
+                   default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--base-model",     type=str,
                    default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--num-samples", "-k", type=int, default=5)
@@ -626,9 +619,6 @@ def parse_args():
 
     # Data
     p.add_argument("--output-dir",  type=str, default="data/diversity_analysis")
-    p.add_argument("--test-size",   type=float, default=0.1)
-    p.add_argument("--val-size",    type=float, default=0.1)
-    p.add_argument("--seed",        type=int, default=22)
     p.add_argument("--max-prompts", type=int, default=None)
     return p.parse_args()
 

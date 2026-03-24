@@ -1,10 +1,9 @@
-from pathlib import Path
 from datasets import Dataset, load_dataset
 
 
-def load_raw_parquet() -> Dataset:
-    print("Loading dataset from Hugging Face Hub: Jazhyc/wildguard-annotated-intents")
-    ds = load_dataset("Jazhyc/wildguard-annotated-intents", split="train")
+def load_raw_parquet(split: str = "train") -> Dataset:
+    print(f"Loading dataset from Hugging Face Hub: Jazhyc/wildguard-annotated-intents (split={split})")
+    ds = load_dataset("Jazhyc/wildguard-annotated-intents", split=split)
     print("Raw dataset size:", len(ds))
     print("Columns:", ds.column_names)
     return ds
@@ -47,13 +46,14 @@ def basic_cleaning(ds: Dataset) -> Dataset:
     return ds
 
 
-def preprocess_data() -> Dataset:
+def preprocess_data(split: str = "train") -> Dataset:
     """
-    Steps:
-      1) Load parquet
-      2) Basic cleaning 
-    """
-    ds = load_raw_parquet()
-    ds = basic_cleaning(ds)
+    Load and clean the annotated intents dataset.
 
+    Args:
+        split: HuggingFace split to load — "train", "validation", or "test".
+               Use the canonical HF splits rather than re-splitting locally.
+    """
+    ds = load_raw_parquet(split)
+    ds = basic_cleaning(ds)
     return ds

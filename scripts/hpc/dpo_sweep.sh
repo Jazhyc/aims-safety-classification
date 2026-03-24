@@ -79,7 +79,7 @@ source .venv/bin/activate
 
 PROJECTS_DIR="${PROJECTS_DIR:-/scratch/s4351495}"
 export HF_HOME="${HF_HOME:-${PROJECTS_DIR}/huggingface_cache}"
-SFT_ADAPTER="${SFT_ADAPTER:-${PROJECTS_DIR}/trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter}"
+SFT_ADAPTER="${SFT_ADAPTER:-${PROJECTS_DIR}/trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter}"
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export WANDB_MODE=online

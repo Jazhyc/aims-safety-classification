@@ -17,7 +17,7 @@ Outputs (all in --output-dir):
 
 Usage (from project root):
     python scripts/generate_dpo_pairs.py \\
-        --adapter-path trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \\
+        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/dpo_pairs/train_t0.8 \\
         --num-samples  5 \\
@@ -26,7 +26,7 @@ Usage (from project root):
     # If you already have parsed_samples.jsonl from a previous run, skip generation:
     python scripts/generate_dpo_pairs.py \\
         --from-samples data/dpo_pairs/train_t0.8/parsed_samples.jsonl \\
-        --adapter-path trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \\
+        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/dpo_pairs/train_t0.8
 """
@@ -43,10 +43,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from intention_jailbreak.model_generation.preprocessing import preprocess_data
-from intention_jailbreak.model_generation.data_utils import (
-    apply_binary_harm_mapping,
-    train_val_test_split,
-)
+from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
 
 
 # ---------------------------------------------------------------------------
@@ -173,22 +170,13 @@ def run(args):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # 1. Load dataset — training split only
+    # 1. Load dataset — HF train split only
     # ------------------------------------------------------------------
-    print("\n=== Loading dataset (train split) ===")
-    raw_dataset = preprocess_data()
-    raw_dataset = apply_binary_harm_mapping(raw_dataset, binary_harm_mapping=True)
+    print("\n=== Loading dataset (HF train split) ===")
+    train_dataset = preprocess_data(split="train")
+    train_dataset = apply_binary_harm_mapping(train_dataset, binary_harm_mapping=True)
 
-    split_cfg = {
-        "data": {
-            "test_size": args.test_size,
-            "val_size":  args.val_size,
-            "seed":      args.seed,
-        }
-    }
-    train_dataset, val_dataset, test_dataset = train_val_test_split(raw_dataset, split_cfg)
-
-    print(f"  Train: {len(train_dataset)} | Val: {len(val_dataset)} | Test: {len(test_dataset)}")
+    print(f"  Train: {len(train_dataset)}")
     examples = list(train_dataset)
 
     # ------------------------------------------------------------------
@@ -386,9 +374,6 @@ def run(args):
         "temperature":        args.temperature,
         "num_samples":        args.num_samples,
         "split":              "train",
-        "seed":               args.seed,
-        "test_size":          args.test_size,
-        "val_size":           args.val_size,
         "n_prompts_total":    n_total,
         "n_skipped_no_gold":  n_no_gold,
         "n_skipped_no_valid": n_no_valid,
@@ -414,7 +399,7 @@ def run(args):
     print("\n" + "=" * 65)
     print("PAIR GENERATION SUMMARY")
     print("=" * 65)
-    print(f"Split              : train  (seed={args.seed}, test={args.test_size}, val={args.val_size})")
+    print(f"Split              : HF train split")
     print(f"Total prompts      : {n_total}")
     print(f"Skipped (no gold)  : {n_no_gold}")
     print(f"Skipped (no valid) : {n_no_valid}")
@@ -439,7 +424,7 @@ def parse_args():
     # Model
     p.add_argument(
         "--adapter-path", type=str,
-        default="trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter",
+        default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter",
         help="Path to the SFT LoRA adapter.",
     )
     p.add_argument(
@@ -462,11 +447,6 @@ def parse_args():
         help="Path to parsed_samples.jsonl from a previous run. "
              "Skips the T=temperature generation step.",
     )
-
-    # Data split (must match training run)
-    p.add_argument("--test-size", type=float, default=0.1)
-    p.add_argument("--val-size",  type=float, default=0.1)
-    p.add_argument("--seed",      type=int,   default=22)
 
     # Output
     p.add_argument("--output-dir", type=str, default="data/dpo_pairs/train_t0.8")

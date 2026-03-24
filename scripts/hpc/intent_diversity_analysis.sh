@@ -30,7 +30,7 @@ source .venv/bin/activate
 #
 # ---------------------------------------------------------------------------
 
-ADAPTER_PATH="trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter"
+ADAPTER_PATH="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter"
 BASE_MODEL="meta-llama/Llama-3.1-8B-Instruct"
 MODERNBERT_PATH="trained_models/bert_intent/ModernBERT-base"
 TEMPERATURES=(0.0 0.3 0.6 0.8 1.0 1.2)

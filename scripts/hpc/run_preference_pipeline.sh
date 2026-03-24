@@ -19,7 +19,7 @@ echo "  Use --force-from=N to re-run from a specific step"
 echo "======================================================================"
 
 python scripts/run_preference_pipeline.py \
-    --adapter-path           trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \
+    --adapter-path           trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \
     --base-model             meta-llama/Llama-3.1-8B-Instruct \
     --pairs-dir              data/dpo_pairs/train_t0.8 \
     --dpo-output-dir         trained_models/causal/llama-dpo \

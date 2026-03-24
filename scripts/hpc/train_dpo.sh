@@ -11,7 +11,7 @@ module load CUDA/12.8.0
 
 source .venv/bin/activate
 
-ADAPTER_PATH="trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter"
+ADAPTER_PATH="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter"
 BASE_MODEL="meta-llama/Llama-3.1-8B-Instruct"
 PAIRS_PATH="data/dpo_pairs/train_t0.8/dpo_pairs.jsonl"
 OUTPUT_DIR="trained_models/causal/llama-dpo"

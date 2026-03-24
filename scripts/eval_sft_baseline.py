@@ -8,7 +8,7 @@ Output: data/predictions/sft_baseline/test_predictions.jsonl
 
 Usage (from project root):
     python scripts/eval_sft_baseline.py \\
-        --adapter-path trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter \\
+        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/predictions/sft_baseline
 """
@@ -21,10 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from intention_jailbreak.model_generation.preprocessing import preprocess_data
-from intention_jailbreak.model_generation.data_utils import (
-    apply_binary_harm_mapping,
-    train_val_test_split,
-)
+from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
 from sklearn.metrics import classification_report, f1_score, accuracy_score
 
 # Inline parser — extract_intent_and_harm lives in intent_diversity_analysis.py,
@@ -70,14 +67,11 @@ def extract_intent_and_harm(raw_text: str):
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--adapter-path", type=str,
-                   default="trained_models/causal/hyperparam_sweep/lr_0.0005_e_5_adapter")
+                   default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--base-model",   type=str,
                    default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--output-dir",   type=str,
                    default="data/predictions/sft_baseline")
-    p.add_argument("--test-size",    type=float, default=0.1)
-    p.add_argument("--val-size",     type=float, default=0.1)
-    p.add_argument("--seed",         type=int,   default=22)
     p.add_argument("--max-new-tokens", type=int, default=64)
     return p.parse_args()
 
@@ -86,12 +80,9 @@ def main():
     args = parse_args()
 
     # ── Dataset ───────────────────────────────────────────────────────────
-    print("=== Loading test dataset ===")
-    raw = preprocess_data()
-    raw = apply_binary_harm_mapping(raw, binary_harm_mapping=True)
-    split_cfg = {"data": {"test_size": args.test_size, "val_size": args.val_size,
-                           "seed": args.seed}}
-    _, _, test_dataset = train_val_test_split(raw, split_cfg)
+    print("=== Loading test dataset (HF test split) ===")
+    test_dataset = preprocess_data(split="test")
+    test_dataset = apply_binary_harm_mapping(test_dataset, binary_harm_mapping=True)
     print(f"Test set: {len(test_dataset)} examples")
 
     # ── vLLM ─────────────────────────────────────────────────────────────
