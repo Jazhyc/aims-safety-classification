@@ -6,7 +6,7 @@
 #   3. Evaluate – run safety_experiment.py with the distilled adapters
 #
 # Caching: each step writes a sentinel so it is skipped on re-runs:
-#   Step 1: data/reasoning_traces/<teacher_slug>/parsed_results.json  (non-empty)
+#   Step 1: data/reasoning_traces/<teacher_slug>/train/parsed_results.json  (non-empty)
 #   Step 2: trained_models/causal/<run_name>_adapter/adapter_config.json
 #   Step 3: data/safety_experiment/pipeline/<teacher_slug>/.done
 #
@@ -29,8 +29,8 @@ teacher_models:
   - "Qwen/Qwen3.5-27B"
 
 # ── Per-teacher trace overrides ────────────────────────────────────────────────
-# Models listed here skip step 1 and use the provided parsed_results.json directly.
-# Useful when existing traces are already in the correct format.
+# Models listed here skip step 1 and use the provided train/parsed_results.json directly.
+# The path should point to the train split file; val/test splits are not needed for distillation.
 teacher_trace_overrides: {}
 
 # ── Pipeline stages ─────────────────────────────────────────────────────────────

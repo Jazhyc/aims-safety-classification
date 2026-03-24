@@ -2,12 +2,12 @@
 Distillation pipeline: teacher trace generation → student fine-tuning → safety evaluation.
 
 Each teacher model is benchmarked through three sequential steps:
-  1. Teacher  – generate_reasoning_traces.py produces parsed_results.json
+  1. Teacher  – generate_reasoning_traces.py produces per-split parsed_results.json files
   2. Distill  – train_generator.py (reasoning_distillation config) fine-tunes the student
   3. Evaluate – safety_experiment.py evaluates the distilled student
 
 Caching prevents duplicate work:
-  - Step 1: skipped if data/reasoning_traces/<teacher_slug>/parsed_results.json is non-empty
+  - Step 1: skipped if data/reasoning_traces/<teacher_slug>/train/parsed_results.json is non-empty
   - Step 2: skipped if trained_models/causal/<run_name>_adapter/adapter_config.json exists
   - Step 3: skipped if data/safety_experiment/pipeline/<teacher_slug>/.done exists
 
@@ -56,8 +56,8 @@ def _condition_slug(condition: str) -> str:
 # ── Cache helpers ──────────────────────────────────────────────────────────────
 
 def traces_cached(teacher_model: str, traces_dir: Path) -> tuple[bool, Path]:
-    """Step 1 cache: non-empty parsed_results.json exists."""
-    path = traces_dir / _teacher_slug(teacher_model) / "parsed_results.json"
+    """Step 1 cache: non-empty train/parsed_results.json exists."""
+    path = traces_dir / _teacher_slug(teacher_model) / "train" / "parsed_results.json"
     if path.exists():
         with open(path) as f:
             data = json.load(f)
