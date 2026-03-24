@@ -59,3 +59,8 @@ quantization:
 wandb:
   project: "intention-jailbreak-llm-sweep"
   name: "llm-generator"
+
+artifacts:
+  enabled: false
+  registry_project: "intention-jailbreak-models"
+  entity: null  # defaults to your wandb account

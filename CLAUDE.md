@@ -120,10 +120,22 @@ data/reasoning_traces/<model-slug>/
 Used for ModernBERT classifier training. Loaded via `src/intention_jailbreak/dataset/wildguardmix.py`.
 Stratified split on `prompt_harm_label`, `adversarial`, `subcategory`. English-only filtering via `language_filter.py`.
 
+## Model Artifact Registry
+
+LoRA adapters can be synced to a single W&B registry project (`intention-jailbreak-models`) via `src/intention_jailbreak/model_generation/artifacts.py`. This allows adapters trained on one device to be retrieved on another without needing to know which experiment project produced them.
+
+Three functions:
+- `artifact_exists(name, registry_project)` — call **before training starts**; raises if an adapter with the same name already exists, preventing accidental overwrites from parallel runs.
+- `upload_adapter(adapter_path, registry_project)` — uploads root-level adapter files only (skips `checkpoint-N/` subdirs); called automatically after `trainer.save_model()` in `causal.py` when enabled.
+- `download_adapter(name, registry_project, target_dir)` — downloads to `target_dir/name`; skips if directory already has files.
+
+Artifact name = adapter directory name (e.g. `reasoning-distillation-gemma-3-27b-without-intent_adapter`), which is unique across pipelines. Enable per-config via `artifacts.enabled: true` in `llm_sweep.yaml` / `reasoning_distillation.yaml`.
+
 ## Key Conventions
 
 - **Config management**: Hydra (`configs/`) for training; YAML files under `configs/experiments/` for generation/training/eval scripts.
 - **Experiment tracking**: Weights & Biases (wandb).
+- **Model artifacts**: W&B artifact registry via `model_generation/artifacts.py`; registry project `intention-jailbreak-models` (opt-in per config).
 - **HPC**: SLURM via scripts in `scripts/hpc/`. Most training jobs are submitted via Python submission scripts.
 - **Inference**: vLLM used for all large LLM inference (generation, harm labeling, distillation).
 - **LoRA**: All LLM fine-tuning uses LoRA/QLoRA adapters.

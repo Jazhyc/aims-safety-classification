@@ -111,3 +111,8 @@ wandb:
   enabled: true
   project: "reasoning-distillation"
   run_name: null
+
+artifacts:
+  enabled: false
+  registry_project: "intention-jailbreak-models"
+  entity: null  # defaults to your wandb account

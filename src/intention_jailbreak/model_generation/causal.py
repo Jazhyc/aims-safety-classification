@@ -3,6 +3,7 @@ import json
 import re
 import gc
 import torch
+from pathlib import Path
 from tqdm import tqdm
 
 from transformers import (
@@ -19,6 +20,7 @@ from .preprocessing import preprocess_data
 from .data_utils import align_tokenizer_with_model, apply_binary_harm_mapping
 from .evaluate_generations import compute_and_log_metrics
 from .prompt_templates import build_student_prompt
+from .artifacts import artifact_exists, upload_adapter
 
 try:
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -534,7 +536,23 @@ def run_causal_flow(config):
     max_length = model_cfg.get("max_length_causal", 256)
     
     skip_training = bool(train_cfg.get("skip_training", False))
-    
+
+    # Artifact registry pre-flight check — fail fast before any GPU allocation
+    artifacts_cfg = config.get("artifacts", {})
+    artifacts_enabled = artifacts_cfg.get("enabled", False)
+    registry_project = artifacts_cfg.get("registry_project", None)
+    artifact_entity = artifacts_cfg.get("entity", None)
+
+    if artifacts_enabled and not skip_training:
+        _model_save_dir = paths_cfg.get("model_save_dir", f"./models/sft/{model_name}-model")
+        _adapter_name = Path(_model_save_dir + "_adapter").name
+        if artifact_exists(_adapter_name, registry_project, entity=artifact_entity):
+            raise RuntimeError(
+                f"Artifact '{_adapter_name}' already exists in W&B registry project "
+                f"'{registry_project}'. Delete it from W&B before re-training, or "
+                f"point paths.model_save_dir at a different directory."
+            )
+
     # Get data configuration
     data_cfg = config.get("data", {})
     predict_harm = data_cfg.get("predict_harm", False)
@@ -693,6 +711,8 @@ def run_causal_flow(config):
             trainer.save_model(adapter_dir)
             print(f"LoRA adapter saved to {adapter_dir}")
             tokenizer.save_pretrained(adapter_dir)
+            if artifacts_enabled:
+                upload_adapter(adapter_dir, registry_project, entity=artifact_entity)
         else:
             os.makedirs(model_save_dir, exist_ok=True)
             trainer.save_model(model_save_dir)
