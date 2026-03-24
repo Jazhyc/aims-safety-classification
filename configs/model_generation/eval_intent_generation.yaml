@@ -25,10 +25,10 @@ datasets:
   - name: "annotated-intents"
     dataset_name: "Jazhyc/wildguard-annotated-intents"
     subset: null
-    split: "train"
+    split: "test"
     harm_column: "Annotator Harm"
     intent_column: "Intent"
-    use_manual_split: true
+    use_manual_split: false
     seed: 22
     test_size: 0.1
     val_size: 0.1

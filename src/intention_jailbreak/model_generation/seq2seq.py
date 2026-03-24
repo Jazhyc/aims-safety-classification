@@ -11,7 +11,7 @@ from transformers import (
 )
 
 from .preprocessing import preprocess_data
-from .data_utils import get_lengths, train_val_test_split
+from .data_utils import get_lengths
 
 
 def format_input_output_seq2seq(examples, tokenizer, prompt_max=512, intent_max=32):
@@ -154,10 +154,10 @@ def run_seq2seq_flow(config):
     data_cfg = config.get("data", {})
     paths_cfg = config.get("paths", {})
 
-    final_dataset = preprocess_data()
+    train_raw = preprocess_data(split="train")
 
     prompt_max_raw, intent_max_raw = get_lengths(
-        final_dataset,
+        train_raw,
         plot=data_cfg.get("plot_lengths", False),
     )
 
@@ -171,19 +171,20 @@ def run_seq2seq_flow(config):
     model = get_seq2seq_model(model_name=model_name).to(device)
     tokenizer = get_seq2seq_tokenizer(model_name=model_name)
 
-    tokenized_dataset = final_dataset.map(
-        format_input_output_seq2seq,
-        fn_kwargs={
-            "tokenizer": tokenizer,
-            "prompt_max": prompt_max,
-            "intent_max": intent_max,
-        },
-        batched=True,
-    )
+    def _tokenize(ds):
+        return ds.map(
+            format_input_output_seq2seq,
+            fn_kwargs={
+                "tokenizer": tokenizer,
+                "prompt_max": prompt_max,
+                "intent_max": intent_max,
+            },
+            batched=True,
+        )
 
-    train_dataset, val_dataset, test_dataset = train_val_test_split(
-        tokenized_dataset, config
-    )
+    train_dataset = _tokenize(train_raw)
+    val_dataset = _tokenize(preprocess_data(split="validation"))
+    test_dataset = _tokenize(preprocess_data(split="test"))
 
     trainer = t5_trainer(
         model=model,

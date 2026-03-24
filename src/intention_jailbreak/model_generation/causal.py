@@ -16,7 +16,7 @@ from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
 from .preprocessing import preprocess_data
-from .data_utils import train_val_test_split, align_tokenizer_with_model, apply_binary_harm_mapping
+from .data_utils import align_tokenizer_with_model, apply_binary_harm_mapping, train_val_test_split
 from .evaluate_generations import compute_and_log_metrics
 from .prompt_templates import build_student_prompt
 
@@ -592,15 +592,12 @@ def run_causal_flow(config):
                 for r, h, i in zip(examples["reasoning"], examples["harm_label"], intents)
             ]
             return {"prompt": prompts, "completion": completions}
+
+        dataset_with_cols = raw_dataset.map(create_prompt_completion, batched=True)
+        train_dataset, val_dataset, test_dataset = train_val_test_split(
+            dataset_with_cols, config
+        )
     else:
-        # Load and prepare dataset
-        print("Loading dataset with preprocess_data()...")
-        raw_dataset = preprocess_data()
-        print("Dataset size:", len(raw_dataset))
-
-        # Apply binary harm mapping if enabled
-        raw_dataset = apply_binary_harm_mapping(raw_dataset, binary_harm_mapping)
-
         def create_prompt_completion(examples):
             prompts = [format_prompt(p, predict_harm) for p in examples["prompt"]]
 
@@ -618,25 +615,27 @@ def run_causal_flow(config):
 
             return {"prompt": prompts, "completion": completions}
 
-    dataset_with_cols = raw_dataset.map(
-        create_prompt_completion,
-        batched=True,
-    )
-    
+        def _load_and_format(split):
+            ds = preprocess_data(split=split)
+            ds = apply_binary_harm_mapping(ds, binary_harm_mapping)
+            return ds.map(create_prompt_completion, batched=True)
+
+        print("Loading dataset splits from Hub...")
+        train_dataset = _load_and_format("train")
+        val_dataset = _load_and_format("validation")
+        test_dataset = _load_and_format("test")
+        print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)} | Test: {len(test_dataset)}")
+
     # Print example of training data
     print("\n" + "=" * 60)
     print("EXAMPLE TRAINING DATA:")
     print("=" * 60)
-    example = dataset_with_cols[0]
+    example = train_dataset[0]
     print("── PROMPT ──")
     print(example["prompt"])
     print("── COMPLETION ──")
     print(example["completion"])
     print("=" * 60 + "\n")
-    
-    train_dataset, val_dataset, test_dataset = train_val_test_split(
-        dataset_with_cols, config
-    )
     
     if skip_training:
         print("Skipping training (skip_training=True)")

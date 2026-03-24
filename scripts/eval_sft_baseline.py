@@ -146,6 +146,12 @@ def main():
     args = parse_args()
     output_dir = Path(args.output_dir)
 
+    # ── Dataset ───────────────────────────────────────────────────────────
+    print("=== Loading test dataset ===")
+    test_dataset = preprocess_data(split="test")
+    test_dataset = apply_binary_harm_mapping(test_dataset, binary_harm_mapping=True)
+    print(f"Test set: {len(test_dataset)} examples")
+
     # ── vLLM ─────────────────────────────────────────────────────────────
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest

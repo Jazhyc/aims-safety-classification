@@ -189,13 +189,21 @@ def run_bert_flow(config):
     print(f"[BERT] Input key    : {input_key}")
     print(f"[BERT] Binary labels: {binary}")
 
-    # Load and optionally binarise dataset
-    final_dataset = preprocess_data()
-    if binary:
-        final_dataset = apply_binary_harm_mapping(final_dataset, binary_harm_mapping=True)
+    # Load all splits from Hub
+    def _load_split(split):
+        ds = preprocess_data(split=split)
+        if binary:
+            ds = apply_binary_harm_mapping(ds, binary_harm_mapping=True)
+        return ds
 
-    # Build label mapping BEFORE split so IDs are consistent across all splits
-    label2id, id2label = build_label_mapping(final_dataset, label_key)
+    train_raw = _load_split("train")
+    val_raw   = _load_split("validation")
+    test_raw  = _load_split("test")
+
+    # Build label mapping from all splits combined so IDs are consistent
+    from datasets import concatenate_datasets
+    all_raw = concatenate_datasets([train_raw, val_raw, test_raw])
+    label2id, id2label = build_label_mapping(all_raw, label_key)
     num_labels = len(label2id)
     print(f"[BERT] Label column : '{label_key}' — {num_labels} classes: {list(label2id.keys())}")
 
@@ -211,21 +219,22 @@ def run_bert_flow(config):
         trust_remote_code=trust_remote_code,
     )
 
-    tokenized_dataset = final_dataset.map(
-        format_for_classification,
-        fn_kwargs={
-            "tokenizer": tokenizer,
-            "label_key":  label_key,
-            "label2id":   label2id,
-            "input_key":  input_key,   # ← passed through
-            "max_length": max_length,
-        },
-        batched=True,
-    )
+    def _tokenize(ds):
+        return ds.map(
+            format_for_classification,
+            fn_kwargs={
+                "tokenizer": tokenizer,
+                "label_key":  label_key,
+                "label2id":   label2id,
+                "input_key":  input_key,
+                "max_length": max_length,
+            },
+            batched=True,
+        )
 
-    train_dataset, val_dataset, test_dataset = train_val_test_split(
-        tokenized_dataset, config
-    )
+    train_dataset = _tokenize(train_raw)
+    val_dataset   = _tokenize(val_raw)
+    test_dataset  = _tokenize(test_raw)
 
     # Hyperparameters
     epochs     = int(train_cfg.get("epochs", 5))
