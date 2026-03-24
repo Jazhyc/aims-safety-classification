@@ -12,9 +12,9 @@ module load CUDA/12.8.0
 source .venv/bin/activate
 
 echo "======================================================================"
-echo " Preference-learning pipeline"
-echo "  Steps: generate pairs → train DPO → train contrastive"
-echo "         → eval SFT/DPO/contrastive → compare"
+echo " Preference-learning pipeline (DPO only)"
+echo "  Steps: generate pairs → train DPO"
+echo "         → eval SFT/DPO → compare"
 echo "  Use --force-from=N to re-run from a specific step"
 echo "======================================================================"
 
@@ -35,15 +35,14 @@ python scripts/run_preference_pipeline.py \
     --k-samples              5 \
     --seed                   22 \
     --wandb-project          dpo-contrastive-pipeline \
-    --force-from             1
+    --force-from             1 \
+    --skip-steps             3,6
 
 echo ""
 echo "======================================================================"
 echo " Done. Key outputs:"
 echo "   trained_models/causal/llama-dpo_adapter/"
-echo "   trained_models/causal/llama-contrastive_adapter_best/"
 echo "   data/predictions/sft_baseline/test_predictions.jsonl"
 echo "   trained_models/causal/llama-dpo/predictions/test_predictions.jsonl"
-echo "   trained_models/causal/llama-contrastive/predictions/test_predictions.jsonl"
 echo "   data/comparison/comparison_summary.json"
 echo "======================================================================"
