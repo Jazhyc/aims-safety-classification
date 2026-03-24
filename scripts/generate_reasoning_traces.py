@@ -1,11 +1,17 @@
 """
 Generate reasoning traces for WildGuard samples using vLLM.
 
-All enabled conditions are batched into a single vLLM call to maximise GPU utilisation.
+All three Hub splits (train, validation, test) are processed in a single vLLM pass
+to maximise GPU utilisation.  Outputs are saved to split-specific subdirectories so
+consumers (distillation pipeline, safety experiment, etc.) can load the correct split.
 
 Outputs:
-  - data/reasoning_traces/<model>/raw_outputs.json    Raw model outputs
-  - data/reasoning_traces/<model>/parsed_results.json Parsed fields + reasoning traces
+  - data/reasoning_traces/<model>/train/raw_outputs.json
+  - data/reasoning_traces/<model>/train/parsed_results.json
+  - data/reasoning_traces/<model>/validation/raw_outputs.json
+  - data/reasoning_traces/<model>/validation/parsed_results.json
+  - data/reasoning_traces/<model>/test/raw_outputs.json
+  - data/reasoning_traces/<model>/test/parsed_results.json
 
 Usage:
     python scripts/generate_reasoning_traces.py
@@ -231,43 +237,35 @@ def parse_model_output(raw_text: str) -> dict:
     }
 
 
-def load_samples(data_cfg: dict) -> list:
+def load_samples_for_split(data_cfg: dict, split: str) -> list:
     """
-    Load and join samples from the annotated intents dataset and WildGuardMix.
-
-    Loads only the annotated_intents dataset, which contains prompts, human-written
-    intents, and harm labels in a single place (the harm_column field, defaulting to
-    "Annotator Harm").  No secondary dataset is needed.
+    Load samples from one Hub split of the annotated intents dataset.
 
     Args:
-        data_cfg: The ``dataset`` block from reasoning_traces.yaml, expected to have:
-            annotated_intents.dataset_name  -- HuggingFace dataset id
-            annotated_intents.subset        -- subset name (null for no subset)
-            annotated_intents.split         -- dataset split (default: "train")
-            annotated_intents.harm_column   -- column with harm labels (default: "Annotator Harm")
-            num_samples                     -- max samples to return; null means use all
-            seed                            -- random seed for shuffling
+        data_cfg: The ``dataset`` block from reasoning_traces.yaml.
+        split:    Hub split name: "train", "validation", or "test".
 
     Returns:
-        List of dicts with keys: wildguard_id, prompt, prompt_harm_label, intent.
+        List of dicts with keys: wildguard_id, prompt, prompt_harm_label, intent, split.
     """
-    num_samples = data_cfg.get("num_samples")   # None means use all
+    import random
+
+    num_samples = data_cfg.get("num_samples")
     seed = data_cfg.get("seed", 42)
 
     ai_cfg = data_cfg.get("annotated_intents", {})
     ai_name = ai_cfg.get("dataset_name", "Jazhyc/wildguard-annotated-intents")
     ai_subset = ai_cfg.get("subset")
-    ai_split = ai_cfg.get("split", "train")
     harm_column = ai_cfg.get("harm_column", "Annotator Harm")
 
-    print(f"Loading annotated intents dataset: {ai_name}")
+    print(f"  Loading split='{split}' from {ai_name} ...")
     if ai_subset:
-        annotated_ds = load_dataset(ai_name, ai_subset, split=ai_split)
+        annotated_ds = load_dataset(ai_name, ai_subset, split=split)
     else:
-        annotated_ds = load_dataset(ai_name, split=ai_split)
-    print(f"  Dataset size: {len(annotated_ds)}")
+        annotated_ds = load_dataset(ai_name, split=split)
+    print(f"    Raw size: {len(annotated_ds)}")
 
-    # Deduplicate by Wildguard ID (keep first intent per ID) and filter missing harm labels
+    # Deduplicate by Wildguard ID (train split may have multiple annotations per prompt)
     seen_ids = {}
     for row in annotated_ds:
         wg_id = row.get("Wildguard ID")
@@ -280,36 +278,30 @@ def load_samples(data_cfg: dict) -> list:
                     "prompt": prompt,
                     "prompt_harm_label": harm_label,
                     "intent": row.get("Intent", ""),
+                    "split": split,
                 }
 
     available = list(seen_ids.values())
-    print(f"  Unique samples with harm labels: {len(available)}")
+    print(f"    Unique samples with harm labels: {len(available)}")
 
-    # Exclude holdout test split to prevent leakage into distillation training.
-    # Uses HuggingFace train_test_split with the same parameters as
-    # safety_experiment.py so the excluded IDs match exactly.
-    holdout_test_size = data_cfg.get("holdout_test_size", 0.0)
-    holdout_seed = data_cfg.get("holdout_seed", 22)
-    if holdout_test_size and holdout_test_size > 0:
-        splits = annotated_ds.train_test_split(test_size=holdout_test_size, seed=holdout_seed)
-        # Collect the Wildguard IDs that fall in the test split
-        holdout_ids = set(
-            row["Wildguard ID"] for row in splits["test"]
-            if row.get("Wildguard ID") is not None
-        )
-        before = len(available)
-        available = [s for s in available if s["wildguard_id"] not in holdout_ids]
-        print(f"  Holdout excluded: {before - len(available)} samples "
-              f"(test_size={holdout_test_size}, seed={holdout_seed})")
-
-    # Shuffle and select with fixed seed
-    import random
     rng = random.Random(seed)
     rng.shuffle(available)
     samples = available if num_samples is None else available[:num_samples]
-
-    print(f"\nSelected {len(samples)} samples (num_samples={num_samples}, seed={seed})")
     return samples
+
+
+def load_all_samples(data_cfg: dict) -> list:
+    """
+    Load samples from all three Hub splits and return them as a single list,
+    each sample tagged with its split name.
+    """
+    all_samples = []
+    for split in ("train", "validation", "test"):
+        split_samples = load_samples_for_split(data_cfg, split)
+        all_samples.extend(split_samples)
+        print(f"    → {len(split_samples)} samples from '{split}'")
+    print(f"\nTotal samples across all splits: {len(all_samples)}")
+    return all_samples
 
 @hydra.main(version_base=None, config_path="../configs/model_generation", config_name="reasoning_traces")
 def main(cfg: DictConfig):
@@ -349,8 +341,9 @@ def main(cfg: DictConfig):
 
     print(f"\nConditions to run: {conditions}")
 
-    # Load samples
-    samples = load_samples(dataset_cfg)
+    # Load samples from all splits (single vLLM pass covers everything)
+    print("\n=== Loading samples from all splits ===")
+    samples = load_all_samples(dataset_cfg)
 
     if not samples:
         print("No samples loaded. Exiting.")
@@ -468,6 +461,7 @@ def main(cfg: DictConfig):
             "prompt": sample["prompt"],
             "intent": sample["intent"],
             "prompt_harm_label": sample["prompt_harm_label"],
+            "split": sample["split"],
             "condition": condition,
             "raw_output": raw_text,
             "thinking_trace": parsed["thinking_trace"],
@@ -476,6 +470,7 @@ def main(cfg: DictConfig):
         parsed_results.append({
             "wildguard_id": sample["wildguard_id"],
             "prompt": sample["prompt"],
+            "split": sample["split"],
             "condition": condition,
             "ground_truth": {
                 "intent": sample["intent"],
@@ -488,34 +483,47 @@ def main(cfg: DictConfig):
             "reasoning": parsed["reasoning"],
         })
 
-    # Save results
-    raw_output_path = output_dir / "raw_outputs.json"
-    parsed_output_path = output_dir / "parsed_results.json"
+    # Save results partitioned by split
+    print("\n=== Saving results ===")
+    for split in ("train", "validation", "test"):
+        split_raw     = [r for r in raw_outputs    if r["split"] == split]
+        split_parsed  = [r for r in parsed_results if r["split"] == split]
 
-    with open(raw_output_path, "w") as f:
-        json.dump(raw_outputs, f, indent=2, ensure_ascii=False)
-    print(f"\nRaw outputs saved to: {raw_output_path}")
+        split_dir = output_dir / split
+        split_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(parsed_output_path, "w") as f:
-        json.dump(parsed_results, f, indent=2, ensure_ascii=False)
-    print(f"Parsed results saved to: {parsed_output_path}")
+        raw_path    = split_dir / "raw_outputs.json"
+        parsed_path = split_dir / "parsed_results.json"
 
-    # Print summary per condition
+        with open(raw_path, "w") as f:
+            json.dump(split_raw, f, indent=2, ensure_ascii=False)
+        with open(parsed_path, "w") as f:
+            json.dump(split_parsed, f, indent=2, ensure_ascii=False)
+
+        print(f"  [{split}] {len(split_parsed)} samples → {split_dir}")
+
+    # Print summary per condition × split
     for condition in conditions:
-        condition_results = [r for r in parsed_results if r["condition"] == condition]
-        total = len(condition_results)
-        parsed_harm_count = sum(
-            1 for r in condition_results
-            if r["predicted"]["prompt_harm"] is not None
-        )
-        parsed_intent_count = sum(
-            1 for r in condition_results
-            if r["predicted"]["prompt_intent"] is not None
-        )
-        print(f"\n=== Summary ({condition}) ===")
-        print(f"Total samples: {total}")
-        print(f"Prompt harm parsed:   {parsed_harm_count}/{total}")
-        print(f"Prompt intent parsed: {parsed_intent_count}/{total}")
+        for split in ("train", "validation", "test"):
+            condition_results = [
+                r for r in parsed_results
+                if r["condition"] == condition and r["split"] == split
+            ]
+            total = len(condition_results)
+            if total == 0:
+                continue
+            parsed_harm_count = sum(
+                1 for r in condition_results
+                if r["predicted"]["prompt_harm"] is not None
+            )
+            parsed_intent_count = sum(
+                1 for r in condition_results
+                if r["predicted"]["prompt_intent"] is not None
+            )
+            print(f"\n=== Summary ({condition} / {split}) ===")
+            print(f"Total samples: {total}")
+            print(f"Prompt harm parsed:   {parsed_harm_count}/{total}")
+            print(f"Prompt intent parsed: {parsed_intent_count}/{total}")
 
 
 if __name__ == "__main__":

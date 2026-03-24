@@ -29,16 +29,15 @@ conditions:
   # - "zeroshot_cot"
 
 # Dataset configuration
-# Only the annotated_intents dataset is loaded. It contains prompts, human-written
-# intents, harm labels (harm_column), and Wildguard IDs all in one place, so no
-# secondary dataset join is needed.
-# num_samples: null uses all available samples; set to an integer to subsample.
-# Deduplication is done by Wildguard ID (one entry per unique prompt).
+# All three Hub splits (train, validation, test) are loaded in a single vLLM pass
+# and saved to separate output subdirectories. Deduplication is done by Wildguard ID
+# (one entry per unique prompt — relevant for the train split which may have
+# multiple annotations for the same prompt).
+# num_samples: null uses all available samples per split; set to an integer to subsample.
 dataset:
   annotated_intents:
     dataset_name: "Jazhyc/wildguard-annotated-intents"
     subset: null
-    split: "train"
     harm_column: "Annotator Harm"
   num_samples: null
   seed: 42
