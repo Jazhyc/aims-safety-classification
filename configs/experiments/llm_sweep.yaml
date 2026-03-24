@@ -9,7 +9,7 @@ model:
   attn_implementation: "flash_attention_2"
 
 training:
-  epochs: 1
+  epochs: 5
   batch_size: 4
   learning_rate: 2e-4
   weight_decay: 0.01
