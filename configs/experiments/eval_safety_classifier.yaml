@@ -167,7 +167,7 @@ artifacts:
 wandb:
   enabled: true
   entity: null
-  project: "safety-experiment"
+  project: "Baselines"
   run_name: null
   tags: ["safety", "classification"]
   dir: "logs/wandb"
