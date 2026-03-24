@@ -12,4 +12,4 @@ module load CUDA/12.8.0
 source .venv/bin/activate
 
 # Evaluate intent generation from best hyperparameter sweep model
-python scripts/eval_intent_generation.py --config-name=eval_intent_generation
+python scripts/baselines/eval_intent_generation.py --config-name=eval_intent_generation

@@ -12,4 +12,4 @@ module load CUDA/12.8.0
 source .venv/bin/activate
 
 # Generate reasoning traces from WildGuard train set
-python scripts/generate_reasoning_traces.py --config-name=reasoning_traces
+python scripts/distillation/generate_reasoning_traces.py --config-name=reasoning_traces

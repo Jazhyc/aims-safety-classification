@@ -11,4 +11,4 @@ module load CUDA/12.8.0
 
 source .venv/bin/activate
 
-python scripts/train_generator.py --config-name=reasoning_distillation
+python scripts/baselines/train_generator.py --config-name=reasoning_distillation

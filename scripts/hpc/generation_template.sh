@@ -12,7 +12,7 @@ module load CUDA/12.8.0
 source .venv/bin/activate
 
 # Run training with the specified model
-python scripts/train_generator.py \
+python scripts/baselines/train_generator.py \
     --config-name=llm_sweep \
     model.name="${MODEL_HF_PATH}" \
     paths.output_dir="data/train_results/${MODEL_NAME}" \

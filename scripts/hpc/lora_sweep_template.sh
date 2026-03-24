@@ -18,7 +18,7 @@ source .venv/bin/activate
 #   - CONFIG_NAME: Base config name
 #   - EXPERIMENT_NAME: Name for output directories
 
-python scripts/train_generator.py \
+python scripts/baselines/train_generator.py \
     --config-name="${CONFIG_NAME}" \
     peft.lora_rank="${LORA_RANK}" \
     peft.lora_alpha="${LORA_ALPHA}" \

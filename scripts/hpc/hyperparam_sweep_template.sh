@@ -12,7 +12,7 @@ module load CUDA/12.8.0
 source .venv/bin/activate
 
 # Run training with the specified hyperparameters
-python scripts/train_generator.py \
+python scripts/baselines/train_generator.py \
     --config-name=llm_sweep \
     model.name="meta-llama/Llama-3.1-8B-Instruct" \
     training.learning_rate="${LEARNING_RATE}" \

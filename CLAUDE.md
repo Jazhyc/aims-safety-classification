@@ -22,9 +22,17 @@ intention-jailbreak/
 │   ├── bert_harm/              # BERT harm classifier checkpoints
 │   └── bert_intent/            # BERT intent classifier checkpoints
 ├── notebooks/                  # Jupyter analysis notebooks — see categories below
+│   ├── baselines/              # Baseline intent generation/classification analysis
+│   ├── distillation/           # Teacher distillation sweep + reasoning trace analysis
+│   ├── modernbert/             # ModernBERT classifier analysis
+│   └── dataset_analysis/       # One-off dataset distribution notebooks
 ├── notes/                      # Markdown project notes and experiment logs
 ├── scripts/                    # Training, evaluation, generation scripts — see categories below
-│   └── hpc/                    # SLURM job submission scripts + shell wrappers
+│   ├── baselines/              # Intent classification & generation baselines
+│   ├── distillation/           # Teacher trace generation & student distillation
+│   ├── dataset_analysis/       # One-off dataset analysis scripts
+│   ├── dataset_generation/     # ModernBERT classifier training
+│   ├── hpc/                    # SLURM job submission scripts + shell wrappers
 │   └── report/                 # One-off scripts for report figures
 ├── src/intention_jailbreak/    # Library source code
 │   ├── comparison/             # Synthetic intent generation + clustering comparison
@@ -38,14 +46,14 @@ intention-jailbreak/
 
 ## Script Categories
 
-Scripts are (or will be) organized into subdirectories. **Do not touch DPO/contrastive scripts** — those are owned by another team member.
+**Do not touch DPO/contrastive scripts** — those are owned by another team member.
 
 | Subdirectory | Purpose | Scripts |
 |---|---|---|
 | `scripts/baselines/` | Intent classification & generation baselines | `eval_sft_baseline.py`, `eval_intent_generation.py`, `compare_models.py`, `train_generator.py` |
 | `scripts/distillation/` | Teacher reasoning trace generation & student distillation | `generate_reasoning_traces.py`, `run_distillation_pipeline.py`, `check_trace_leakage.py` |
-| `scripts/` (root) | Multi-condition safety/harm classification evaluation | `eval_safety_classifier.py` |
-| `scripts/dpo_contrastive/` | **(Do not modify)** DPO + contrastive preference learning | `train_dpo.py`, `train_contrastive.py`, `generate_dpo_pairs.py`, `balance_dpo_pairs.py`, `compare_dpo_sweep.py`, `run_preference_pipeline.py` |
+| `scripts/` (root) | Multi-condition safety/harm classification + misc | `eval_safety_classifier.py`, `intent_diversity_analysis.py` |
+| `scripts/` (root, **do not modify**) | DPO + contrastive preference learning | `train_dpo.py`, `train_contrastive.py`, `generate_dpo_pairs.py`, `balance_dpo_pairs.py`, `compare_dpo_sweep.py`, `run_preference_pipeline.py` |
 | `scripts/dataset_generation/` | ModernBERT classifier used to generate the annotation set via uncertainty filtering | `train.py`, `evaluate_test.py`, `plot_calibration.py` |
 | `scripts/dataset_analysis/` | One-off scripts for analysing the annotated dataset | `generate_harm_labels.py`, `synthetic_comparison.py`, `evaluate_harm_predictions.py` |
 | `scripts/hpc/` | SLURM submission + shell wrappers (keep as-is) | `submit_*.py`, `slurm_utils.py`, `*.sh` |
@@ -53,13 +61,11 @@ Scripts are (or will be) organized into subdirectories. **Do not touch DPO/contr
 
 ## Notebook Categories
 
-Notebooks are (or will be) organized into subdirectories:
-
 | Subdirectory | Purpose | Notebooks |
 |---|---|---|
-| `notebooks/baselines/` | Baseline intent generation/classification analysis | `model_generation.ipynb`, `eval_results_analysis.ipynb`, `wandb_llm_sweep_analysis.ipynb` |
+| `notebooks/baselines/` | Baseline intent generation/classification analysis | `eval_results_analysis.ipynb`, `wandb_llm_sweep_analysis.ipynb`, `safety_experiment_results.ipynb` |
 | `notebooks/distillation/` | Teacher distillation sweep + reasoning trace analysis | `distillation_teacher_sweep.ipynb`, `reasoning_traces_analysis_llama.ipynb` |
-| `notebooks/dpo_contrastive/` | **(Do not modify)** Preference learning results | `preference_learning_results.ipynb` |
+| `notebooks/` (root, **do not modify**) | Preference learning results | `preference_learning_results.ipynb`, `diversity_analysis.ipynb` |
 | `notebooks/modernbert/` | ModernBERT classifier analysis | `intent_classifier_analysis.ipynb`, `test_results_analysis.ipynb` |
 | `notebooks/dataset_analysis/` | Old one-off notebooks for analysing the annotated dataset and its distribution | `annotation_analysis.ipynb`, `disagreement_analysis.ipynb`, `harm_labels_comparison.ipynb`, `harm_label_eval_4class_vs_binary.ipynb`, `wildguardmix_analysis.ipynb`, `clustering_analysis.ipynb`, `bert_harm_labels.ipynb` |
 
@@ -81,9 +87,9 @@ Human-annotated intents for ~1.7K WildGuardMix prompts. Loaded via HuggingFace `
 **Scripts that consume this dataset and the split they load:**
 | Script | Split |
 |---|---|
-| `scripts/eval_sft_baseline.py` | `test` |
-| `scripts/eval_intent_generation.py` (via config) | `test` |
-| `scripts/generate_reasoning_traces.py` | all three (single vLLM pass) |
+| `scripts/baselines/eval_sft_baseline.py` | `test` |
+| `scripts/baselines/eval_intent_generation.py` (via config) | `test` |
+| `scripts/distillation/generate_reasoning_traces.py` | all three (single vLLM pass) |
 | `scripts/eval_safety_classifier.py` (via config) | `test` |
 | `src/intention_jailbreak/model_generation/causal.py` | `train`/`validation`/`test` |
 | `src/intention_jailbreak/model_generation/seq2seq.py` | `train`/`validation`/`test` |
@@ -92,7 +98,7 @@ Human-annotated intents for ~1.7K WildGuardMix prompts. Loaded via HuggingFace `
 
 ## Reasoning Traces
 
-Generated by `scripts/generate_reasoning_traces.py` using a teacher LLM. All three Hub splits are processed in a single vLLM pass and saved to split-specific subdirectories:
+Generated by `scripts/distillation/generate_reasoning_traces.py` using a teacher LLM. All three Hub splits are processed in a single vLLM pass and saved to split-specific subdirectories:
 
 ```
 data/reasoning_traces/<model-slug>/
@@ -107,7 +113,7 @@ data/reasoning_traces/<model-slug>/
     parsed_results.json      ← consumed by eval_safety_classifier.py (future)
 ```
 
-`run_distillation_pipeline.py` passes both `train/parsed_results.json` and `validation/parsed_results.json` to `train_generator.py` → `causal.py` for clean train/val separation.
+`scripts/distillation/run_distillation_pipeline.py` passes both `train/parsed_results.json` and `validation/parsed_results.json` to `scripts/baselines/train_generator.py` → `causal.py` for clean train/val separation.
 
 ## Secondary Dataset: WildGuardMix
 
