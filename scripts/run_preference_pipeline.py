@@ -72,7 +72,7 @@ def step1_generate_pairs(args) -> bool:
         "--base-model",     args.base_model,
         "--output-dir",     args.pairs_dir,
         "--temperature",    str(args.temperature),
-        "--k-samples",      str(args.k_samples),
+        "--num-samples",    str(args.k_samples),
     ]
     return run(cmd, "Step 1 – Generate DPO / contrastive pairs")
 
