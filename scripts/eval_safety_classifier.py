@@ -46,6 +46,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from intention_jailbreak.model_generation.prompt_templates import build_student_prompt
+from intention_jailbreak.model_generation.artifacts import download_adapter
 
 
 # WildGuard harm categories for structured decoding
@@ -1331,7 +1332,28 @@ def main(cfg: DictConfig):
     classification_adapter = finetuned_cfg.get("classification_adapter")
     reasoning_classification_adapter = finetuned_cfg.get("reasoning_classification_adapter")
     reasoning_generation_adapter = finetuned_cfg.get("reasoning_generation_adapter")
-    
+
+    # Download any missing fine-tuned adapters from the W&B registry
+    artifacts_cfg = config.get("artifacts", {})
+    if artifacts_cfg.get("enabled", False) and needs_finetuned:
+        registry_project = artifacts_cfg["registry_project"]
+        artifact_entity = artifacts_cfg.get("entity", None)
+        _condition_adapter_map = {
+            "finetuned_generation": generation_adapter,
+            "finetuned_classification": classification_adapter,
+            "finetuned_reasoning_classification": reasoning_classification_adapter,
+            "finetuned_reasoning_generation": reasoning_generation_adapter,
+        }
+        for cond in conditions:
+            adapter_path = _condition_adapter_map.get(cond)
+            if adapter_path and not os.path.exists(adapter_path):
+                download_adapter(
+                    name=Path(adapter_path).name,
+                    project=registry_project,
+                    target_dir=Path(adapter_path).parent,
+                    entity=artifact_entity,
+                )
+
     # Check if llamaguard condition is requested
     needs_llamaguard = "llamaguard_classification" in conditions
     llamaguard_model = llamaguard_cfg.get("name", "meta-llama/Llama-Guard-3-8B")

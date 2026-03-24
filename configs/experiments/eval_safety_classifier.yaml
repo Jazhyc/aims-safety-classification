@@ -148,6 +148,12 @@ vllm:
   dtype: "bfloat16"
   enforce_eager: true
 
+# Artifact registry — set enabled: true to auto-download missing fine-tuned adapters
+artifacts:
+  enabled: false
+  registry_project: "intention-jailbreak-models"
+  entity: null  # defaults to your wandb account
+
 # Weights & Biases configuration
 wandb:
   enabled: true
