@@ -303,7 +303,7 @@ def load_all_samples(data_cfg: dict) -> list:
     print(f"\nTotal samples across all splits: {len(all_samples)}")
     return all_samples
 
-@hydra.main(version_base=None, config_path="../configs/experiments", config_name="reasoning_traces")
+@hydra.main(version_base=None, config_path="../../configs/experiments", config_name="reasoning_traces")
 def main(cfg: DictConfig):
     """Main function to generate reasoning traces."""
     config = OmegaConf.to_container(cfg, resolve=True)

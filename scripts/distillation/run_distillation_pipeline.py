@@ -127,7 +127,7 @@ def step1_teacher(
 
     conditions_str = ",".join(conditions)
     cmd = [
-        sys.executable, "scripts/generate_reasoning_traces.py",
+        sys.executable, "scripts/distillation/generate_reasoning_traces.py",
         f"model.name={teacher_model}",
         f"conditions=[{conditions_str}]",
         f"paths.output_dir={traces_dir}",
@@ -170,7 +170,7 @@ def step2_distill(
         wandb_run_name += f"-{suffix}"
 
     cmd = [
-        sys.executable, "scripts/train_generator.py",
+        sys.executable, "scripts/baselines/train_generator.py",
         "--config-name=reasoning_distillation",
         f"data.reasoning_traces_path={train_traces_path}",
         f"data.reasoning_traces_val_path={val_traces_path}",
@@ -238,7 +238,7 @@ def step3_safety(
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-@hydra.main(version_base=None, config_path="../configs/experiments", config_name="distillation_pipeline")
+@hydra.main(version_base=None, config_path="../../configs/experiments", config_name="distillation_pipeline")
 def main(cfg: DictConfig) -> None:
     config = OmegaConf.to_container(cfg, resolve=True)
     project_root = Path(__file__).parent.parent.resolve()

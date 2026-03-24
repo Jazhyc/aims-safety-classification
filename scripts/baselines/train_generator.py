@@ -31,7 +31,7 @@ try:
 except ImportError:
     wandb = None
 
-@hydra.main(version_base=None, config_path="../configs/experiments", config_name="llm_sweep")
+@hydra.main(version_base=None, config_path="../../configs/experiments", config_name="llm_sweep")
 def main(cfg: DictConfig):
     # Convert Hydra config to dict for compatibility with existing flows
     config = OmegaConf.to_container(cfg, resolve=True)
