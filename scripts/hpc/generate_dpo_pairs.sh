@@ -29,10 +29,7 @@ python scripts/generate_dpo_pairs.py \
     --num-samples    5 \
     --temperature    0.8 \
     --top-p          0.95 \
-    --max-new-tokens 64 \
-    --test-size      0.1 \
-    --val-size       0.1 \
-    --seed           22
+    --max-new-tokens 64
 
 echo ""
 echo "======================================================================"

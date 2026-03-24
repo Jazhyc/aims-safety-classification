@@ -35,7 +35,7 @@ python scripts/run_preference_pipeline.py \
     --k-samples              5 \
     --seed                   22 \
     --wandb-project          dpo-contrastive-pipeline \
-    --force-from             3
+    --force-from             1
 
 echo ""
 echo "======================================================================"
