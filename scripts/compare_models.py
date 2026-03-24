@@ -63,6 +63,7 @@ def harm_metrics(records: list[dict]) -> dict:
         "accuracy":      accuracy_score(y_true, y_pred),
         "f1_macro":      f1_score(y_true, y_pred, average="macro",    labels=labels, zero_division=0),
         "f1_harmful":    f1_score(y_true, y_pred, pos_label="harmful", average="binary", zero_division=0),
+        "f1_binary":     f1_score(y_true, y_pred, pos_label="harmful", average="binary", zero_division=0),
         "f1_safe":       f1_score(y_true, y_pred, pos_label="safe",    average="binary", zero_division=0),
         "prec_harmful":  precision_score(y_true, y_pred, pos_label="harmful", average="binary", zero_division=0),
         "rec_harmful":   recall_score(y_true, y_pred,    pos_label="harmful", average="binary", zero_division=0),
@@ -269,6 +270,7 @@ def main():
             k: v for k, v in {
                 "accuracy":     m.get("accuracy"),
                 "f1_macro":     m.get("f1_macro"),
+                "f1_binary":    m.get("f1_binary"),
                 "f1_harmful":   m.get("f1_harmful"),
                 "f1_safe":      m.get("f1_safe"),
                 "prec_harmful": m.get("prec_harmful"),
