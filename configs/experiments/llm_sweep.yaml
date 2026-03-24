@@ -57,10 +57,11 @@ quantization:
   bnb_4bit_quant_type: "nf4"
 
 wandb:
+  enabled: true
   project: "intention-jailbreak-llm-sweep"
   name: "llm-generator"
 
 artifacts:
-  enabled: false
+  enabled: true
   registry_project: "intention-jailbreak-models"
   entity: null  # defaults to your wandb account
