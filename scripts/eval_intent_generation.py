@@ -132,7 +132,7 @@ def load_and_split_dataset(dataset_name, subset, split, harm_column, intent_colu
     return test_dataset, harm_column
 
 
-@hydra.main(version_base=None, config_path="../configs/model_generation", config_name="eval_intent_generation")
+@hydra.main(version_base=None, config_path="../configs/experiments", config_name="eval_intent_generation")
 def main(cfg: DictConfig):
     """
     Main evaluation function.

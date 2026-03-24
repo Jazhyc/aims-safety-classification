@@ -52,12 +52,12 @@ training:
 # ==============================================================
 
 data:
-  seed: 22
-  test_size: 0.1
-  val_size: 0.1
   use_reasoning_traces: true
 
-  reasoning_traces_path: "data/reasoning_traces/RedHatAI-gemma-3-27b-it-quantized.w4a16/parsed_results.json"
+  # Train split produced by generate_reasoning_traces.py
+  reasoning_traces_path: "data/reasoning_traces/RedHatAI-gemma-3-27b-it-quantized.w4a16/train/parsed_results.json"
+  # Validation split — keeps val set clean and avoids random re-splits on re-runs
+  reasoning_traces_val_path: "data/reasoning_traces/RedHatAI-gemma-3-27b-it-quantized.w4a16/validation/parsed_results.json"
 
   # ---- MODE D: classification (reasoning + harm) ---------------
   reasoning_traces_condition: "without_intent"

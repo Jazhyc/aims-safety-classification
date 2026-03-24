@@ -4,7 +4,7 @@ Distillation pipeline: teacher trace generation → student fine-tuning → safe
 Each teacher model is benchmarked through three sequential steps:
   1. Teacher  – generate_reasoning_traces.py produces per-split parsed_results.json files
   2. Distill  – train_generator.py (reasoning_distillation config) fine-tunes the student
-  3. Evaluate – safety_experiment.py evaluates the distilled student
+  3. Evaluate – eval_safety_classifier.py evaluates the distilled student
 
 Caching prevents duplicate work:
   - Step 1: skipped if data/reasoning_traces/<teacher_slug>/train/parsed_results.json is non-empty
@@ -147,7 +147,7 @@ def step1_teacher(
 def step2_distill(
     teacher_model: str,
     condition: str,
-    traces_path: Path,
+    traces_dir: Path,
     models_dir: Path,
     wandb_cfg: dict,
     extra_env: dict,
@@ -159,6 +159,10 @@ def step2_distill(
         print(f"[CACHE HIT] Step 2 – adapter already exists: {adapter_dir}")
         return True, adapter_dir
 
+    slug = _teacher_slug(teacher_model)
+    train_traces_path = traces_dir / slug / "train" / "parsed_results.json"
+    val_traces_path   = traces_dir / slug / "validation" / "parsed_results.json"
+
     run_name = _run_name(teacher_model, condition, suffix)
     model_save_dir = models_dir / run_name
     wandb_run_name = f"{_teacher_slug(teacher_model)}-{_condition_slug(condition)}"
@@ -168,7 +172,8 @@ def step2_distill(
     cmd = [
         sys.executable, "scripts/train_generator.py",
         "--config-name=reasoning_distillation",
-        f"data.reasoning_traces_path={traces_path}",
+        f"data.reasoning_traces_path={train_traces_path}",
+        f"data.reasoning_traces_val_path={val_traces_path}",
         f"data.reasoning_traces_condition={condition}",
         f"paths.model_save_dir={model_save_dir}",
         f"paths.output_dir=train_results/causal/{run_name}",
@@ -211,7 +216,7 @@ def step3_safety(
     conditions_str = ",".join(safety_conditions)
 
     cmd = [
-        sys.executable, "scripts/safety_experiment.py",
+        sys.executable, "scripts/eval_safety_classifier.py",
         f"experiment.conditions=[{conditions_str}]",
         f"paths.output_dir={output_dir}",
         "wandb.enabled=true",  # always log safety results regardless of pipeline wandb.enabled
@@ -233,7 +238,7 @@ def step3_safety(
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-@hydra.main(version_base=None, config_path="../configs/model_generation", config_name="distillation_pipeline")
+@hydra.main(version_base=None, config_path="../configs/experiments", config_name="distillation_pipeline")
 def main(cfg: DictConfig) -> None:
     config = OmegaConf.to_container(cfg, resolve=True)
     project_root = Path(__file__).parent.parent.resolve()
@@ -294,14 +299,14 @@ def main(cfg: DictConfig) -> None:
 
         # ── Step 1: teacher traces (large model — use MIG device if set) ──────
         if teacher_model in trace_overrides:
-            traces_path = project_root / trace_overrides[teacher_model]
-            print(f"[OVERRIDE] Step 1 – using pre-existing traces: {traces_path}")
+            override_train_path = project_root / trace_overrides[teacher_model]
+            print(f"[OVERRIDE] Step 1 – using pre-existing traces: {override_train_path}")
             summary[slug]["step1_traces"] = "override"
         elif not run_step1:
             print(f"  [SKIP] Step 1 disabled in config.")
             summary[slug]["step1_traces"] = "skipped"
-            _, traces_path = traces_cached(teacher_model, traces_dir)
-            if traces_path is None:
+            cached, train_path = traces_cached(teacher_model, traces_dir)
+            if not cached:
                 print(f"  No cached traces found — skipping steps 2 & 3.")
                 continue
         else:
@@ -314,9 +319,10 @@ def main(cfg: DictConfig) -> None:
             if not ok1:
                 print(f"  Skipping steps 2 & 3 for {teacher_model} — step 1 failed.")
                 continue
-            _, traces_path = traces_cached(teacher_model, traces_dir)
 
         # ── Step 2: distillation per condition (8B student — default GPU) ──
+        # step2_distill constructs train/val paths from traces_dir / slug / split /
+        # parsed_results.json.  Override paths are not yet supported for the val split.
         adapter_map: dict[str, Path] = {}
         if not run_step2:
             print(f"  [SKIP] Step 2 disabled in config.")
@@ -325,7 +331,7 @@ def main(cfg: DictConfig) -> None:
         else:
             for condition in conditions:
                 ok2, adapter_dir = step2_distill(
-                    teacher_model, condition, traces_path,
+                    teacher_model, condition, traces_dir,
                     models_dir, wandb_cfg, {}, project_root, run_suffix,
                 )
                 summary[slug][f"step2_{condition}"] = "ok" if ok2 else "FAILED"

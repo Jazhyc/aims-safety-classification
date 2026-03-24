@@ -12,4 +12,4 @@ module load CUDA/12.8.0
 source .venv/bin/activate
 
 # Run safety experiment with all conditions including LlamaGuard baseline
-python scripts/safety_experiment.py --config-name=safety_experiment
+python scripts/eval_safety_classifier.py --config-name=eval_safety_classifier

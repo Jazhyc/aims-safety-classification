@@ -16,7 +16,7 @@ from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
 from .preprocessing import preprocess_data
-from .data_utils import align_tokenizer_with_model, apply_binary_harm_mapping, train_val_test_split
+from .data_utils import align_tokenizer_with_model, apply_binary_harm_mapping
 from .evaluate_generations import compute_and_log_metrics
 from .prompt_templates import build_student_prompt
 
@@ -577,7 +577,6 @@ def run_causal_flow(config):
         # Load pre-generated reasoning traces as training data.
         # Each example already has a reasoning field and a binary harm_label;
         # intent is available for the "with_intent" condition.
-        raw_dataset = load_reasoning_traces_dataset(data_cfg)
 
         def create_prompt_completion(examples):
             # Use the shared student prompt template: preamble + taxonomy + output format
@@ -593,10 +592,22 @@ def run_causal_flow(config):
             ]
             return {"prompt": prompts, "completion": completions}
 
-        dataset_with_cols = raw_dataset.map(create_prompt_completion, batched=True)
-        train_dataset, val_dataset, test_dataset = train_val_test_split(
-            dataset_with_cols, config
-        )
+        raw_train = load_reasoning_traces_dataset(data_cfg)
+        train_dataset = raw_train.map(create_prompt_completion, batched=True)
+
+        val_traces_path = data_cfg.get("reasoning_traces_val_path")
+        if val_traces_path:
+            val_data_cfg = {**data_cfg, "reasoning_traces_path": val_traces_path}
+            raw_val = load_reasoning_traces_dataset(val_data_cfg)
+        else:
+            print("WARNING: data.reasoning_traces_val_path not set — falling back to train split for validation")
+            raw_val = raw_train
+        val_dataset = raw_val.map(create_prompt_completion, batched=True)
+
+        # test_dataset is used only for post-training vLLM eval; reuse val when not separately provided.
+        test_dataset = val_dataset
+
+        print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
     else:
         def create_prompt_completion(examples):
             prompts = [format_prompt(p, predict_harm) for p in examples["prompt"]]

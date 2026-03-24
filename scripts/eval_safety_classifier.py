@@ -14,9 +14,9 @@ Datasets:
 - walledai/XSTest: Has prompt + label (safe/unsafe)
 
 Usage:
-    python scripts/safety_experiment.py
-    python scripts/safety_experiment.py --config-name=safety_experiment
-    python scripts/safety_experiment.py experiment.condition=vanilla_classification
+    python scripts/eval_safety_classifier.py
+    python scripts/eval_safety_classifier.py --config-name=eval_safety_classifier
+    python scripts/eval_safety_classifier.py experiment.condition=vanilla_classification
 """
 
 import os
@@ -1298,7 +1298,7 @@ def run_condition_on_dataset(
         raise ValueError(f"Unknown condition: {condition}")
 
 
-@hydra.main(version_base=None, config_path="../configs/model_generation", config_name="safety_experiment")
+@hydra.main(version_base=None, config_path="../configs/experiments", config_name="eval_safety_classifier")
 def main(cfg: DictConfig):
     """Main experiment function."""
     config = OmegaConf.to_container(cfg, resolve=True)
