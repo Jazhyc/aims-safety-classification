@@ -18,7 +18,7 @@ model:
   name: "meta-llama/Llama-3.1-8B-Instruct"
   max_length_causal: 4096   # prompt + reasoning output; increase if traces are long
   trust_remote_code: true
-  attn_implementation: "sdpa"
+  attn_implementation: "flash_attention_2"
 
 training:
   epochs: 5

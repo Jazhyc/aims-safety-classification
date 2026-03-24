@@ -6,7 +6,7 @@ defaults:
 model:
   name: "Qwen/Qwen3-0.6B"  # Will be overridden by command line
   max_length_causal: 512
-  attn_implementation: "sdpa"
+  attn_implementation: "flash_attention_2"
 
 training:
   epochs: 1
@@ -17,7 +17,7 @@ training:
   bf16: true
   torch_compile: false
   gradient_checkpointing: true
-  padding_free: false
+  padding_free: true
   optim: "paged_adamw_8bit"
   adam_beta1: 0.9
   adam_beta2: 0.999
