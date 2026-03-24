@@ -41,6 +41,15 @@ experiment:
   #   - "finetuned_reasoning_classification"  # MODE D: reasoning + harm
   #   - "finetuned_reasoning_generation"      # MODE E: reasoning + intent + harm
   conditions:
+    - "vanilla_classification"
+    - "vanilla_generation"
+    - "vanilla_with_human_intent"
+    - "llamaguard_classification"
+    - "finetuned_generation"
+    - "finetuned_classification"
+    - "zeroshot_cot_classification"
+    - "zeroshot_cot_generation"
+    - "zeroshot_cot_classification_with_intent"
     - "finetuned_reasoning_classification"
     - "finetuned_reasoning_generation"
 
@@ -77,9 +86,9 @@ datasets:
   - name: "annotated-intents"
     dataset_name: "Jazhyc/wildguard-annotated-intents"
     subset: null
-    split: "train"
+    split: "test"
     harm_column: "Annotator Harm"
-    use_manual_split: true
+    use_manual_split: false
     test_size: 0.1
     val_size: 0.1
     seed: 22
