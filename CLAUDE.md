@@ -138,5 +138,7 @@ Artifact name = adapter directory name (e.g. `reasoning-distillation-gemma-3-27b
 - **Model artifacts**: W&B artifact registry via `model_generation/artifacts.py`; registry project `intention-jailbreak-models` (opt-in per config).
 - **HPC**: SLURM via scripts in `scripts/hpc/`. Most training jobs are submitted via Python submission scripts.
 - **Inference**: vLLM used for all large LLM inference (generation, harm labeling, distillation).
-- **LoRA**: All LLM fine-tuning uses LoRA/QLoRA adapters.
+- **LoRA**: All LLM fine-tuning uses LoRA/QLoRA adapters with QLoRA (4-bit NF4).
+- **Attention**: `flash_attention_2` throughout (`flash-attn 2.8.3`, cu128/torch2.10/cp312 wheel). Sequence packing (`padding_free: true`) enabled in all training configs.
+- **Early stopping**: Applied in all training runs via `EarlyStoppingCallback(patience=1)` in `causal.py`. All configs use `epochs: 5` as the ceiling; early stopping finds the actual stopping point.
 - **Reproducibility**: Seeds set via `training/utils.py:set_all_seeds()`.
