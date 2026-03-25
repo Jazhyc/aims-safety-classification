@@ -10,6 +10,9 @@ defaults:
 model:
   name: "RedHatAI/gemma-3-27b-it-quantized.w4a16"
   max_length: 4096
+  # Backend for inference.  "vllm" (default) loads the model locally; "openrouter"
+  # calls the OpenRouter API and requires OPENROUTER_API_KEY in the environment.
+  backend: "vllm"
 
 # Conditions control which prompt template is used for each sample.
 # Each condition produces one output per sample in the batch:
@@ -67,6 +70,14 @@ vllm:
   # On this cluster, both CUDA device indices map to the same physical GPU
   # (MIG or virtualisation), so multi-GPU via NCCL fails with "duplicate GPU".
   tensor_parallel_size: 1
+
+# ── OpenRouter API settings ─────────────────────────────────────────────────
+# Only used when model.backend = "openrouter".
+openrouter:
+  max_workers: 8      # concurrent API requests
+  max_retries: 3      # retries per request on failure (exponential back-off)
+  site_url: null      # optional HTTP-Referer header (OpenRouter attribution)
+  app_name: null      # optional X-Title header (OpenRouter attribution)
 
 paths:
   output_dir: "data/reasoning_traces"

@@ -23,10 +23,21 @@ teacher_models:
   # - "RedHatAI/gemma-3-27b-it-quantized.w4a16"
   # - "RedHatAI/Qwen3-32B-quantized.w4a16"
   # - "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
-  - "openai/gpt-oss-120b"
+  # - "openai/gpt-oss-120b"
+  - "z-ai/glm-5"              # via OpenRouter — add to teacher_backends below
+  # - "moonshotai/kimi-k2.5"    # via OpenRouter — add to teacher_backends below
   # - "cyankiwi/Qwen3.5-27B-AWQ-4bit"
   # - "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4"
   # - "Qwen/Qwen3.5-27B"
+
+# ── Per-teacher inference backend ──────────────────────────────────────────────
+# Override the generation backend per teacher model.
+# "vllm" (default) loads the model locally; "openrouter" calls the OpenRouter API
+# (requires OPENROUTER_API_KEY).  Models not listed here default to "vllm".
+teacher_backends: {
+  "z-ai/glm-5": "openrouter",
+  "moonshotai/kimi-k2.5": "openrouter"
+} 
 
 # ── Per-teacher trace overrides ────────────────────────────────────────────────
 # Models listed here skip step 1 and use the provided train/parsed_results.json directly.

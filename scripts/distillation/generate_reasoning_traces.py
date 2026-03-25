@@ -1,9 +1,15 @@
 """
-Generate reasoning traces for WildGuard samples using vLLM.
+Generate reasoning traces for WildGuard samples.
 
-All three Hub splits (train, validation, test) are processed in a single vLLM pass
-to maximise GPU utilisation.  Outputs are saved to split-specific subdirectories so
-consumers (distillation pipeline, safety experiment, etc.) can load the correct split.
+Supports two backends, selected via ``model.backend``:
+  - ``"vllm"``       (default) — loads the model locally via vLLM
+  - ``"openrouter"`` — calls the OpenRouter API; requires the
+                       ``OPENROUTER_API_KEY`` environment variable
+
+All three Hub splits (train, validation, test) are processed in a single pass
+to maximise throughput.  Outputs are saved to split-specific subdirectories so
+consumers (distillation pipeline, safety experiment, etc.) can load the correct
+split.
 
 Outputs:
   - data/reasoning_traces/<model>/train/raw_outputs.json
@@ -14,88 +20,23 @@ Outputs:
   - data/reasoning_traces/<model>/test/parsed_results.json
 
 Usage:
-    python scripts/generate_reasoning_traces.py
-    python scripts/generate_reasoning_traces.py model.name=<other_model>
-    python scripts/generate_reasoning_traces.py dataset.num_samples=100
-    python scripts/generate_reasoning_traces.py conditions=[zeroshot_cot]
+    python scripts/distillation/generate_reasoning_traces.py
+    python scripts/distillation/generate_reasoning_traces.py model.name=<model> model.backend=openrouter
+    python scripts/distillation/generate_reasoning_traces.py dataset.num_samples=100
+    python scripts/distillation/generate_reasoning_traces.py conditions=[zeroshot_cot]
 """
 
 import json
 import re
+import time
 import warnings
 import os
 from pathlib import Path
-
-# Must be set before vLLM is imported so get_mp_context() picks it up.
-# vLLM defaults to 'fork' on Linux, which crashes when CUDA is initialized
-# in the parent before the EngineCore subprocess is forked.
-os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
-
-import torch
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
-# ---------------------------------------------------------------------------
-# Monkey-patch: allow MIG / GPU UUIDs in CUDA_VISIBLE_DEVICES with vLLM.
-#
-# vLLM's Platform.device_id_to_physical_device_id() calls int() on the value
-# from CUDA_VISIBLE_DEVICES, which crashes when it contains a UUID such as
-#   CUDA_VISIBLE_DEVICES=MIG-ec73ed57-6aa0-541d-9909-e4f6518cbd33
-#
-# The patch detects UUID-format entries and resolves them to the correct
-# physical GPU index via nvml before vLLM tries to cast them to int.
-# ---------------------------------------------------------------------------
-def _uuid_aware_device_id_to_physical(cls, device_id: int) -> int:
-    device_control = getattr(cls, "device_control_env_var", "CUDA_VISIBLE_DEVICES")
-    raw = os.environ.get(device_control, "")
-    if not raw:
-        return device_id
-    entries = raw.split(",")
-    entry = entries[device_id]
-    if entry.lstrip("-").isdigit():
-        return int(entry)
-    # UUID path (MIG-* or GPU-*)
-    from vllm.third_party import pynvml
-    pynvml.nvmlInit()
-    handle = pynvml.nvmlDeviceGetHandleByUUID(entry)
-    try:
-        # MIG device → get the parent physical GPU
-        parent = pynvml.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(handle)
-        return pynvml.nvmlDeviceGetIndex(parent)
-    except pynvml.NVMLError:
-        # Regular GPU UUID
-        return pynvml.nvmlDeviceGetIndex(handle)
-
-import vllm.platforms.interface as _vllm_platform_iface
-_vllm_platform_iface.Platform.device_id_to_physical_device_id = classmethod(
-    _uuid_aware_device_id_to_physical
-)
-
-# ---------------------------------------------------------------------------
-# Second patch: vLLM inspects model architectures in a *fresh subprocess*
-# (python -m vllm.model_executor.models.registry) to avoid CUDA init in the
-# parent.  That subprocess inherits CUDA_VISIBLE_DEVICES=MIG-UUID but has no
-# monkey-patch, so it still crashes.  The inspection only reads Python class
-# metadata — it doesn't need a GPU at all — so we temporarily hide
-# CUDA_VISIBLE_DEVICES from the subprocess env and restore it afterward.
-# ---------------------------------------------------------------------------
-import vllm.model_executor.models.registry as _vllm_registry
-_original_run_in_subprocess = _vllm_registry._run_in_subprocess
-
-def _patched_run_in_subprocess(fn):
-    cuda_vis = os.environ.pop("CUDA_VISIBLE_DEVICES", None)
-    try:
-        return _original_run_in_subprocess(fn)
-    finally:
-        if cuda_vis is not None:
-            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_vis
-
-_vllm_registry._run_in_subprocess = _patched_run_in_subprocess
-# ---------------------------------------------------------------------------
-
 from datasets import load_dataset
-from vllm import LLM, SamplingParams
-from transformers import AutoTokenizer
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
@@ -115,6 +56,17 @@ from intention_jailbreak.model_generation.prompt_templates import (
     build_student_prompt,
 )
 
+
+# Known thinking token pairs, ordered by prevalence.
+# Used by both tokenizer-based detection (vLLM) and text-based detection (API).
+_THINKING_PAIRS = [
+    ("<think>",      "</think>"),        # Qwen3, DeepSeek-R1, Kimi K2.5
+    ("<|thinking|>", "<|/thinking|>"),   # GLM 4 / GLM 5
+    ("analysis",     "assistantfinal"),  # GPT-OSS-120B (tokenizer detection only)
+]
+
+
+# ── Prompt builders ────────────────────────────────────────────────────────────
 
 def _build_teacher_prompt(user_prompt: str, condition: str, **labels) -> str:
     """
@@ -145,11 +97,29 @@ def _build_teacher_prompt(user_prompt: str, condition: str, **labels) -> str:
     return f"{PREAMBLE}\n\nHuman user:\n{user_prompt}\n\n{gt_block}\n{output_fmt}"
 
 
-# Condition 3: Zero-shot CoT — no ground truth labels, model must reason to the answer.
-# Reuses build_student_prompt (same input structure the student model sees at inference).
 def _build_zeroshot_cot_prompt(user_prompt: str, with_intent: bool = True) -> str:
     return build_student_prompt(user_prompt, with_intent=with_intent)
 
+
+def _user_content_for_condition(condition: str, sample: dict) -> str:
+    """Return the user-facing prompt string for a given condition and sample."""
+    if condition == "without_intent":
+        return _build_teacher_prompt(
+            sample["prompt"], "without_intent",
+            annotator_harmful_label=sample["prompt_harm_label"],
+        )
+    if condition == "with_intent":
+        return _build_teacher_prompt(
+            sample["prompt"], "with_intent",
+            intent=sample["intent"],
+            annotator_harmful_label=sample["prompt_harm_label"],
+        )
+    if condition == "zeroshot_cot":
+        return _build_zeroshot_cot_prompt(sample["prompt"], with_intent=True)
+    raise ValueError(f"Unknown condition: {condition!r}")
+
+
+# ── Thinking token detection ───────────────────────────────────────────────────
 
 def detect_thinking_tokens(tokenizer) -> tuple[str, str]:
     """
@@ -169,16 +139,27 @@ def detect_thinking_tokens(tokenizer) -> tuple[str, str]:
           vocab but are still tracked here so the closing delimiter can be used for splitting)
     """
     special = set(getattr(tokenizer, "all_special_tokens", []))
-    THINKING_PAIRS = [
-        ("<think>",      "</think>"),
-        ("<|thinking|>", "<|/thinking|>"),
-        ("analysis",     "assistantfinal"),
-    ]
-    for start, end in THINKING_PAIRS:
+    for start, end in _THINKING_PAIRS:
         if start in special:
             return start, end
     return "", ""
 
+
+def _detect_thinking_from_text(text: str) -> tuple[str, str]:
+    """
+    Infer thinking delimiters by inspecting the response text.
+
+    Used for API backends where no tokenizer is available.  Only checks pairs
+    whose closing delimiter is distinctive enough (skips "assistantfinal" which
+    could appear in regular model output).
+    """
+    for start, end in _THINKING_PAIRS[:2]:
+        if end in text:
+            return start, end
+    return "", ""
+
+
+# ── Output parser ──────────────────────────────────────────────────────────────
 
 def parse_model_output(
     raw_text: str,
@@ -192,9 +173,8 @@ def parse_model_output(
     Output format (in order): Reasoning → Prompt intent → Prompt harm
 
     Thinking block extraction (mutually exclusive, in priority order):
-      1. pre_extracted_thinking: vLLM already separated thinking from structured output
-         via its built-in reasoning parser (output.outputs[0].reasoning_content).
-         raw_text contains only the structured part — no further splitting needed.
+      1. pre_extracted_thinking: already separated thinking (from vLLM reasoning_content
+         or OpenRouter's reasoning field).  raw_text contains only the structured part.
       2. thinking_end present in raw_text: split on the closing delimiter.
          - If the opening token was stripped as a special token (typical for Qwen3 /
            DeepSeek-R1), raw_text starts directly with the CoT content.
@@ -207,7 +187,7 @@ def parse_model_output(
         thinking_start:         Opening delimiter e.g. "<think>" (from detect_thinking_tokens).
         thinking_end:           Closing delimiter e.g. "</think>" (from detect_thinking_tokens).
         pre_extracted_thinking: Thinking content already extracted by vLLM's reasoning
-                                parser; skips in-text extraction when provided.
+                                parser or the API; skips in-text extraction when provided.
 
     Returns a dict with:
         - prompt_intent: str or None
@@ -217,13 +197,11 @@ def parse_model_output(
     """
     thinking_trace = ""
     if pre_extracted_thinking is not None:
-        # vLLM already split thinking from structured output — use as-is
         thinking_trace = pre_extracted_thinking.strip()
         text = raw_text
     elif thinking_end and thinking_end in raw_text:
         parts = raw_text.split(thinking_end, 1)
         trace = parts[0].strip()
-        # Strip the opening token if it wasn't removed by vLLM (e.g. GPT-OSS-120B)
         if thinking_start and trace.startswith(thinking_start):
             trace = trace[len(thinking_start):].strip()
         thinking_trace = trace
@@ -241,8 +219,6 @@ def parse_model_output(
         reasoning = reasoning_match.group(1).strip()
 
     # Extract Intent field (ends when Prompt harm: begins).
-    # The output template uses "Intent:" — match that but also accept the legacy
-    # "Prompt intent:" prefix in case an older teacher produced it.
     prompt_intent = None
     intent_match = re.search(
         r'(?:Prompt intent|Intent):\s*(.+?)(?=Prompt harm:|$)',
@@ -251,12 +227,7 @@ def parse_model_output(
     if intent_match:
         prompt_intent = intent_match.group(1).strip()
 
-    # Extract Prompt harm field.
-    # The model may echo the 4-category ground-truth labels ("Completely Harmful",
-    # "Uncertain Safe", etc.) instead of the binary labels requested.  Capture the
-    # full label on that line and apply substring-based binary mapping so that
-    # "Uncertain Harmful" -> "harmful", "Completely Safe" -> "unharmful", etc.
-    # "unharmful" must be checked before "harmful" because the latter is a substring.
+    # Extract Prompt harm field with binary normalisation.
     prompt_harm = None
     ph_match = re.search(r'Prompt harm:\s*([^\n]+)', text, re.IGNORECASE)
     if ph_match:
@@ -273,6 +244,8 @@ def parse_model_output(
         "thinking_trace": thinking_trace,
     }
 
+
+# ── Dataset loading ────────────────────────────────────────────────────────────
 
 def load_samples_for_split(data_cfg: dict, split: str) -> list:
     """
@@ -340,56 +313,113 @@ def load_all_samples(data_cfg: dict) -> list:
     print(f"\nTotal samples across all splits: {len(all_samples)}")
     return all_samples
 
-@hydra.main(version_base=None, config_path="../../configs/experiments", config_name="reasoning_traces")
-def main(cfg: DictConfig):
-    """Main function to generate reasoning traces."""
-    config = OmegaConf.to_container(cfg, resolve=True)
+
+# ── Result builders (shared schema) ───────────────────────────────────────────
+
+def _make_raw_entry(sample: dict, condition: str, raw_text: str, parsed: dict) -> dict:
+    return {
+        "wildguard_id": sample["wildguard_id"],
+        "prompt": sample["prompt"],
+        "intent": sample["intent"],
+        "prompt_harm_label": sample["prompt_harm_label"],
+        "split": sample["split"],
+        "condition": condition,
+        "raw_output": raw_text,
+        "thinking_trace": parsed["thinking_trace"],
+    }
+
+
+def _make_parsed_entry(sample: dict, condition: str, parsed: dict) -> dict:
+    return {
+        "wildguard_id": sample["wildguard_id"],
+        "prompt": sample["prompt"],
+        "split": sample["split"],
+        "condition": condition,
+        "ground_truth": {
+            "intent": sample["intent"],
+            "prompt_harm_label": sample["prompt_harm_label"],
+        },
+        "predicted": {
+            "prompt_intent": parsed["prompt_intent"],
+            "prompt_harm": parsed["prompt_harm"],
+        },
+        "reasoning": parsed["reasoning"],
+    }
+
+
+# ── vLLM backend ───────────────────────────────────────────────────────────────
+
+def _generate_with_vllm(
+    samples: list,
+    conditions: list[str],
+    config: dict,
+) -> tuple[list, list]:
+    """Generate reasoning traces using a local vLLM instance."""
+    # Must be set before any vLLM module is imported so get_mp_context() picks it up.
+    # vLLM defaults to 'fork' on Linux, which crashes when CUDA is initialized
+    # in the parent before the EngineCore subprocess is forked.
+    os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+
+    import torch
+
+    # ── Monkey-patch 1: allow MIG / GPU UUIDs in CUDA_VISIBLE_DEVICES ─────
+    #
+    # vLLM's Platform.device_id_to_physical_device_id() calls int() on the
+    # value from CUDA_VISIBLE_DEVICES, which crashes when it contains a UUID
+    # such as CUDA_VISIBLE_DEVICES=MIG-ec73ed57-6aa0-541d-9909-e4f6518cbd33.
+    # The patch detects UUID-format entries and resolves them to the correct
+    # physical GPU index via nvml before vLLM tries to cast them to int.
+    def _uuid_aware_device_id_to_physical(cls, device_id: int) -> int:
+        device_control = getattr(cls, "device_control_env_var", "CUDA_VISIBLE_DEVICES")
+        raw = os.environ.get(device_control, "")
+        if not raw:
+            return device_id
+        entries = raw.split(",")
+        entry = entries[device_id]
+        if entry.lstrip("-").isdigit():
+            return int(entry)
+        from vllm.third_party import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByUUID(entry)
+        try:
+            parent = pynvml.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(handle)
+            return pynvml.nvmlDeviceGetIndex(parent)
+        except pynvml.NVMLError:
+            return pynvml.nvmlDeviceGetIndex(handle)
+
+    import vllm.platforms.interface as _vllm_platform_iface
+    _vllm_platform_iface.Platform.device_id_to_physical_device_id = classmethod(
+        _uuid_aware_device_id_to_physical
+    )
+
+    # ── Monkey-patch 2: hide MIG UUID from vLLM's model-registry subprocess ─
+    #
+    # vLLM inspects model architectures in a fresh subprocess
+    # (python -m vllm.model_executor.models.registry) which inherits
+    # CUDA_VISIBLE_DEVICES=MIG-UUID but has no patch, so it still crashes.
+    # Temporarily hide the var during the subprocess call.
+    import vllm.model_executor.models.registry as _vllm_registry
+    _original_run_in_subprocess = _vllm_registry._run_in_subprocess
+
+    def _patched_run_in_subprocess(fn):
+        cuda_vis = os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        try:
+            return _original_run_in_subprocess(fn)
+        finally:
+            if cuda_vis is not None:
+                os.environ["CUDA_VISIBLE_DEVICES"] = cuda_vis
+
+    _vllm_registry._run_in_subprocess = _patched_run_in_subprocess
+    # ──────────────────────────────────────────────────────────────────────
+
+    from vllm import LLM, SamplingParams
+    from transformers import AutoTokenizer
 
     model_cfg    = config.get("model", {})
-    dataset_cfg  = config.get("dataset", {})
     gen_cfg      = config.get("generation", {})
     vllm_cfg     = config.get("vllm", {})
-    paths_cfg    = config.get("paths", {})
-    wandb_cfg    = config.get("wandb", {})
     thinking_mode = bool(config.get("thinking_mode", False))
 
-    if wandb_cfg.get("enabled", False) and _wandb is not None:
-        _wandb.init(
-            entity=wandb_cfg.get("entity"),
-            project=wandb_cfg.get("project", "reasoning-traces-generation"),
-            name=wandb_cfg.get("run_name"),
-            tags=wandb_cfg.get("tags", []),
-            dir=str(Path(hydra.utils.get_original_cwd()) / wandb_cfg.get("dir", "logs/wandb")),
-            mode=wandb_cfg.get("mode", "online"),
-            config=config,
-        )
-
-    output_dir = Path(paths_cfg.get("output_dir", "data/reasoning_traces"))
-
-    # Create model-specific subdirectory (use model name, replace slashes with dashes)
-    model_name_clean = model_cfg["name"].replace("/", "-")
-    output_dir = output_dir / model_name_clean
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Get conditions to run
-    conditions = config.get("conditions", ["without_intent"])
-    if isinstance(conditions, str):
-        conditions = [conditions]
-
-    print(f"\nConditions to run: {conditions}")
-
-    # Load samples from all splits (single vLLM pass covers everything)
-    print("\n=== Loading samples from all splits ===")
-    samples = load_all_samples(dataset_cfg)
-
-    if not samples:
-        print("No samples loaded. Exiting.")
-        return
-
-    # Print sample structure for verification
-    print(f"\nSample keys: {list(samples[0].keys())}")
-
-    # Load model
     model_name = model_cfg["name"]
     print(f"\n=== Loading Model: {model_name} ===")
 
@@ -419,7 +449,6 @@ def main(cfg: DictConfig):
         else:
             print("Thinking mode: no known thinking delimiter found — vLLM reasoning_content only")
 
-    # Sampling parameters
     sampling_params = SamplingParams(
         max_tokens=gen_cfg.get("max_new_tokens", 4096),
         temperature=gen_cfg.get("temperature", 0.0),
@@ -427,9 +456,6 @@ def main(cfg: DictConfig):
         top_k=gen_cfg.get("top_k", -1),
         skip_special_tokens=True,
     )
-
-    # Build prompts for each enabled condition
-    print("\n=== Formatting prompts ===")
 
     def format_prompt(user_content: str) -> str:
         messages = [{"role": "user", "content": user_content}]
@@ -443,38 +469,25 @@ def main(cfg: DictConfig):
                 messages, add_generation_prompt=True, tokenize=False,
             )
 
+    # Build prompts for each enabled condition
+    print("\n=== Formatting prompts ===")
     condition_prompts = {}
     for condition in conditions:
         prompts = []
-        if condition == "without_intent":
-            for sample in samples:
-                user_content = _build_teacher_prompt(
-                    sample["prompt"], "without_intent",
-                    annotator_harmful_label=sample["prompt_harm_label"],
-                )
-                prompts.append(format_prompt(user_content))
-        elif condition == "with_intent":
-            for sample in samples:
-                user_content = _build_teacher_prompt(
-                    sample["prompt"], "with_intent",
-                    intent=sample["intent"],
-                    annotator_harmful_label=sample["prompt_harm_label"],
-                )
-                prompts.append(format_prompt(user_content))
-        elif condition == "zeroshot_cot":
-            for sample in samples:
-                user_content = _build_zeroshot_cot_prompt(sample["prompt"], with_intent=True)
-                prompts.append(format_prompt(user_content))
+        for sample in samples:
+            try:
+                user_content = _user_content_for_condition(condition, sample)
+            except ValueError:
+                print(f"Warning: Unknown condition '{condition}', skipping.")
+                break
+            prompts.append(format_prompt(user_content))
         else:
-            print(f"Warning: Unknown condition '{condition}', skipping.")
-            continue
+            condition_prompts[condition] = prompts
+            print(f"  {condition}: {len(prompts)} prompts")
 
-        condition_prompts[condition] = prompts
-        print(f"  {condition}: {len(prompts)} prompts")
-
-    # Combine all prompts for a single VLLM batch
-    all_prompts = []
-    prompt_to_condition = {}
+    # Combine all prompts for a single vLLM batch
+    all_prompts: list[str] = []
+    prompt_to_condition: dict[int, str] = {}
     for condition in conditions:
         if condition not in condition_prompts:
             continue
@@ -487,18 +500,15 @@ def main(cfg: DictConfig):
     total_prompts = len(all_prompts)
     print(f"  Total batch size: {total_prompts}")
 
-    # Generate all at once
-    print(f"\n=== Generating reasoning traces for {total_prompts} prompts ===")
+    print(f"\n=== Generating {total_prompts} reasoning traces ===")
     all_outputs = llm.generate(all_prompts, sampling_params)
 
-    # Process results for each condition
-    raw_outputs = []
-    parsed_results = []
+    raw_outputs: list[dict] = []
+    parsed_results: list[dict] = []
 
     for output_idx, (prompt, output) in enumerate(zip(all_prompts, all_outputs)):
         condition = prompt_to_condition[output_idx]
-        sample_idx = output_idx % len(samples)
-        sample = samples[sample_idx]
+        sample = samples[output_idx % len(samples)]
 
         completion = output.outputs[0]
         raw_text = completion.text.strip()
@@ -507,74 +517,217 @@ def main(cfg: DictConfig):
         pre_extracted = getattr(completion, "reasoning_content", None)
         parsed = parse_model_output(raw_text, thinking_start, thinking_end, pre_extracted)
 
-        raw_outputs.append({
-            "wildguard_id": sample["wildguard_id"],
-            "prompt": sample["prompt"],
-            "intent": sample["intent"],
-            "prompt_harm_label": sample["prompt_harm_label"],
-            "split": sample["split"],
-            "condition": condition,
-            "raw_output": raw_text,
-            "thinking_trace": parsed["thinking_trace"],
-        })
+        raw_outputs.append(_make_raw_entry(sample, condition, raw_text, parsed))
+        parsed_results.append(_make_parsed_entry(sample, condition, parsed))
 
-        parsed_results.append({
-            "wildguard_id": sample["wildguard_id"],
-            "prompt": sample["prompt"],
-            "split": sample["split"],
-            "condition": condition,
-            "ground_truth": {
-                "intent": sample["intent"],
-                "prompt_harm_label": sample["prompt_harm_label"],
-            },
-            "predicted": {
-                "prompt_intent": parsed["prompt_intent"],
-                "prompt_harm": parsed["prompt_harm"],
-            },
-            "reasoning": parsed["reasoning"],
-        })
+    return raw_outputs, parsed_results
 
-    # Save results partitioned by split
+
+# ── OpenRouter backend ─────────────────────────────────────────────────────────
+
+def _generate_with_openrouter(
+    samples: list,
+    conditions: list[str],
+    config: dict,
+) -> tuple[list, list]:
+    """
+    Generate reasoning traces via the OpenRouter API.
+
+    Requires the ``OPENROUTER_API_KEY`` environment variable.  Uses the
+    standard OpenAI-compatible endpoint at https://openrouter.ai/api/v1.
+
+    Thinking extraction (in priority order):
+      1. ``reasoning`` field on the API response message object — some providers
+         return the thinking block separately via this OpenRouter extension.
+      2. Text-based delimiter detection — inspects the response content for
+         known thinking tokens (<think>/</think>, <|thinking|>/<|/thinking|>).
+    """
+    from openai import OpenAI
+
+    model_cfg = config.get("model", {})
+    gen_cfg   = config.get("generation", {})
+    or_cfg    = config.get("openrouter", {})
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is not set. "
+            "Export it in your shell or add it to your .env file."
+        )
+
+    extra_headers: dict[str, str] = {}
+    if or_cfg.get("site_url"):
+        extra_headers["HTTP-Referer"] = or_cfg["site_url"]
+    if or_cfg.get("app_name"):
+        extra_headers["X-Title"] = or_cfg["app_name"]
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+        **({"default_headers": extra_headers} if extra_headers else {}),
+    )
+
+    model_name  = model_cfg["name"]
+    max_tokens  = gen_cfg.get("max_new_tokens", 4096)
+    temperature = gen_cfg.get("temperature", 0.0)
+    max_workers = or_cfg.get("max_workers", 8)
+    max_retries = or_cfg.get("max_retries", 3)
+
+    # Build flat task list: one entry per (condition, sample) pair
+    tasks = [
+        (condition, sample)
+        for condition in conditions
+        for sample in samples
+    ]
+    total = len(tasks)
+    print(f"\n=== Generating {total} reasoning traces via OpenRouter ({model_name}) ===")
+    print(f"  max_workers={max_workers}  max_retries={max_retries}")
+
+    def call_api(task_idx: int, condition: str, sample: dict):
+        messages = [{"role": "user", "content": _user_content_for_condition(condition, sample)}]
+        last_exc: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                msg = response.choices[0].message
+                content = msg.content or ""
+
+                # Try OpenRouter's extended reasoning field before falling back to
+                # text-based delimiter detection.
+                reasoning = getattr(msg, "reasoning", None)
+                if reasoning is None and hasattr(msg, "model_extra"):
+                    reasoning = (msg.model_extra or {}).get("reasoning")
+
+                if reasoning is not None:
+                    thinking_start, thinking_end = "", ""
+                else:
+                    thinking_start, thinking_end = _detect_thinking_from_text(content)
+
+                parsed = parse_model_output(
+                    content, thinking_start, thinking_end,
+                    pre_extracted_thinking=reasoning,
+                )
+                return task_idx, condition, sample, content, parsed
+
+            except Exception as e:
+                last_exc = e
+                if attempt < max_retries - 1:
+                    wait = 2 ** attempt
+                    print(
+                        f"  [retry {attempt + 1}/{max_retries}] "
+                        f"{sample['wildguard_id']}/{condition}: {e} — {wait}s"
+                    )
+                    time.sleep(wait)
+
+        raise RuntimeError(
+            f"All {max_retries} attempts failed for "
+            f"{sample['wildguard_id']}/{condition}"
+        ) from last_exc
+
+    raw_outputs: list[dict] = []
+    parsed_results: list[dict] = []
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(call_api, i, cond, samp): i
+            for i, (cond, samp) in enumerate(tasks)
+        }
+        for future in as_completed(futures):
+            _, condition, sample, raw_text, parsed = future.result()
+            raw_outputs.append(_make_raw_entry(sample, condition, raw_text, parsed))
+            parsed_results.append(_make_parsed_entry(sample, condition, parsed))
+            completed += 1
+            if completed % 50 == 0 or completed == total:
+                print(f"  Progress: {completed}/{total}")
+
+    return raw_outputs, parsed_results
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+
+@hydra.main(version_base=None, config_path="../../configs/experiments", config_name="reasoning_traces")
+def main(cfg: DictConfig):
+    """Main function to generate reasoning traces."""
+    config = OmegaConf.to_container(cfg, resolve=True)
+
+    model_cfg   = config.get("model", {})
+    dataset_cfg = config.get("dataset", {})
+    paths_cfg   = config.get("paths", {})
+    wandb_cfg   = config.get("wandb", {})
+    conditions  = config.get("conditions", ["without_intent"])
+    if isinstance(conditions, str):
+        conditions = [conditions]
+
+    backend = model_cfg.get("backend", "vllm")
+
+    if wandb_cfg.get("enabled", False) and _wandb is not None:
+        _wandb.init(
+            entity=wandb_cfg.get("entity"),
+            project=wandb_cfg.get("project", "reasoning-traces-generation"),
+            name=wandb_cfg.get("run_name"),
+            tags=wandb_cfg.get("tags", []),
+            dir=str(Path(hydra.utils.get_original_cwd()) / wandb_cfg.get("dir", "logs/wandb")),
+            mode=wandb_cfg.get("mode", "online"),
+            config=config,
+        )
+
+    output_dir = Path(paths_cfg.get("output_dir", "data/reasoning_traces"))
+    model_name_clean = model_cfg["name"].replace("/", "-")
+    output_dir = output_dir / model_name_clean
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\nConditions : {conditions}")
+    print(f"Backend    : {backend}")
+
+    print("\n=== Loading samples from all splits ===")
+    samples = load_all_samples(dataset_cfg)
+    if not samples:
+        print("No samples loaded. Exiting.")
+        return
+    print(f"\nSample keys: {list(samples[0].keys())}")
+
+    # ── Dispatch to backend ────────────────────────────────────────────────
+    if backend == "openrouter":
+        raw_outputs, parsed_results = _generate_with_openrouter(samples, conditions, config)
+    else:
+        raw_outputs, parsed_results = _generate_with_vllm(samples, conditions, config)
+
+    # ── Save results partitioned by split (identical for both backends) ────
     print("\n=== Saving results ===")
     for split in ("train", "validation", "test"):
-        split_raw     = [r for r in raw_outputs    if r["split"] == split]
-        split_parsed  = [r for r in parsed_results if r["split"] == split]
+        split_raw    = [r for r in raw_outputs    if r["split"] == split]
+        split_parsed = [r for r in parsed_results if r["split"] == split]
 
         split_dir = output_dir / split
         split_dir.mkdir(parents=True, exist_ok=True)
 
-        raw_path    = split_dir / "raw_outputs.json"
-        parsed_path = split_dir / "parsed_results.json"
-
-        with open(raw_path, "w") as f:
+        with open(split_dir / "raw_outputs.json", "w") as f:
             json.dump(split_raw, f, indent=2, ensure_ascii=False)
-        with open(parsed_path, "w") as f:
+        with open(split_dir / "parsed_results.json", "w") as f:
             json.dump(split_parsed, f, indent=2, ensure_ascii=False)
 
         print(f"  [{split}] {len(split_parsed)} samples → {split_dir}")
 
-    # Print summary per condition × split
+    # ── Per-condition summary ──────────────────────────────────────────────
     for condition in conditions:
         for split in ("train", "validation", "test"):
-            condition_results = [
+            cond_results = [
                 r for r in parsed_results
                 if r["condition"] == condition and r["split"] == split
             ]
-            total = len(condition_results)
+            total = len(cond_results)
             if total == 0:
                 continue
-            parsed_harm_count = sum(
-                1 for r in condition_results
-                if r["predicted"]["prompt_harm"] is not None
-            )
-            parsed_intent_count = sum(
-                1 for r in condition_results
-                if r["predicted"]["prompt_intent"] is not None
-            )
+            harm_ok   = sum(1 for r in cond_results if r["predicted"]["prompt_harm"] is not None)
+            intent_ok = sum(1 for r in cond_results if r["predicted"]["prompt_intent"] is not None)
             print(f"\n=== Summary ({condition} / {split}) ===")
-            print(f"Total samples: {total}")
-            print(f"Prompt harm parsed:   {parsed_harm_count}/{total}")
-            print(f"Prompt intent parsed: {parsed_intent_count}/{total}")
+            print(f"Total: {total}  harm parsed: {harm_ok}  intent parsed: {intent_ok}")
 
 
 if __name__ == "__main__":

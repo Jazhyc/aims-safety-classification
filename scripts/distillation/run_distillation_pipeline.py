@@ -163,6 +163,7 @@ def step1_teacher(
     project_root: Path,
     thinking_mode: bool = False,
     artifacts_cfg: dict | None = None,
+    backend: str = "vllm",
 ) -> bool:
     cached, path = traces_cached(teacher_model, traces_dir)
     if cached:
@@ -178,6 +179,7 @@ def step1_teacher(
     cmd = [
         sys.executable, "scripts/distillation/generate_reasoning_traces.py",
         f"model.name={teacher_model}",
+        f"model.backend={backend}",
         f"conditions=[{conditions_str}]",
         f"paths.output_dir={traces_dir}",
         f"thinking_mode={str(thinking_mode).lower()}",
@@ -313,6 +315,8 @@ def main(cfg: DictConfig) -> None:
     run_step3: bool = bool(stages_cfg.get("step3_safety", True))
     # Maps teacher model name → existing parsed_results.json path (skips step 1 for that model)
     trace_overrides: dict[str, str] = config.get("teacher_trace_overrides", {}) or {}
+    # Maps teacher model name → backend ("vllm" | "openrouter"); default is "vllm"
+    teacher_backends: dict[str, str] = config.get("teacher_backends", {}) or {}
     wandb_cfg: dict = config.get("wandb", {})
     cache_cfg: dict = config.get("cache", {})
     artifacts_cfg: dict = config.get("artifacts", {})
@@ -369,11 +373,15 @@ def main(cfg: DictConfig) -> None:
                 print(f"  No cached traces found — skipping steps 2 & 3.")
                 continue
         else:
+            backend = teacher_backends.get(teacher_model, "vllm")
+            # API-backed models don't need a GPU — use an empty env override
+            step1_env = {} if backend == "openrouter" else teacher_env
             ok1 = step1_teacher(
                 teacher_model, conditions, num_samples,
-                traces_dir, wandb_cfg, teacher_env, project_root,
+                traces_dir, wandb_cfg, step1_env, project_root,
                 thinking_mode=thinking_mode,
                 artifacts_cfg=artifacts_cfg,
+                backend=backend,
             )
             summary[slug]["step1_traces"] = "ok" if ok1 else "FAILED"
             if not ok1:
