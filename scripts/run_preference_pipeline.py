@@ -145,7 +145,7 @@ def step5_eval_sft(args) -> bool:
         print(f"\n[SKIP] Step 4 – SFT predictions already exist at {pred_path}")
         return True
     cmd = [
-        sys.executable, "scripts/eval_sft_baseline.py",
+        sys.executable, "scripts/baselines/eval_sft_baseline.py",
         "--adapter-path",   args.adapter_path,
         "--base-model",     args.base_model,
         "--output-dir",     args.sft_pred_dir,
@@ -160,7 +160,7 @@ def step6_eval_dpo(args) -> bool:
         return True
     adapter_path = args.dpo_output_dir + "_adapter"
     cmd = [
-        sys.executable, "scripts/eval_sft_baseline.py",
+        sys.executable, "scripts/baselines/eval_sft_baseline.py",
         "--adapter-path",   adapter_path,
         "--base-model",     args.base_model,
         "--output-dir",     str(Path(args.dpo_output_dir) / "predictions"),
@@ -175,7 +175,7 @@ def step7_eval_contrastive(args) -> bool:
         return True
     adapter_path = args.contrastive_output_dir + "_adapter_best"
     cmd = [
-        sys.executable, "scripts/eval_sft_baseline.py",
+        sys.executable, "scripts/baselines/eval_sft_baseline.py",
         "--adapter-path",   adapter_path,
         "--base-model",     args.base_model,
         "--output-dir",     str(Path(args.contrastive_output_dir) / "predictions"),
@@ -188,7 +188,7 @@ def step8_compare(args) -> bool:
     dpo_dir         = str(Path(args.dpo_output_dir) / "predictions")
     contrastive_dir = str(Path(args.contrastive_output_dir) / "predictions")
     cmd = [
-        sys.executable, "scripts/compare_models.py",
+        sys.executable, "scripts/baselines/compare_models.py",
         "--sft",         sft_dir,
         "--dpo",         dpo_dir,
         "--contrastive", contrastive_dir,

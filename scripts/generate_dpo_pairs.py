@@ -139,7 +139,85 @@ def classify_intents_llm_t0(llm, lora_request, intent_texts: list) -> list:
     return [norm_harm(o.outputs[0].text.strip()) for o in outputs]
 
 
+def judge_intent_similarity_llm(llm, pairs: list) -> list:
+    """
+    Use the base LLM (no LoRA adapter) to judge whether each generated intent
+    expresses the same underlying purpose as the gold intent.
+
+    Runs without the SFT LoRA adapter to avoid bias from the fine-tuned model
+    judging its own outputs.
+
+    Args:
+        pairs: list of (gold_intent, generated_intent) tuples
+
+    Returns:
+        list of bools — True if same purpose, False if different
+    """
+    from vllm import SamplingParams
+
+    system = (
+        "You are a precise semantic similarity judge. "
+        "Your only job is to decide whether two intent descriptions express the same underlying purpose. "
+        "Reply with exactly one word: yes or no."
+    )
+    prompts = [
+        f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system}"
+        f"<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
+        f"Intent A: {gold}\n"
+        f"Intent B: {generated}\n\n"
+        f"Do Intent A and Intent B express the same underlying purpose?"
+        f"<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+        for gold, generated in pairs
+    ]
+    params = SamplingParams(
+        n=1,
+        max_tokens=5,
+        temperature=0.0,
+        top_p=1.0,
+        skip_special_tokens=True,
+    )
+    # No lora_request — use base model to avoid SFT adapter bias
+    outputs = llm.generate(prompts, params)
+    return [o.outputs[0].text.strip().lower().startswith("yes") for o in outputs]
+
+
 # ---------------------------------------------------------------------------
+def score_intent_similarity_nli(pairs: list, model_name: str, threshold: float) -> tuple:
+    """
+    Use a cross-encoder NLI model to score whether each generated intent
+    entails (agrees with) the gold intent.
+
+    Uses cross-encoder/nli-deberta-v3-base by default.
+    Label order for this model: [contradiction=0, entailment=1, neutral=2].
+    A sample is considered "different intent" when entailment score < threshold.
+
+    Args:
+        pairs:      list of (gold_intent, generated_intent) tuples
+        model_name: HuggingFace model ID for the cross-encoder
+        threshold:  entailment score below which intents are considered different
+
+    Returns:
+        (same_intent_flags, entailment_scores)
+        same_intent_flags: list of bools — True if entailment >= threshold
+        entailment_scores: list of floats — raw entailment probability per pair
+    """
+    from sentence_transformers import CrossEncoder
+    import numpy as np
+    from scipy.special import softmax
+
+    print(f"  Loading NLI model: {model_name}")
+    nli_model = CrossEncoder(model_name)
+
+    # CrossEncoder expects list of (text_a, text_b) — we check if gold entails generated
+    input_pairs = [(gold, generated) for gold, generated in pairs]
+    raw_scores  = nli_model.predict(input_pairs)                    # shape (n, 3)
+    probs       = softmax(raw_scores, axis=1)                       # normalise to [0,1]
+    entailment_scores = probs[:, 1].tolist()                        # index 1 = entailment
+
+    same_intent_flags = [s >= threshold for s in entailment_scores]
+    return same_intent_flags, entailment_scores
+
+
 # I/O helpers
 # ---------------------------------------------------------------------------
 
@@ -281,6 +359,85 @@ def run(args):
     print(f"  Labels assigned: {assigned} / {len(flat_intents)}")
 
     # ------------------------------------------------------------------
+    # 4b. Intent filter: score correct-label samples for intent similarity
+    # ------------------------------------------------------------------
+    llm_filter_examples = []   # for intent_filter_llm_examples.jsonl
+    nli_filter_examples = []   # for intent_filter_nli_examples.jsonl
+
+    if args.intent_filter:
+        # Collect all samples where harm_t0 == gold_harm (currently skipped)
+        filter_pairs = []   # (gold_intent, generated_intent)
+        filter_idx   = []   # (prompt_idx, sample_idx)
+
+        for i, d in enumerate(all_parsed):
+            gold_intent = d.get("gold_intent", "")
+            gold_harm   = d.get("gold_harm")
+            if not gold_harm or not gold_intent:
+                continue
+            for j, s in enumerate(d["samples"]):
+                if s.get("intent") and s.get("harm_t0") == gold_harm:
+                    filter_pairs.append((gold_intent, s["intent"]))
+                    filter_idx.append((i, j))
+
+        print(f"\n  Filtering {len(filter_pairs)} correct-label samples for intent similarity...")
+
+        # ── LLM judge ──────────────────────────────────────────────────
+        if args.filter_method in ("llm", "both"):
+            print("\n=== LLM judge (base model, no LoRA) ===")
+            llm_same_flags = judge_intent_similarity_llm(llm, filter_pairs)
+            for (i, j), is_same in zip(filter_idx, llm_same_flags):
+                all_parsed[i]["samples"][j]["llm_same_intent"] = is_same
+            n_diff_llm = sum(1 for f in llm_same_flags if not f)
+            print(f"  Different intent (LLM): {n_diff_llm} / {len(filter_pairs)}")
+
+        # ── NLI model ──────────────────────────────────────────────────
+        if args.filter_method in ("nli", "both"):
+            print(f"\n=== NLI model (threshold={args.nli_threshold}) ===")
+            nli_same_flags, nli_scores = score_intent_similarity_nli(
+                filter_pairs, args.nli_model, args.nli_threshold
+            )
+            for (i, j), is_same, score in zip(filter_idx, nli_same_flags, nli_scores):
+                all_parsed[i]["samples"][j]["nli_same_intent"] = is_same
+                all_parsed[i]["samples"][j]["nli_entailment_score"] = score
+            n_diff_nli = sum(1 for f in nli_same_flags if not f)
+            print(f"  Different intent (NLI): {n_diff_nli} / {len(filter_pairs)}")
+
+        # ── Merge: a sample is rejected if flagged by either active method ──
+        for (i, j) in filter_idx:
+            s = all_parsed[i]["samples"][j]
+            flags = []
+            if args.filter_method in ("llm", "both"):
+                flags.append(not s.get("llm_same_intent", True))
+            if args.filter_method in ("nli", "both"):
+                flags.append(not s.get("nli_same_intent", True))
+            s["same_intent"] = not any(flags)   # False = flagged as different
+
+        # ── Build inspection examples ───────────────────────────────────
+        for (i, j), (gold_intent, gen_intent) in zip(filter_idx, filter_pairs):
+            s    = all_parsed[i]["samples"][j]
+            d    = all_parsed[i]
+            base = {
+                "id":               d["id"],
+                "prompt":           d["prompt"],
+                "gold_intent":      gold_intent,
+                "gold_harm":        d["gold_harm"],
+                "generated_intent": gen_intent,
+                "harm_t0":          s["harm_t0"],
+                "added_as_rejected": not s["same_intent"],
+            }
+            if args.filter_method in ("llm", "both"):
+                llm_filter_examples.append({
+                    **base,
+                    "judge_same_intent": s.get("llm_same_intent"),
+                })
+            if args.filter_method in ("nli", "both"):
+                nli_filter_examples.append({
+                    **base,
+                    "nli_entailment_score": s.get("nli_entailment_score"),
+                    "nli_same_intent":      s.get("nli_same_intent"),
+                })
+
+    # ------------------------------------------------------------------
     # 5. Build DPO and contrastive pairs
     # ------------------------------------------------------------------
     print("\n=== Building pairs ===")
@@ -291,6 +448,7 @@ def run(args):
     n_no_gold      = 0   # prompts with missing gold harm
     n_no_negative  = 0   # prompts where all samples agree with gold
     n_no_valid     = 0   # prompts where no sample parsed correctly
+    n_intent_rejecteds = 0  # new rejecteds found via intent filter
 
     for d in all_parsed:
         gold_intent = d["gold_intent"]
@@ -315,8 +473,19 @@ def run(args):
         # chosen is always the ground-truth annotation
         chosen_text = f"Intent: {gold_intent}; Harm: {gold_harm}"
 
-        # rejected = generated samples whose T=0 label disagrees with gold
+        # Priority 1: generated samples whose T=0 label disagrees with gold
         rejecteds = [s for s in valid if s["harm_t0"] != gold_harm]
+
+        # Priority 2 (intent filter): correct-label samples judged as different intent
+        if args.intent_filter:
+            intent_rejecteds = [
+                s for s in valid
+                if s["harm_t0"] == gold_harm and s.get("same_intent") is False
+            ]
+            if intent_rejecteds:
+                n_intent_rejecteds += len(intent_rejecteds)
+                rejecteds = rejecteds + intent_rejecteds
+
 
         if not rejecteds:
             n_no_negative += 1
@@ -360,6 +529,11 @@ def run(args):
     print("\n=== Saving outputs ===")
     save_jsonl(dpo_pairs,         output_dir / "dpo_pairs.jsonl")
     save_jsonl(contrastive_pairs, output_dir / "contrastive_pairs.jsonl")
+    if args.intent_filter:
+        if llm_filter_examples:
+            save_jsonl(llm_filter_examples, output_dir / "intent_filter_llm_examples.jsonl")
+        if nli_filter_examples:
+            save_jsonl(nli_filter_examples, output_dir / "intent_filter_nli_examples.jsonl")
 
     # ------------------------------------------------------------------
     # 7. Summary
@@ -369,12 +543,13 @@ def run(args):
     neg_counts = [len(p["rejecteds"]) for p in contrastive_pairs]
 
     summary = {
-        "adapter_path":       args.adapter_path,
-        "base_model":         args.base_model,
-        "temperature":        args.temperature,
-        "num_samples":        args.num_samples,
-        "split":              "train",
-        "n_prompts_total":    n_total,
+        "adapter_path":          args.adapter_path,
+        "base_model":            args.base_model,
+        "temperature":           args.temperature,
+        "num_samples":           args.num_samples,
+        "intent_filter":         args.intent_filter,
+        "split":                 "train",
+        "n_prompts_total":       n_total,
         "n_skipped_no_gold":  n_no_gold,
         "n_skipped_no_valid": n_no_valid,
         "n_skipped_no_neg":   n_no_negative,
@@ -404,6 +579,8 @@ def run(args):
     print(f"Skipped (no gold)  : {n_no_gold}")
     print(f"Skipped (no valid) : {n_no_valid}")
     print(f"Skipped (no neg)   : {n_no_negative}")
+    if args.intent_filter:
+        print(f"Intent rejecteds   : {n_intent_rejecteds}  (correct-label, wrong-intent)")
     print(f"DPO pairs          : {n_dpo}  ({100*n_dpo/max(n_total,1):.1f}%)")
     print(f"Contrastive pairs  : {len(contrastive_pairs)}")
     if neg_counts:
@@ -446,6 +623,28 @@ def parse_args():
         "--from-samples", type=str, default=None,
         help="Path to parsed_samples.jsonl from a previous run. "
              "Skips the T=temperature generation step.",
+    )
+
+    # Intent filter
+    p.add_argument(
+        "--intent-filter", action="store_true", default=False,
+        help="Enable intent similarity filter. Correct-label samples with semantically "
+             "different intent are added as extra rejected pairs.",
+    )
+    p.add_argument(
+        "--filter-method", choices=["llm", "nli", "both"], default="llm",
+        help="Method for intent similarity scoring. "
+             "'llm': base LLM judge (no LoRA). "
+             "'nli': cross-encoder NLI model. "
+             "'both': run both, reject if either flags the sample.",
+    )
+    p.add_argument(
+        "--nli-model", type=str, default="cross-encoder/nli-deberta-v3-base",
+        help="HuggingFace model ID for the NLI cross-encoder.",
+    )
+    p.add_argument(
+        "--nli-threshold", type=float, default=0.5,
+        help="Entailment score below which intents are considered different (NLI method).",
     )
 
     # Output
