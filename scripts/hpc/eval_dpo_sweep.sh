@@ -23,11 +23,12 @@ set -euo pipefail
 mkdir -p logs/slurm
 
 module purge
-module load CUDA/12.1.1
-module load Python/3.11.3-GCCcore-12.3.0
+module load CUDA/12.8.0
+module load Python/3.12.3-GCCcore-13.3.0
 
 cd "$HOME/repos/intent-gen"
 source .venv/bin/activate
+source ~/.wandb_secrets
 
 PROJECTS_DIR="${PROJECTS_DIR:-/scratch/s4351495}"
 export HF_HOME="${HF_HOME:-${PROJECTS_DIR}/huggingface_cache}"
@@ -87,7 +88,7 @@ echo "Adapter : $ADAPTER"
 echo "Output  : $OUTPUT_DIR"
 echo "========================================"
 
-python scripts/eval_sft_baseline.py \
+python scripts/baselines/eval_sft_baseline.py \
     --adapter-path "$ADAPTER" \
     --base-model   meta-llama/Llama-3.1-8B-Instruct \
     --output-dir   "$OUTPUT_DIR"

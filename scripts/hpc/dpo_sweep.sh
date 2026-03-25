@@ -156,6 +156,7 @@ python scripts/train_dpo.py \
     --gradient-accumulation 8 \
     --seed            "$SEED" \
     --wandb-project   dpo-sweep \
-    --wandb-run       "$RUN_NAME"
+    --wandb-run       "$RUN_NAME" \
+    --skip-eval
 
 echo "[DONE] Run $SLURM_ARRAY_TASK_ID finished"
