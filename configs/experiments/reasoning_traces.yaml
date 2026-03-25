@@ -74,7 +74,7 @@ vllm:
 # ── OpenRouter API settings ─────────────────────────────────────────────────
 # Only used when model.backend = "openrouter".
 openrouter:
-  max_workers: 8      # concurrent API requests
+  max_workers: 32      # concurrent API requests
   max_retries: 3      # retries per request on failure (exponential back-off)
   site_url: null      # optional HTTP-Referer header (OpenRouter attribution)
   app_name: null      # optional X-Title header (OpenRouter attribution)
