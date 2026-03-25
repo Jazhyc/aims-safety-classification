@@ -26,7 +26,16 @@ training:
 
 data:
   seed: 22
+  # predict_harm: jointly generate intent text AND append a binary harm label.
+  # Output format: "Intent: <text>; Harm: safe/harmful"
+  # Set to false to generate plain intent text only.
   predict_harm: true
+  # classification_only: skip intent generation entirely and only output the harm label ("safe" or "harmful").
+  # Takes priority over predict_harm. Use for direct harm classification without intent reasoning.
+  classification_only: false
+  # use_reasoning_traces: train on teacher-generated chain-of-thought traces instead of raw annotations.
+  # Requires pre-generated traces from scripts/distillation/generate_reasoning_traces.py.
+  use_reasoning_traces: false
 
 sft_models_dir: "models/sft"
 
