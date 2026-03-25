@@ -83,7 +83,7 @@ vllm:
   flash_attn_version: null  # FA4 only works on SM100 (B100/B200), not SM120 (RTX Pro 6000); null = auto-detect (FA2)
 
 artifacts:
-  enabled: false
+  enabled: true
   registry_project: "intention-jailbreak-models"
   entity: null
   results_name: "safety-experiment-sft"

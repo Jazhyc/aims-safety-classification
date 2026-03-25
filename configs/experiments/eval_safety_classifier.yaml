@@ -157,7 +157,7 @@ vllm:
 
 # Artifact registry
 artifacts:
-  enabled: false
+  enabled: true
   registry_project: "intention-jailbreak-models"
   entity: null  # defaults to your wandb account
   # Set results_name to upload all prediction JSONL files as a W&B artifact after the run.
