@@ -152,7 +152,7 @@ vllm:
   gpu_memory_utilization: 0.90
   max_model_len: 2048
   dtype: "bfloat16"
-  enforce_eager: true
+  enforce_eager: false
 
 # Artifact registry
 artifacts:
