@@ -635,7 +635,7 @@ def run_causal_flow(config):
         def create_prompt_completion(examples):
             prompts = [format_prompt(p, predict_harm) for p in examples["prompt"]]
 
-            if predict_harm:
+            if predict_harm or classification_only:
                 harms = examples.get("Annotator Harm", [None] * len(examples["prompt"]))
                 completions = [
                     format_completion(i, h, predict_harm, classification_only)
@@ -716,6 +716,15 @@ def run_causal_flow(config):
             trainer.save_model(adapter_dir)
             print(f"LoRA adapter saved to {adapter_dir}")
             tokenizer.save_pretrained(adapter_dir)
+            try:
+                import wandb as _wandb
+                if _wandb.run is not None:
+                    _wandb.run.summary["adapter_path"] = adapter_dir
+                    _wandb.run.summary["classification_only"] = bool(
+                        config.get("data", {}).get("classification_only", False)
+                    )
+            except Exception:
+                pass
             if artifacts_enabled:
                 upload_adapter(adapter_dir, registry_project, entity=artifact_entity)
         else:

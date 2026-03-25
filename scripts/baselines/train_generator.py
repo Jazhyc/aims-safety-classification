@@ -10,7 +10,6 @@ Usage:
 import os
 from pathlib import Path
 
-from wandb import config
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["USE_TF"] = "0"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"

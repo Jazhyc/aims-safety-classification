@@ -30,8 +30,8 @@ sft_models_dir: "models/sft"
 
 # Adapter paths — overridden at launch time by submit_sft_eval.py
 finetuned:
-  generation_adapter: "${sft_models_dir}/hyperparam_sweep/PLACEHOLDER_adapter"
-  classification_adapter: "${sft_models_dir}/hyperparam_sweep_clf/PLACEHOLDER_adapter"
+  generation_adapter: "${sft_models_dir}/hyperparam_sweep/lr_0.0002_e_5_adapter"
+  classification_adapter: "${sft_models_dir}/hyperparam_sweep_clf/lr_0.0001_e_5_adapter"
 
   # Unused in this config (distillation conditions not active)
   reasoning_classification_adapter: "models/distillation/PLACEHOLDER_adapter"

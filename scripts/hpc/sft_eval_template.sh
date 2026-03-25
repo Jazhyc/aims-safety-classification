@@ -15,6 +15,4 @@ source .venv/bin/activate
 # GENERATION_ADAPTER and CLASSIFICATION_ADAPTER are set by submit_sft_eval.py
 # based on highest validation harm F1 across sweep runs.
 python scripts/eval_safety_classifier.py \
-    --config-name=eval_sft_baselines \
-    "finetuned.generation_adapter=${GENERATION_ADAPTER}" \
-    "finetuned.classification_adapter=${CLASSIFICATION_ADAPTER}"
+    --config-name=eval_sft_baselines

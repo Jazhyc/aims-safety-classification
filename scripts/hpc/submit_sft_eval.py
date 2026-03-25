@@ -16,6 +16,9 @@ import subprocess
 from pathlib import Path
 
 import wandb
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from slurm_utils import create_logs_dir, submit_sbatch, print_header
 
@@ -43,36 +46,32 @@ def fetch_best_adapter(project: str, classification_only: bool) -> tuple[str, fl
     best_run_name = None
 
     for run in runs:
-        cfg = run.config
+        summary = run.summary
 
-        # Filter by sweep type
-        data_cfg = cfg.get("data", {})
-        run_clf_only = bool(data_cfg.get("classification_only", False))
+        # Filter by sweep type using summary flag logged by causal.py
+        run_clf_only = bool(summary.get("classification_only", False))
         if run_clf_only != classification_only:
             continue
 
-        # Get val_harm_f1 from summary
-        f1 = run.summary.get("val_harm_f1")
+        f1 = summary.get("val_harm_f1")
         if f1 is None:
             print(f"  [skip] {run.name}: no val_harm_f1 in summary")
             continue
 
-        # Derive adapter path from run config
-        model_save_dir = cfg.get("paths", {}).get("model_save_dir")
-        if not model_save_dir:
-            print(f"  [skip] {run.name}: no paths.model_save_dir in config")
+        adapter_path_str = summary.get("adapter_path")
+        if not adapter_path_str:
+            print(f"  [skip] {run.name}: no adapter_path in summary (re-run to populate)")
             continue
 
-        adapter_path = Path(model_save_dir + "_adapter")
-        if not adapter_path.exists():
-            print(f"  [skip] {run.name}: adapter not found locally at {adapter_path}")
+        if not Path(adapter_path_str).exists():
+            print(f"  [skip] {run.name}: adapter not found locally at {adapter_path_str}")
             continue
 
-        print(f"  {run.name}: val_harm_f1={f1:.4f}  adapter={adapter_path}")
+        print(f"  {run.name}: val_harm_f1={f1:.4f}  adapter={adapter_path_str}")
 
         if f1 > best_f1:
             best_f1 = f1
-            best_adapter = str(adapter_path)
+            best_adapter = adapter_path_str
             best_run_name = run.name
 
     if best_adapter is None:
