@@ -84,6 +84,7 @@ SFT_ADAPTER="${SFT_ADAPTER:-${PROJECTS_DIR}/trained_models/causal/hyperparam_swe
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export WANDB_MODE=online
+export VLLM_USE_V1=0
 
 PAIRS_UNBAL="data/dpo_pairs/train_t0.8/dpo_pairs.jsonl"
 PAIRS_BAL="data/dpo_pairs/train_t0.8_balanced/dpo_pairs.jsonl"
