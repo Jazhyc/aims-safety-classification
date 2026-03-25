@@ -60,6 +60,7 @@ experiment:
     # Prior-work baselines (separate model instances)
     - "llamaguard_classification"
     - "wildguard_classification"
+    # - "safeguard_classification"
 
 # Model configuration
 model:
@@ -97,6 +98,10 @@ llamaguard:
 # WildGuard baseline configuration
 wildguard:
   name: "allenai/wildguard"
+
+# GPT-OSS-Safeguard baseline configuration
+safeguard:
+  name: "openai/gpt-oss-safeguard-120b"
 
 # Dataset configurations - cycles through all datasets
 datasets:
