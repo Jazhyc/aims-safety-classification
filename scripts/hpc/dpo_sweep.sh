@@ -125,6 +125,13 @@ case $SLURM_ARRAY_TASK_ID in
   27) BETA=0.5;  LOSS=sigmoid; LR=5e-5; EPOCHS=3; LS=0.0;  HW=1.4; PAIRS="$PAIRS_UNBAL"; SEED=22 ;;
   28) BETA=0.5;  LOSS=sigmoid; LR=5e-5; EPOCHS=1; LS=0.05; HW=1.4; PAIRS="$PAIRS_UNBAL"; SEED=22 ;;
   29) BETA=0.5;  LOSS=sigmoid; LR=5e-5; EPOCHS=1; LS=0.0;  HW=1.4; PAIRS="$PAIRS_UNBAL"; SEED=42 ;;
+  # ── Group E: β sweep with hw=1.4, 2 and 3 epochs ──────────────────────────
+  30) BETA=0.1;  LOSS=sigmoid; LR=5e-5; EPOCHS=2; LS=0.0;  HW=1.4; PAIRS="$PAIRS_UNBAL"; SEED=22 ;;
+  31) BETA=0.2;  LOSS=sigmoid; LR=5e-5; EPOCHS=2; LS=0.0;  HW=1.4; PAIRS="$PAIRS_UNBAL"; SEED=22 ;;
+  32) BETA=0.3;  LOSS=sigmoid; LR=5e-5; EPOCHS=2; LS=0.0;  HW=1.4; PAIRS="$PAIRS_UNBAL"; SEED=22 ;;
+  33) BETA=0.1;  LOSS=sigmoid; LR=5e-5; EPOCHS=3; LS=0.0;  HW=1.4; PAIRS="$PAIRS_UNBAL"; SEED=22 ;;
+  34) BETA=0.2;  LOSS=sigmoid; LR=5e-5; EPOCHS=3; LS=0.0;  HW=1.4; PAIRS="$PAIRS_UNBAL"; SEED=22 ;;
+  35) BETA=0.5;  LOSS=sigmoid; LR=5e-5; EPOCHS=4; LS=0.0;  HW=1.4; PAIRS="$PAIRS_UNBAL"; SEED=22 ;;
 esac
 
 BAL_TAG=$([ "$PAIRS" = "$PAIRS_BAL" ] && echo "bal" || echo "unbal")

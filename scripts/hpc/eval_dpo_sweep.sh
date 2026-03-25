@@ -73,6 +73,13 @@ case $SLURM_ARRAY_TASK_ID in
   27) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_27_*_adapter 2>/dev/null | head -1) ;;
   28) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_28_*_adapter 2>/dev/null | head -1) ;;
   29) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_29_*_adapter 2>/dev/null | head -1) ;;
+  # Group E
+  30) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_30_*_adapter 2>/dev/null | head -1) ;;
+  31) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_31_*_adapter 2>/dev/null | head -1) ;;
+  32) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_32_*_adapter 2>/dev/null | head -1) ;;
+  33) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_33_*_adapter 2>/dev/null | head -1) ;;
+  34) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_34_*_adapter 2>/dev/null | head -1) ;;
+  35) ADAPTER=$(ls -d trained_models/causal/dpo_sweep/run_35_*_adapter 2>/dev/null | head -1) ;;
 esac
 
 if [ -z "$ADAPTER" ] || [ ! -d "$ADAPTER" ]; then
