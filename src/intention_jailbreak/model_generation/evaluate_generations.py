@@ -115,12 +115,24 @@ def compute_semantic_similarity(refs, preds, model_name="sentence-transformers/a
 
 
 def extract_harm_labels(completions):
-    """Extract binary harm label from completions of the form 'Intent: ...; Harm: safe/harmful'.
-    Returns None for entries where the label cannot be parsed."""
+    """Extract binary harm label from completions.
+
+    Handles two output formats:
+      - Joint generation: "Intent: <text>; Harm: safe/harmful"
+      - Classification-only: bare "safe" or "harmful"
+
+    Returns None for entries where the label cannot be parsed.
+    """
     labels = []
     for c in completions:
+        # Try structured format first: "Harm: safe/harmful"
         m = re.search(r'Harm:\s*(\w+)', c, re.IGNORECASE)
-        labels.append(m.group(1).lower() if m else None)
+        if m:
+            labels.append(m.group(1).lower())
+        else:
+            # Fallback: bare label (classification_only mode)
+            stripped = c.strip().lower()
+            labels.append(stripped if stripped in ("harmful", "safe") else None)
     return labels
 
 

@@ -1,0 +1,98 @@
+# Configuration for evaluating the best SFT fine-tuned baselines on all test datasets.
+#
+# Conditions:
+#   - finetuned_generation:     SFT adapter trained with predict_harm=true
+#                               (prompt -> "Intent: <text>; Harm: safe/harmful")
+#   - finetuned_classification: SFT adapter trained with classification_only=true
+#                               (prompt -> "safe" or "harmful")
+#
+# Adapter paths are selected automatically by submit_sft_eval.py, which scans
+# val predictions from both hyperparam sweeps and picks the highest harm F1 run.
+# They are passed at launch time as Hydra overrides:
+#   finetuned.generation_adapter=<path>
+#   finetuned.classification_adapter=<path>
+
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
+experiment:
+  conditions:
+    - "finetuned_generation"
+    - "finetuned_classification"
+
+model:
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+  max_length: 4096
+
+sft_models_dir: "models/sft"
+
+# Adapter paths — overridden at launch time by submit_sft_eval.py
+finetuned:
+  generation_adapter: "${sft_models_dir}/hyperparam_sweep/PLACEHOLDER_adapter"
+  classification_adapter: "${sft_models_dir}/hyperparam_sweep_clf/PLACEHOLDER_adapter"
+
+  # Unused in this config (distillation conditions not active)
+  reasoning_classification_adapter: "models/distillation/PLACEHOLDER_adapter"
+  reasoning_generation_adapter: "models/distillation/PLACEHOLDER_adapter"
+
+lora:
+  rank: 16
+
+# Dataset configurations — same set as the prompting baselines experiment
+datasets:
+  - name: "annotated-intents"
+    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    subset: null
+    split: "test"
+    harm_column: "Annotator Harm"
+    use_manual_split: false
+    output_dir: "data/safety_experiment/sft/annotated_intents"
+
+  - name: "wildguardmix"
+    dataset_name: "allenai/wildguardmix"
+    subset: "wildguardtest"
+    split: "test"
+    harm_column: "prompt_harm_label"
+    use_manual_split: false
+    output_dir: "data/safety_experiment/sft/wildguardmix"
+
+  - name: "xstest"
+    dataset_name: "walledai/XSTest"
+    subset: null
+    split: "test"
+    harm_column: "label"
+    use_manual_split: false
+    output_dir: "data/safety_experiment/sft/xstest"
+
+generation:
+  max_new_tokens: 64   # sufficient for "Intent: <text>; Harm: safe/harmful"
+  temperature: 0.0
+  top_p: 1.0
+  top_k: -1
+
+paths:
+  output_dir: "data/safety_experiment/sft"
+
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 2048
+  dtype: "bfloat16"
+  enforce_eager: false
+  flash_attn_version: null  # FA4 only works on SM100 (B100/B200), not SM120 (RTX Pro 6000); null = auto-detect (FA2)
+
+artifacts:
+  enabled: false
+  registry_project: "intention-jailbreak-models"
+  entity: null
+  results_name: "safety-experiment-sft"
+
+wandb:
+  enabled: true
+  entity: null
+  project: "Baselines"
+  run_name: null
+  tags: ["safety", "classification", "sft"]
+  dir: "logs/wandb"
+  mode: "online"
