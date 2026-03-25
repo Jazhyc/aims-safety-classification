@@ -45,3 +45,6 @@ packages = ["src/intention_jailbreak"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.uv]
+torch-backend = "auto"
