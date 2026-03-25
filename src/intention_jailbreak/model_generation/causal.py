@@ -425,7 +425,6 @@ def setup_causal_model_and_tokenizer(config):
     )
 
     model.config.use_cache = False
-    model.gradient_checkpointing_enable()
 
     # Prepare for k-bit training
     model = prepare_model_for_kbit_training(model)
