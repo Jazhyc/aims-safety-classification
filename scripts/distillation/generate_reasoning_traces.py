@@ -359,7 +359,7 @@ def main(cfg: DictConfig):
     tp_size = vllm_cfg.get("tensor_parallel_size") or torch.cuda.device_count()
     print(f"Tensor parallel size: {tp_size} GPU(s)")
 
-    llm = LLM(
+    llm_kwargs = dict(
         model=model_name,
         gpu_memory_utilization=vllm_cfg.get("gpu_memory_utilization", 0.95),
         max_model_len=vllm_cfg.get("max_model_len", 8192),
@@ -368,6 +368,10 @@ def main(cfg: DictConfig):
         enforce_eager=vllm_cfg.get("enforce_eager", True),
         tensor_parallel_size=tp_size,
     )
+    flash_attn_version = vllm_cfg.get("flash_attn_version", None)
+    if flash_attn_version is not None:
+        llm_kwargs["attention_config"] = {"flash_attn_version": flash_attn_version}
+    llm = LLM(**llm_kwargs)
 
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)

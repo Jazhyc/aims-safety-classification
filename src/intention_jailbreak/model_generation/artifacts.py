@@ -235,7 +235,7 @@ def upload_results(
         artifact.add_file(str(f), name=str(rel))
 
     qualifier = f"{entity}/{project}" if entity else project
-    active_run.log_artifact(artifact, aliases=["latest"], project=qualifier)
+    active_run.log_artifact(artifact, aliases=["latest"])
     print(f"[artifacts] Uploaded results '{name}' to {qualifier} ({len(files)} files)")
     return artifact
 

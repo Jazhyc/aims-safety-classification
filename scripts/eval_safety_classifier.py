@@ -1524,6 +1524,9 @@ def main(cfg: DictConfig):
         "enforce_eager": vllm_cfg.get("enforce_eager", True),
         "limit_mm_per_prompt": {"image": 0},
     }
+    flash_attn_version = vllm_cfg.get("flash_attn_version", None)
+    if flash_attn_version is not None:
+        llm_kwargs["attention_config"] = {"flash_attn_version": flash_attn_version}
     
     # Enable LoRA if any finetuned conditions are requested
     if needs_finetuned:

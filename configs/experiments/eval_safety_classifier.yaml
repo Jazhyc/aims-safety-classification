@@ -153,6 +153,7 @@ vllm:
   max_model_len: 2048
   dtype: "bfloat16"
   enforce_eager: false
+  flash_attn_version: null  # FA4 only works on SM100 (B100/B200), not SM120 (RTX Pro 6000); null = auto-detect (FA2)
 
 # Artifact registry
 artifacts:

@@ -59,6 +59,7 @@ vllm:
   max_num_seqs: 32
   dtype: "bfloat16"
   enforce_eager: false
+  flash_attn_version: null  # FA4 only works on SM100 (B100/B200), not SM120 (RTX Pro 6000); null = auto-detect (FA2)
   # Number of GPUs for tensor parallelism.
   # Set to null to auto-detect via torch.cuda.device_count(), but only do this
   # if all detected devices are distinct physical GPUs (check with nvidia-smi).
