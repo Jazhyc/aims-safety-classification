@@ -12,8 +12,11 @@ The artifact name is the adapter directory name (the final path component), e.g.
   - "classification-r16-a32_adapter"                          (LoRA classification sweep)
   - "reasoning-distillation-gemma-3-27b-without-intent_adapter"  (distillation)
 
-These names are already unique across pipelines because causal.py always appends
-"_adapter" and the run name encodes the relevant hyperparameters / teacher model.
+Reasoning traces are stored as:
+  - "reasoning-traces-<teacher_slug>"  e.g. "reasoning-traces-Qwen-Qwen3.5-27B"
+
+These names are unique across pipelines because causal.py always appends "_adapter"
+and the run name encodes the relevant hyperparameters / teacher model.
 
 Checkpoints
 -----------
@@ -33,6 +36,7 @@ Usage
 -----
     from intention_jailbreak.model_generation.artifacts import (
         artifact_exists, upload_adapter, download_adapter,
+        upload_traces, download_traces,
     )
 
     # Before training:
@@ -48,16 +52,32 @@ Usage
         project="intention-jailbreak-models",
         target_dir="models/sft",
     )
+
+    # After generating reasoning traces:
+    upload_traces(
+        trace_dir="data/reasoning_traces/Qwen-Qwen3.5-27B",
+        name="reasoning-traces-Qwen-Qwen3.5-27B",
+        project="intention-jailbreak-models",
+    )
+
+    # Before distillation on a different device:
+    download_traces(
+        name="reasoning-traces-Qwen-Qwen3.5-27B",
+        project="intention-jailbreak-models",
+        target_dir="data/reasoning_traces/Qwen-Qwen3.5-27B",
+    )
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import wandb
 
 ARTIFACT_TYPE = "lora-adapter"
 RESULTS_ARTIFACT_TYPE = "eval-results"
+TRACES_ARTIFACT_TYPE = "reasoning-traces"
 
 
 def artifact_exists(
@@ -274,4 +294,111 @@ def download_results(
     artifact = api.artifact(full_ref, type=RESULTS_ARTIFACT_TYPE)
     artifact.download(root=str(dest))
     print(f"[artifacts] Downloaded results '{full_ref}' → {dest}")
+    return dest
+
+
+def upload_traces(
+    trace_dir: str | Path,
+    name: str,
+    project: str,
+    entity: str | None = None,
+    run: "wandb.Run | None" = None,
+) -> "wandb.Artifact":
+    """
+    Upload parsed reasoning trace JSON files to a W&B artifact.
+
+    Collects all parsed_results.json files under trace_dir (preserving the
+    train/validation/test split structure) and uploads them as a versioned artifact.
+    raw_outputs.json files are excluded to keep artifact size manageable.
+
+    Unlike adapters, traces do not use a collision guard — uploading always creates
+    a new version and ``latest`` points to the most recent run.
+
+    Args:
+        trace_dir: Directory containing split subdirs (train/, validation/, test/).
+                   Typically data/reasoning_traces/<teacher_slug>/.
+        name:      Artifact name, e.g. "reasoning-traces-Qwen-Qwen3.5-27B".
+        project:   W&B registry project name.
+        entity:    W&B entity. Defaults to the account used by the active run.
+        run:       Active wandb.Run. Defaults to wandb.run.
+
+    Returns:
+        The logged wandb.Artifact.
+
+    Raises:
+        FileNotFoundError: If trace_dir does not exist.
+        ValueError:        If no parsed_results.json files are found.
+        RuntimeError:      If no wandb run is active.
+    """
+    active_run = run or wandb.run
+    if active_run is None:
+        raise RuntimeError(
+            "No active wandb run. Call wandb.init() before upload_traces()."
+        )
+
+    trace_dir = Path(trace_dir)
+    if not trace_dir.exists():
+        raise FileNotFoundError(f"Trace directory not found: {trace_dir}")
+
+    files = sorted(trace_dir.rglob("parsed_results.json"))
+    if not files:
+        raise ValueError(f"No parsed_results.json files found in: {trace_dir}")
+
+    artifact = wandb.Artifact(name=name, type=TRACES_ARTIFACT_TYPE)
+    for f in files:
+        rel = f.relative_to(trace_dir)
+        artifact.add_file(str(f), name=str(rel))
+
+    qualifier = f"{entity}/{project}" if entity else project
+    active_run.log_artifact(artifact, aliases=["latest"])
+    print(f"[artifacts] Uploaded traces '{name}' to {qualifier} ({len(files)} files)")
+    return artifact
+
+
+def download_traces(
+    name: str,
+    project: str,
+    target_dir: str | Path,
+    entity: str | None = None,
+    version: str = "latest",
+) -> Path:
+    """
+    Download reasoning trace JSON files from a W&B artifact.
+
+    Skips download if target_dir/train/parsed_results.json already exists and is
+    non-empty, so repeated calls on the same machine are cheap.
+
+    Args:
+        name:       Artifact name, e.g. "reasoning-traces-Qwen-Qwen3.5-27B".
+        project:    W&B registry project name.
+        target_dir: Directory to download into (train/, validation/, test/ placed here).
+                    Typically data/reasoning_traces/<teacher_slug>/.
+        entity:     W&B entity. Defaults to the account used by wandb.Api.
+        version:    Artifact version alias (default "latest").
+
+    Returns:
+        Path to the downloaded traces directory (target_dir).
+
+    Raises:
+        wandb.errors.CommError: If the artifact does not exist in the registry.
+    """
+    dest = Path(target_dir)
+    train_file = dest / "train" / "parsed_results.json"
+    if train_file.exists():
+        try:
+            with open(train_file) as f:
+                data = json.load(f)
+            if data:
+                print(f"[artifacts] Traces already present locally, skipping download: {dest}")
+                return dest
+        except Exception:
+            pass
+
+    api = wandb.Api()
+    qualifier = f"{entity}/{project}" if entity else project
+    full_ref = f"{qualifier}/{name}:{version}"
+
+    artifact = api.artifact(full_ref, type=TRACES_ARTIFACT_TYPE)
+    artifact.download(root=str(dest))
+    print(f"[artifacts] Downloaded traces '{full_ref}' → {dest}")
     return dest

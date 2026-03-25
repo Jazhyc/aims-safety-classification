@@ -110,6 +110,49 @@ def _run(cmd: list[str], project_root: Path, label: str, extra_env: dict | None 
     return True
 
 
+def _artifact_name_traces(teacher_model: str) -> str:
+    return f"reasoning-traces-{_teacher_slug(teacher_model)}"
+
+
+def _try_download_traces(teacher_model: str, traces_dir: Path, artifacts_cfg: dict) -> bool:
+    """Try to pull traces from W&B. Returns True if traces are now available locally."""
+    from intention_jailbreak.model_generation.artifacts import download_traces
+    slug = _teacher_slug(teacher_model)
+    artifact_name = _artifact_name_traces(teacher_model)
+    registry_project = artifacts_cfg.get("registry_project", "intention-jailbreak-models")
+    entity = artifacts_cfg.get("entity") or None
+    teacher_traces_dir = traces_dir / slug
+    try:
+        download_traces(artifact_name, registry_project, teacher_traces_dir, entity)
+        print(f"[W&B HIT] Step 1 – traces downloaded from W&B: {artifact_name}")
+        return True
+    except Exception as e:
+        print(f"[W&B MISS] Could not download traces '{artifact_name}': {e} — will generate")
+        return False
+
+
+def _upload_traces(teacher_model: str, traces_dir: Path, artifacts_cfg: dict, wandb_cfg: dict) -> None:
+    """Upload generated reasoning traces to W&B using a temporary run."""
+    import wandb as _wandb
+    from intention_jailbreak.model_generation.artifacts import upload_traces
+    slug = _teacher_slug(teacher_model)
+    artifact_name = _artifact_name_traces(teacher_model)
+    registry_project = artifacts_cfg.get("registry_project", "intention-jailbreak-models")
+    entity = artifacts_cfg.get("entity") or wandb_cfg.get("entity") or None
+    teacher_traces_dir = traces_dir / slug
+    run = _wandb.init(
+        project=wandb_cfg.get("reasoning_traces_project", "reasoning-traces-generation"),
+        entity=entity,
+        name=f"upload-traces-{slug}",
+        job_type="artifact-upload",
+    )
+    try:
+        upload_traces(teacher_traces_dir, artifact_name, registry_project, entity, run)
+    finally:
+        run.finish()
+    print(f"[artifacts] Traces uploaded: {artifact_name}")
+
+
 def step1_teacher(
     teacher_model: str,
     conditions: list[str],
@@ -119,11 +162,17 @@ def step1_teacher(
     extra_env: dict,
     project_root: Path,
     thinking_mode: bool = False,
+    artifacts_cfg: dict | None = None,
 ) -> bool:
     cached, path = traces_cached(teacher_model, traces_dir)
     if cached:
         print(f"[CACHE HIT] Step 1 – traces already exist: {path}")
         return True
+
+    # Not cached locally — try W&B before running expensive generation
+    if artifacts_cfg and artifacts_cfg.get("enabled"):
+        if _try_download_traces(teacher_model, traces_dir, artifacts_cfg):
+            return True
 
     conditions_str = ",".join(conditions)
     cmd = [
@@ -141,7 +190,16 @@ def step1_teacher(
     if num_samples is not None:
         cmd.append(f"dataset.num_samples={num_samples}")
 
-    return _run(cmd, project_root, f"Step 1 – teacher traces: {teacher_model}", extra_env)
+    ok = _run(cmd, project_root, f"Step 1 – teacher traces: {teacher_model}", extra_env)
+
+    # Upload traces to W&B after successful generation
+    if ok and artifacts_cfg and artifacts_cfg.get("enabled"):
+        try:
+            _upload_traces(teacher_model, traces_dir, artifacts_cfg, wandb_cfg)
+        except Exception as e:
+            print(f"[artifacts] WARNING: Could not upload traces: {e}")
+
+    return ok
 
 
 def step2_distill(
@@ -241,7 +299,7 @@ def step3_safety(
 @hydra.main(version_base=None, config_path="../../configs/experiments", config_name="distillation_pipeline")
 def main(cfg: DictConfig) -> None:
     config = OmegaConf.to_container(cfg, resolve=True)
-    project_root = Path(__file__).parent.parent.resolve()
+    project_root = Path(__file__).parent.parent.parent.resolve()
 
     teacher_models: list[str] = config.get("teacher_models", [])
     conditions: list[str] = config.get("conditions", ["without_intent", "with_intent"])
@@ -257,6 +315,7 @@ def main(cfg: DictConfig) -> None:
     trace_overrides: dict[str, str] = config.get("teacher_trace_overrides", {}) or {}
     wandb_cfg: dict = config.get("wandb", {})
     cache_cfg: dict = config.get("cache", {})
+    artifacts_cfg: dict = config.get("artifacts", {})
 
     traces_dir = project_root / cache_cfg.get("reasoning_traces_dir", "data/reasoning_traces")
     models_dir = project_root / cache_cfg.get("distilled_models_dir", "models/distillation")
@@ -314,6 +373,7 @@ def main(cfg: DictConfig) -> None:
                 teacher_model, conditions, num_samples,
                 traces_dir, wandb_cfg, teacher_env, project_root,
                 thinking_mode=thinking_mode,
+                artifacts_cfg=artifacts_cfg,
             )
             summary[slug]["step1_traces"] = "ok" if ok1 else "FAILED"
             if not ok1:

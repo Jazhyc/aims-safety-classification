@@ -23,10 +23,10 @@ teacher_models:
   # - "RedHatAI/gemma-3-27b-it-quantized.w4a16"
   # - "RedHatAI/Qwen3-32B-quantized.w4a16"
   # - "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
-  # - "openai/gpt-oss-120b"
+  - "openai/gpt-oss-120b"
   # - "cyankiwi/Qwen3.5-27B-AWQ-4bit"
   # - "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4"
-  - "Qwen/Qwen3.5-27B"
+  # - "Qwen/Qwen3.5-27B"
 
 # ── Per-teacher trace overrides ────────────────────────────────────────────────
 # Models listed here skip step 1 and use the provided train/parsed_results.json directly.
@@ -60,7 +60,7 @@ conditions:
 # ── Run suffix ─────────────────────────────────────────────────────────────────
 # Appended to adapter directory names and WandB run names to version experiments.
 # Set to null (or omit) for no suffix.
-run_suffix: "v3"
+run_suffix: "v4"
 
 # ── Teacher generation ─────────────────────────────────────────────────────────
 # num_samples: null uses the full dataset; set an integer to subsample.
@@ -69,19 +69,30 @@ num_samples: null
 # ── CUDA device ────────────────────────────────────────────────────────────────
 # Passed as CUDA_VISIBLE_DEVICES to every subprocess.
 # Accepts an integer index, a MIG UUID, or null (inherit from environment).
-cuda_visible_devices: MIG-ec73ed57-6aa0-541d-9909-e4f6518cbd33
+cuda_visible_devices: null
 
 # ── WandB ──────────────────────────────────────────────────────────────────────
 # Separate project per step for easy side-by-side comparison in the W&B UI.
 wandb:
-  enabled: false
+  enabled: true
   entity: "intention-analysis"
-  reasoning_traces_project: "reasoning-traces-generation"
-  distillation_project: "reasoning-distillation-v3"
-  safety_project: "distillation-teacher-sweep-v3"
+  reasoning_traces_project: "reasoning-traces-generation-v4"
+  distillation_project: "reasoning-distillation-v4"
+  safety_project: "distillation-teacher-sweep-v4"
+
+# ── Artifact registry ───────────────────────────────────────────────────────────
+# When enabled, reasoning traces are uploaded to W&B after generation and
+# downloaded automatically on the next run (or on a different machine) instead
+# of re-running the expensive teacher model.
+# Artifact name format: "reasoning-traces-<teacher_slug>"
+# e.g. "reasoning-traces-Qwen-Qwen3.5-27B"
+artifacts:
+  enabled: false  # set to true to upload/download traces via W&B
+  registry_project: "intention-jailbreak-models"
+  entity: null  # defaults to wandb.entity above
 
 # ── Cache directories (relative to project root) ───────────────────────────────
 cache:
-  reasoning_traces_dir: "data/reasoning_traces_v3"
+  reasoning_traces_dir: "data/reasoning_traces_v4"
   distilled_models_dir: "models/distillation"
   safety_dir: "data/safety_experiment"

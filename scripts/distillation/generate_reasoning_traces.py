@@ -151,45 +151,82 @@ def _build_zeroshot_cot_prompt(user_prompt: str, with_intent: bool = True) -> st
     return build_student_prompt(user_prompt, with_intent=with_intent)
 
 
-def parse_model_output(raw_text: str) -> dict:
+def detect_thinking_tokens(tokenizer) -> tuple[str, str]:
+    """
+    Infer thinking block delimiters from the tokenizer's special tokens.
+
+    Returns (thinking_start, thinking_end), both empty strings if the model has
+    no known thinking tokens.
+
+    Known patterns (all major open-weight thinking models as of 2025):
+        <think> / </think>              — Qwen3, DeepSeek-R1, Kimi K2.5
+        <|thinking|> / <|/thinking|>   — GLM 4 / GLM 5
+        analysis / assistantfinal       — GPT-OSS-120B
+
+    How vLLM handles these with skip_special_tokens=True:
+        - Qwen3 / most models: opening token is stripped, closing remains in output
+        - GPT-OSS-120B: neither token is stripped (they are not in the special tokens
+          vocab but are still tracked here so the closing delimiter can be used for splitting)
+    """
+    special = set(getattr(tokenizer, "all_special_tokens", []))
+    THINKING_PAIRS = [
+        ("<think>",      "</think>"),
+        ("<|thinking|>", "<|/thinking|>"),
+        ("analysis",     "assistantfinal"),
+    ]
+    for start, end in THINKING_PAIRS:
+        if start in special:
+            return start, end
+    return "", ""
+
+
+def parse_model_output(
+    raw_text: str,
+    thinking_start: str = "",
+    thinking_end: str = "",
+    pre_extracted_thinking: str | None = None,
+) -> dict:
     """
     Parse the model output to extract the intent, harm classification, and reasoning.
 
     Output format (in order): Reasoning → Prompt intent → Prompt harm
 
-    If thinking mode is enabled the model wraps its internal chain-of-thought in
-    <think>...</think> tags before emitting the structured output.  The think
-    block is extracted and preserved in the returned dict, then stripped so
-    the downstream regex only sees the structured portion.
+    Thinking block extraction (mutually exclusive, in priority order):
+      1. pre_extracted_thinking: vLLM already separated thinking from structured output
+         via its built-in reasoning parser (output.outputs[0].reasoning_content).
+         raw_text contains only the structured part — no further splitting needed.
+      2. thinking_end present in raw_text: split on the closing delimiter.
+         - If the opening token was stripped as a special token (typical for Qwen3 /
+           DeepSeek-R1), raw_text starts directly with the CoT content.
+         - If neither token was stripped (e.g. GPT-OSS-120B), raw_text starts with
+           thinking_start; it is stripped from the front of the thinking trace.
+      3. Neither above: no thinking block (non-thinking model or thinking_mode=False).
+
+    Args:
+        raw_text:               Text from the model.
+        thinking_start:         Opening delimiter e.g. "<think>" (from detect_thinking_tokens).
+        thinking_end:           Closing delimiter e.g. "</think>" (from detect_thinking_tokens).
+        pre_extracted_thinking: Thinking content already extracted by vLLM's reasoning
+                                parser; skips in-text extraction when provided.
 
     Returns a dict with:
         - prompt_intent: str or None
         - prompt_harm: str or None  ('harmful' | 'unharmful')
         - reasoning: str
-        - thinking_trace: str  (empty string when thinking mode was not used)
+        - thinking_trace: str  (empty string when no thinking block was found)
     """
-    # Extract and strip thinking CoT.
-    # When thinking mode is on, vLLM strips the <think> *opening* token via
-    # skip_special_tokens=True but leaves the </think> closing tag in the text.
-    # So the output looks like: "<CoT text>...</think>\n\n<structured output>"
-    # We also handle the (unlikely) case where both tags are present.
     thinking_trace = ""
-    if '<think>' in raw_text:
-        # Both tags present
-        think_match = re.search(r'<think>(.*?)</think>', raw_text, flags=re.DOTALL)
-        if think_match:
-            thinking_trace = think_match.group(1).strip()
-        text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
-    elif '</think>' in raw_text:
-        # Opening tag stripped as special token; everything before </think> is the CoT
-        parts = raw_text.split('</think>', 1)
-        thinking_trace = parts[0].strip()
-        text = parts[1].strip()
-    elif 'assistantfinal' in raw_text:
-        # GPT-OSS-120B wraps its CoT with 'analysis' (open) and 'assistantfinal' (close).
-        # Neither is stripped by skip_special_tokens, so split on the closing marker.
-        parts = raw_text.split('assistantfinal', 1)
-        thinking_trace = parts[0].removeprefix('analysis').strip()
+    if pre_extracted_thinking is not None:
+        # vLLM already split thinking from structured output — use as-is
+        thinking_trace = pre_extracted_thinking.strip()
+        text = raw_text
+    elif thinking_end and thinking_end in raw_text:
+        parts = raw_text.split(thinking_end, 1)
+        trace = parts[0].strip()
+        # Strip the opening token if it wasn't removed by vLLM (e.g. GPT-OSS-120B)
+        if thinking_start and trace.startswith(thinking_start):
+            trace = trace[len(thinking_start):].strip()
+        thinking_trace = trace
         text = parts[1].strip()
     else:
         text = raw_text
@@ -373,8 +410,14 @@ def main(cfg: DictConfig):
         llm_kwargs["attention_config"] = {"flash_attn_version": flash_attn_version}
     llm = LLM(**llm_kwargs)
 
-    # Load tokenizer
+    # Load tokenizer and auto-detect thinking block delimiters
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    thinking_start, thinking_end = detect_thinking_tokens(tokenizer) if thinking_mode else ("", "")
+    if thinking_mode:
+        if thinking_end:
+            print(f"Thinking mode: delimiters detected from tokenizer (start='{thinking_start}', end='{thinking_end}')")
+        else:
+            print("Thinking mode: no known thinking delimiter found — vLLM reasoning_content only")
 
     # Sampling parameters
     sampling_params = SamplingParams(
@@ -457,8 +500,12 @@ def main(cfg: DictConfig):
         sample_idx = output_idx % len(samples)
         sample = samples[sample_idx]
 
-        raw_text = output.outputs[0].text.strip()
-        parsed = parse_model_output(raw_text)
+        completion = output.outputs[0]
+        raw_text = completion.text.strip()
+        # Use vLLM's built-in reasoning extraction when available (requires
+        # reasoning_backend set on the LLM), otherwise fall back to delimiter splitting.
+        pre_extracted = getattr(completion, "reasoning_content", None)
+        parsed = parse_model_output(raw_text, thinking_start, thinking_end, pre_extracted)
 
         raw_outputs.append({
             "wildguard_id": sample["wildguard_id"],
