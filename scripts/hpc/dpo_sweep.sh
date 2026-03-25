@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=dpo-sweep
 #SBATCH --time=00:50:00
-#SBATCH --mem=48GB
+#SBATCH --mem=16GB
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --output=logs/slurm/dpo-sweep-%A_%a.out
