@@ -22,14 +22,14 @@ model:
 
 training:
   epochs: 5
-  batch_size: 4
+  batch_size: 48
   learning_rate: 5e-5
   weight_decay: 0.00
   gradient_accumulation: 1
   fp16: false
   bf16: true
   optim: "paged_adamw_8bit"
-  gradient_checkpointing: true
+  gradient_checkpointing: false
   torch_compile: false
   padding_free: true
   skip_vllm_eval: true   # skip post-training vLLM inference — avoids GPU OOM after SFT
