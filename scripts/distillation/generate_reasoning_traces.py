@@ -34,6 +34,8 @@ import os
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from tqdm import tqdm
+
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 from datasets import load_dataset
@@ -631,20 +633,18 @@ def _generate_with_openrouter(
 
     raw_outputs: list[dict] = []
     parsed_results: list[dict] = []
-    completed = 0
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(call_api, i, cond, samp): i
             for i, (cond, samp) in enumerate(tasks)
         }
-        for future in as_completed(futures):
-            _, condition, sample, raw_text, parsed = future.result()
-            raw_outputs.append(_make_raw_entry(sample, condition, raw_text, parsed))
-            parsed_results.append(_make_parsed_entry(sample, condition, parsed))
-            completed += 1
-            if completed % 50 == 0 or completed == total:
-                print(f"  Progress: {completed}/{total}")
+        with tqdm(total=total, desc="OpenRouter requests", unit="req") as pbar:
+            for future in as_completed(futures):
+                _, condition, sample, raw_text, parsed = future.result()
+                raw_outputs.append(_make_raw_entry(sample, condition, raw_text, parsed))
+                parsed_results.append(_make_parsed_entry(sample, condition, parsed))
+                pbar.update(1)
 
     return raw_outputs, parsed_results
 
