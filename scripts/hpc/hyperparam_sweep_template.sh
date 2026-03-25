@@ -22,6 +22,6 @@ python scripts/baselines/train_generator.py \
     training.adam_beta2="${ADAM_BETA2}" \
     paths.output_dir="data/train_results/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
     paths.logs_dir="logs/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
-    paths.model_save_dir="models/sft/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
+    paths.model_save_dir="trained_models/causal/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
     paths.predictions_dir="data/predictions/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
     wandb.project="sft-hyperparam-sweep-canonical"

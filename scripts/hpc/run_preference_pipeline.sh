@@ -10,6 +10,7 @@ module load Python/3.12.3-GCCcore-13.3.0
 module load CUDA/12.8.0
 
 source .venv/bin/activate
+source ~/.wandb_secrets
 
 echo "======================================================================"
 echo " Preference-learning pipeline (DPO only)"
@@ -35,7 +36,7 @@ python scripts/run_preference_pipeline.py \
     --k-samples              5 \
     --seed                   22 \
     --wandb-project          dpo-contrastive-pipeline \
-    --force-from             5 \
+    --force-from             1 \
     --skip-steps             4,7
 
 echo ""
