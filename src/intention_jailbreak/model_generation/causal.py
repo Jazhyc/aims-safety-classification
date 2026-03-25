@@ -436,7 +436,7 @@ def setup_causal_model_and_tokenizer(config):
     lora_dropout = float(peft_cfg.get("lora_dropout", 0.05))
     bias = peft_cfg.get("bias", "none")
 
-    default_target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
+    default_target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     target_modules = peft_cfg.get("target_modules", default_target_modules)
 
     lora_config = LoraConfig(

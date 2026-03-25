@@ -1,11 +1,13 @@
 import argparse
 import json
+import re
 from pathlib import Path
 from statistics import mean, median, pstdev
 import os
 import evaluate
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.metrics.pairwise import cosine_similarity
 
 def load_std_jsonl(path: Path):
@@ -112,6 +114,36 @@ def compute_semantic_similarity(refs, preds, model_name="sentence-transformers/a
     return similarities
 
 
+def extract_harm_labels(completions):
+    """Extract binary harm label from completions of the form 'Intent: ...; Harm: safe/harmful'.
+    Returns None for entries where the label cannot be parsed."""
+    labels = []
+    for c in completions:
+        m = re.search(r'Harm:\s*(\w+)', c, re.IGNORECASE)
+        labels.append(m.group(1).lower() if m else None)
+    return labels
+
+
+def compute_harm_f1(refs, preds):
+    """Compute harm classification F1/precision/recall from completion strings.
+    Skips examples where either ref or pred label cannot be parsed.
+    Returns None if no valid examples exist."""
+    ref_labels = extract_harm_labels(refs)
+    pred_labels = extract_harm_labels(preds)
+
+    pairs = [(r, p) for r, p in zip(ref_labels, pred_labels) if r is not None and p is not None]
+    if not pairs:
+        return None
+
+    y_true, y_pred = zip(*pairs)
+    return {
+        "f1": f1_score(y_true, y_pred, pos_label="harmful", average="binary", zero_division=0),
+        "precision": precision_score(y_true, y_pred, pos_label="harmful", average="binary", zero_division=0),
+        "recall": recall_score(y_true, y_pred, pos_label="harmful", average="binary", zero_division=0),
+        "n": len(pairs),
+    }
+
+
 def compute_and_log_metrics(refs, preds, split_name="val", wandb_log=True):
     """
     Compute BLEU, ROUGE, and semantic similarity scores and optionally log to wandb.
@@ -128,7 +160,7 @@ def compute_and_log_metrics(refs, preds, split_name="val", wandb_log=True):
     scores = compute_bleu_rouge(refs, preds)
     semantic_scores = compute_semantic_similarity(refs, preds)
     scores["semantic_sim"] = semantic_scores
-    
+
     # Calculate mean scores
     metrics = {
         f"{split_name}_bleu": sum(scores["bleu"]) / len(scores["bleu"]),
@@ -137,6 +169,12 @@ def compute_and_log_metrics(refs, preds, split_name="val", wandb_log=True):
         f"{split_name}_rougeL": sum(scores["rougeL"]) / len(scores["rougeL"]),
         f"{split_name}_semantic_sim": sum(scores["semantic_sim"]) / len(scores["semantic_sim"]),
     }
+
+    harm = compute_harm_f1(refs, preds)
+    if harm is not None:
+        metrics[f"{split_name}_harm_f1"] = harm["f1"]
+        metrics[f"{split_name}_harm_precision"] = harm["precision"]
+        metrics[f"{split_name}_harm_recall"] = harm["recall"]
     
     # Print metrics
     print(f"\n=== {split_name.capitalize()} Metrics ===")
