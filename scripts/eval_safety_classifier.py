@@ -1371,6 +1371,9 @@ def run_condition_on_dataset(
     elif condition == "llamaguard_classification":
         # Handled separately in main loop with dedicated model
         return []
+    elif condition == "wildguard_classification":
+        # Handled separately in main loop with dedicated model
+        return []
     elif condition == "zeroshot_cot_classification":
         return run_zeroshot_cot_classification(
             llm, tokenizer, test_dataset, sampling_params, harm_column

@@ -161,7 +161,7 @@ artifacts:
   entity: null  # defaults to your wandb account
   # Set results_name to upload all prediction JSONL files as a W&B artifact after the run.
   # Notebooks can then call download_results(results_name, ...) to pull them remotely.
-  results_name: null  # e.g. "safety-experiment-baselines"
+  results_name: "safety-experiment-baselines"
 
 # Weights & Biases configuration
 wandb:
