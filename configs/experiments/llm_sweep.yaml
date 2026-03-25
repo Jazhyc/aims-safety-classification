@@ -4,19 +4,19 @@ defaults:
   - _self_
 
 model:
-  name: "Qwen/Qwen3-0.6B"  # Will be overridden by command line
+  name: "meta-llama/Llama-3.1-8B-Instruct"  # Will be overridden by command line
   max_length_causal: 512
-  attn_implementation: "sdpa"
+  attn_implementation: "flash_attention_2"
 
 training:
   epochs: 5
-  batch_size: 4
+  batch_size: 32
   learning_rate: 2e-4
   weight_decay: 0.01
   gradient_accumulation: 1
   bf16: true
   torch_compile: false
-  gradient_checkpointing: true
+  gradient_checkpointing: false
   padding_free: true
   optim: "paged_adamw_8bit"
   adam_beta1: 0.9
@@ -25,13 +25,10 @@ training:
   lr_scheduler_type: "cosine"
 
 data:
-  test_size: 0.1
-  val_size: 0.1
   seed: 22
-  plot_lengths: false
   predict_harm: true
 
-sft_models_dir: "trained_models/causal"
+sft_models_dir: "models/sft"
 
 paths:
   output_dir: "data/train_results/llm_sweep"
@@ -58,7 +55,7 @@ quantization:
 
 wandb:
   enabled: true
-  project: "intention-jailbreak-llm-sweep"
+  project: "sft-hyperparam-sweep"
   name: "llm-generator"
 
 artifacts:

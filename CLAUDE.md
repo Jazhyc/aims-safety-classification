@@ -131,6 +131,17 @@ Three functions:
 
 Artifact name = adapter directory name (e.g. `reasoning-distillation-gemma-3-27b-without-intent_adapter`), which is unique across pipelines. Enable per-config via `artifacts.enabled: true` in `llm_sweep.yaml` / `reasoning_distillation.yaml`.
 
+## Experiment Status
+
+| Stage | Status | Notes |
+|---|---|---|
+| Prompting baselines (`eval_safety_classifier.py`) | ✅ Complete | W&B project: `Baselines`; results artifact: `safety-experiment-baselines` |
+| SFT hyperparam sweep (`submit_hyperparam_sweep.py`) | 🔄 In progress | Llama 3.1 8B; W&B project: `sft-hyperparam-sweep`; model selected by validation harm F1 (not cosine similarity) |
+| Distillation teacher traces | ⬜ Pending | |
+| Distillation student SFT | ⬜ Pending | |
+
+**Sweep model selection policy:** rank sweep runs by **validation harm F1** (computed via `compare_models.py`), not cosine similarity. Cosine similarity measures annotation similarity, not task performance.
+
 ## Key Conventions
 
 - **Config management**: Hydra (`configs/`) for training; YAML files under `configs/experiments/` for generation/training/eval scripts.

@@ -12,6 +12,14 @@ from transformers import (
     BitsAndBytesConfig,
     EarlyStoppingCallback,
 )
+from transformers.integrations import WandbCallback
+
+
+class _WandbCallbackNoFinish(WandbCallback):
+    """Prevent the Trainer from closing the W&B run so post-training inference
+    metrics can be logged to the same run."""
+    def on_train_end(self, args, state, control, **kwargs):
+        pass
 from trl import SFTTrainer, SFTConfig
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
@@ -510,6 +518,7 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
         "optim": optim_name,
         "torch_compile": torch_compile,
         "gradient_checkpointing": gradient_checkpointing,
+        "gradient_checkpointing_kwargs": {"use_reentrant": False},
         "lr_scheduler_type": lr_scheduler_type,
         "warmup_ratio": warmup_ratio,
         "report_to": report_to,
@@ -622,9 +631,6 @@ def run_causal_flow(config):
             raw_val = raw_train
         val_dataset = raw_val.map(create_prompt_completion, batched=True)
 
-        # test_dataset is used only for post-training vLLM eval; reuse val when not separately provided.
-        test_dataset = val_dataset
-
         print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
     else:
         def create_prompt_completion(examples):
@@ -652,8 +658,7 @@ def run_causal_flow(config):
         print("Loading dataset splits from Hub...")
         train_dataset = _load_and_format("train")
         val_dataset = _load_and_format("validation")
-        test_dataset = _load_and_format("test")
-        print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)} | Test: {len(test_dataset)}")
+        print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
 
     # Print example of training data
     print("\n" + "=" * 60)
@@ -694,8 +699,9 @@ def run_causal_flow(config):
             train_dataset=train_dataset,
             eval_dataset=val_dataset,
             processing_class=tokenizer,
-            callbacks=[early_stopping],
+            callbacks=[early_stopping, _WandbCallbackNoFinish()],
         )
+        trainer.remove_callback(WandbCallback)
 
         trainer.evaluate()
         trainer.train()
@@ -799,12 +805,8 @@ def run_causal_flow(config):
         model_name, llm, lora_request, tokenizer, val_dataset, "val", config,
         max_length=max_length,
     )
-    test_refs, test_preds = save_preds_causal(
-        model_name, llm, lora_request, tokenizer, test_dataset, "test", config,
-        max_length=max_length,
-    )
-    
+
     del llm
-    
+
     # Compute and log metrics
     compute_and_log_metrics(val_refs, val_preds, split_name="val")

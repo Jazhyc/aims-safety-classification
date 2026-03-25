@@ -2,7 +2,7 @@
 #SBATCH --job-name=hyperparam_sweep
 #SBATCH --time=02:00:00
 #SBATCH --mem=16GB
-#SBATCH --partition=gpu
+#SBATCH --partition=gpumedium
 #SBATCH --gpus-per-node=rtx_pro_6000:1
 #SBATCH --output=logs/slurm/%x-%j.out
 
@@ -10,7 +10,6 @@ module load Python/3.12.3-GCCcore-13.3.0
 module load CUDA/12.8.0
 
 source .venv/bin/activate
-source ~/.wandb_secrets
 
 # Run training with the specified hyperparameters
 python scripts/baselines/train_generator.py \
@@ -22,6 +21,6 @@ python scripts/baselines/train_generator.py \
     training.adam_beta2="${ADAM_BETA2}" \
     paths.output_dir="data/train_results/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
     paths.logs_dir="logs/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
-    paths.model_save_dir="trained_models/causal/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
+    paths.model_save_dir="models/sft/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
     paths.predictions_dir="data/predictions/hyperparam_sweep/lr_${LEARNING_RATE}_e_${EPOCHS}" \
-    wandb.project="sft-hyperparam-sweep-canonical"
+    wandb.project="sft-hyperparam-sweep"
