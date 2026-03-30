@@ -34,56 +34,28 @@ training:
   padding_free: true
   skip_vllm_eval: true   # skip post-training vLLM inference — avoids GPU OOM after SFT
 
-# ==============================================================
-# DISTILLATION MODE — pick one condition and uncomment it below.
-#
-#  MODE D — Classification (reasoning + harm label only)
-#    Output: Reasoning: <...>\nPrompt harm: <harmful|safe>
-#    Use this when you want a classifier that explains its decision
-#    but does not generate an intent.
-#    Teacher traces: generated with condition "without_intent"
-#
-#  MODE E — Generation (reasoning + intent + harm label)
-#    Output: Reasoning: <...>\nIntent: <...>\nPrompt harm: <harmful|safe>
-#    Use this to train a model that also predicts the user's intent.
-#    Teacher traces: generated with condition "with_intent"
-#
-# Set reasoning_traces_path to the parsed_results.json produced by
-# scripts/generate_reasoning_traces.py for the relevant model/run.
-# ==============================================================
-
 data:
   use_reasoning_traces: true
 
-  # Train split produced by generate_reasoning_traces.py
+  # Paths to parsed_results.json produced by generate_reasoning_traces.py.
   reasoning_traces_path: "data/reasoning_traces/RedHatAI-gemma-3-27b-it-quantized.w4a16/train/parsed_results.json"
-  # Validation split — keeps val set clean and avoids random re-splits on re-runs
   reasoning_traces_val_path: "data/reasoning_traces/RedHatAI-gemma-3-27b-it-quantized.w4a16/validation/parsed_results.json"
 
-  # ---- MODE D: classification (reasoning + harm) ---------------
+  # "without_intent": trains a classifier (Reasoning + Prompt harm)
+  # "with_intent":    trains a generator  (Reasoning + Intent + Prompt harm)
   reasoning_traces_condition: "without_intent"
 
-  # ---- MODE E: generation (reasoning + intent + harm) ----------
-  # reasoning_traces_condition: "with_intent"
+  # Drop examples where the teacher's predicted harm label or intent (with_intent only)
+  # disagrees with the ground truth — keeps reasoning-to-label chains consistent.
+  filter_teacher_disagreements: true
 
 # Base directory for distillation model adapters. Override this to point to a
 # different teacher's adapter directory without touching each path individually.
 # Must match distillation_pipeline.yaml cache.distilled_models_dir when run via the pipeline.
 distilled_models_dir: "models/distillation"
 
-# Keep paths in sync with the active condition above. The teacher model shorthand
-# is included so runs distilled from different teachers don't overwrite each other.
+# Name paths after the teacher model and condition so runs don't overwrite each other.
 # Pattern: reasoning-distillation-<teacher>-<condition>
-#
-#   MODE D (without_intent, gemma-3-27b teacher):
-#     model_save_dir:  ${distilled_models_dir}/reasoning-distillation-gemma-3-27b-without-intent
-#     output_dir:      data/train_results/distillation/reasoning-distillation-gemma-3-27b-without-intent
-#     logs_dir:        logs/distillation/reasoning-distillation-gemma-3-27b-without-intent
-#
-#   MODE E (with_intent, gemma-3-27b teacher):
-#     model_save_dir:  ${distilled_models_dir}/reasoning-distillation-gemma-3-27b-with-intent
-#     output_dir:      data/train_results/distillation/reasoning-distillation-gemma-3-27b-with-intent
-#     logs_dir:        logs/distillation/reasoning-distillation-gemma-3-27b-with-intent
 paths:
   output_dir:      "data/train_results/distillation/reasoning-distillation-gemma-3-27b-without-intent"
   logs_dir:        "logs/distillation/reasoning-distillation-gemma-3-27b-without-intent"
