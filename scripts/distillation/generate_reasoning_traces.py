@@ -163,53 +163,87 @@ def _detect_thinking_from_text(text: str) -> tuple[str, str]:
 
 # ── Output parser ──────────────────────────────────────────────────────────────
 
-def parse_model_output(
+def parse_response(
     raw_text: str,
     thinking_start: str = "",
     thinking_end: str = "",
     pre_extracted_thinking: str | None = None,
 ) -> dict:
     """
-    Parse the model output to extract the intent, harm classification, and reasoning.
+    Parse raw model output into structured ``{role, thinking, content}`` components.
 
-    Output format (in order): Reasoning → Prompt intent → Prompt harm
+    Mirrors the interface of ``tokenizer.parse_response`` (HuggingFace transformers ≥ 5).
 
     Thinking block extraction (mutually exclusive, in priority order):
       1. pre_extracted_thinking: already separated thinking (from vLLM reasoning_content
-         or OpenRouter's reasoning field).  raw_text contains only the structured part.
+         or OpenRouter's ``reasoning`` field).  raw_text is treated as content only.
       2. thinking_end present in raw_text: split on the closing delimiter.
-         - If the opening token was stripped as a special token (typical for Qwen3 /
-           DeepSeek-R1), raw_text starts directly with the CoT content.
+         - If the opening token was stripped as a special token (e.g. Qwen3 / Kimi K2.5),
+           raw_text starts directly with the CoT content.
          - If neither token was stripped (e.g. GPT-OSS-120B), raw_text starts with
            thinking_start; it is stripped from the front of the thinking trace.
-      3. Neither above: no thinking block (non-thinking model or thinking_mode=False).
+      3. Auto-detect from text (no delimiters provided): scans for all known pairs,
+         including the GPT-OSS-120B ``analysis`` / ``assistantfinal`` pattern.
+      4. No match: thinking is empty, content is raw_text as-is.
 
     Args:
         raw_text:               Text from the model.
-        thinking_start:         Opening delimiter e.g. "<think>" (from detect_thinking_tokens).
-        thinking_end:           Closing delimiter e.g. "</think>" (from detect_thinking_tokens).
-        pre_extracted_thinking: Thinking content already extracted by vLLM's reasoning
-                                parser or the API; skips in-text extraction when provided.
+        thinking_start:         Opening delimiter e.g. ``"<think>"``; empty string if
+                                the opening token is stripped before reaching here.
+        thinking_end:           Closing delimiter e.g. ``"</think>"``.
+        pre_extracted_thinking: Thinking content already extracted upstream; bypasses
+                                all in-text parsing when provided.
 
-    Returns a dict with:
-        - prompt_intent: str or None
-        - prompt_harm: str or None  ('harmful' | 'unharmful')
-        - reasoning: str
-        - thinking_trace: str  (empty string when no thinking block was found)
+    Returns:
+        dict with keys ``role`` (``"assistant"``), ``thinking`` (str), ``content`` (str).
     """
-    thinking_trace = ""
     if pre_extracted_thinking is not None:
-        thinking_trace = pre_extracted_thinking.strip()
-        text = raw_text
-    elif thinking_end and thinking_end in raw_text:
+        return {
+            "role":     "assistant",
+            "thinking": pre_extracted_thinking.strip(),
+            "content":  raw_text.strip(),
+        }
+
+    if thinking_end and thinking_end in raw_text:
         parts = raw_text.split(thinking_end, 1)
         trace = parts[0].strip()
         if thinking_start and trace.startswith(thinking_start):
             trace = trace[len(thinking_start):].strip()
-        thinking_trace = trace
-        text = parts[1].strip()
-    else:
-        text = raw_text
+        return {
+            "role":     "assistant",
+            "thinking": trace,
+            "content":  parts[1].strip(),
+        }
+
+    # Auto-detect: try all known thinking pairs (including GPT-OSS-120B)
+    for start, end in _THINKING_PAIRS:
+        if end in raw_text:
+            parts = raw_text.split(end, 1)
+            trace = parts[0].strip()
+            if start and trace.startswith(start):
+                trace = trace[len(start):].strip()
+            return {
+                "role":     "assistant",
+                "thinking": trace,
+                "content":  parts[1].strip(),
+            }
+
+    return {"role": "assistant", "thinking": "", "content": raw_text.strip()}
+
+
+def _extract_fields(parsed: dict) -> dict:
+    """
+    Extract ``prompt_intent``, ``prompt_harm``, and ``reasoning`` from the content
+    field of a ``parse_response`` result.
+
+    Args:
+        parsed: Dict returned by :func:`parse_response` with keys role/thinking/content.
+
+    Returns:
+        dict with keys ``prompt_intent``, ``prompt_harm``, ``reasoning``,
+        ``thinking_trace`` (alias for ``parsed["thinking"]``).
+    """
+    text = parsed["content"]
 
     # Extract Reasoning field — stops before Intent:, Prompt intent:, or Prompt harm:
     reasoning = ""
@@ -220,7 +254,7 @@ def parse_model_output(
     if reasoning_match:
         reasoning = reasoning_match.group(1).strip()
 
-    # Extract Intent field (ends when Prompt harm: begins).
+    # Extract Intent field (ends when Prompt harm: begins)
     prompt_intent = None
     intent_match = re.search(
         r'(?:Prompt intent|Intent):\s*(.+?)(?=Prompt harm:|$)',
@@ -229,7 +263,7 @@ def parse_model_output(
     if intent_match:
         prompt_intent = intent_match.group(1).strip()
 
-    # Extract Prompt harm field with binary normalisation.
+    # Extract Prompt harm field with binary normalisation
     prompt_harm = None
     ph_match = re.search(r'Prompt harm:\s*([^\n]+)', text, re.IGNORECASE)
     if ph_match:
@@ -240,11 +274,26 @@ def parse_model_output(
             prompt_harm = 'harmful'
 
     return {
-        "prompt_intent": prompt_intent,
-        "prompt_harm": prompt_harm,
-        "reasoning": reasoning,
-        "thinking_trace": thinking_trace,
+        "prompt_intent":  prompt_intent,
+        "prompt_harm":    prompt_harm,
+        "reasoning":      reasoning,
+        "thinking_trace": parsed["thinking"],
     }
+
+
+def parse_model_output(
+    raw_text: str,
+    thinking_start: str = "",
+    thinking_end: str = "",
+    pre_extracted_thinking: str | None = None,
+) -> dict:
+    """
+    Parse model output into structured fields (intent, harm, reasoning).
+
+    Thin wrapper that calls :func:`parse_response` then :func:`_extract_fields`.
+    Signature is unchanged for backward compatibility with existing call sites.
+    """
+    return _extract_fields(parse_response(raw_text, thinking_start, thinking_end, pre_extracted_thinking))
 
 
 # ── Dataset loading ────────────────────────────────────────────────────────────

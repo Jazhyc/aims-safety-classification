@@ -71,7 +71,7 @@ conditions:
 # ── Run suffix ─────────────────────────────────────────────────────────────────
 # Appended to adapter directory names and WandB run names to version experiments.
 # Set to null (or omit) for no suffix.
-run_suffix: "v4"
+run_suffix: "v5"
 
 # ── Teacher generation ─────────────────────────────────────────────────────────
 # num_samples: null uses the full dataset; set an integer to subsample.
