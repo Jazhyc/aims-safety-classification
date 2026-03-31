@@ -23,7 +23,7 @@ export VLLM_USE_V1=0
 #   JUDGE_MODEL="RedHatAI/gemma-3-27b-it-quantized.w4a16" \
 #   OUTPUT_DIR="data/dpo_pairs/train_t0.8_filtered_gemma27b" \
 #   sbatch scripts/hpc/run_intent_filter.sh
-JUDGE_MODEL="${JUDGE_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
+JUDGE_MODEL="${JUDGE_MODEL:-RedHatAI/gemma-3-27b-it-quantized.w4a16}"
 OUTPUT_DIR="${OUTPUT_DIR:-data/dpo_pairs/train_t0.8_intent_filtered}"
 
 echo "Judge model : ${JUDGE_MODEL}"

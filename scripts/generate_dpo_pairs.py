@@ -340,8 +340,20 @@ def run(args):
                 dtype="auto",        # auto-detects quantization (e.g. W4A16)
                 enforce_eager=True,
             )
+        elif llm is not None:
+            judge_llm = llm   # reuse already-loaded SFT model (no LoRA for judging)
         else:
-            judge_llm = llm   # reuse base model without LoRA
+            # Same model as base but SFT wasn't loaded (harm_t0 already cached).
+            # Load the base model without LoRA for judging.
+            print(f"\n=== Loading judge model (base, no LoRA) ===")
+            print(f"  Judge model  : {judge_model_id}")
+            judge_llm = LLM(
+                model=judge_model_id,
+                gpu_memory_utilization=0.90,
+                max_model_len=4096,
+                dtype="auto",
+                enforce_eager=True,
+            )
         # Resolve model ID to local snapshot path before loading the tokenizer.
         # AutoTokenizer calls is_base_mistral() which makes a network request
         # that fails under HF_HUB_OFFLINE=1. Passing a local directory path
