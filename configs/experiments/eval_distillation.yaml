@@ -37,7 +37,7 @@ finetuned:
   reasoning_generation_adapter: "PLACEHOLDER"
 
 lora:
-  rank: 16
+  rank: 32
 
 llamaguard:
   name: "meta-llama/Llama-Guard-4-12B"
