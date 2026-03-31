@@ -12,6 +12,17 @@ loads them once at import time and exposes:
 
   - build_student_prompt(user_prompt, with_intent) -- full input for the student model
 
+Safety classifier prompts (from safety_classifier section):
+  - CLASSIFICATION_SYSTEM_PROMPT
+  - CLASSIFICATION_WITH_INTENT_SYSTEM_PROMPT
+  - GENERATION_SYSTEM_PROMPT
+  - GENERATION_JSON_SYSTEM_PROMPT
+  - COT_CLASSIFICATION_SYSTEM_PROMPT
+  - COT_GENERATION_SYSTEM_PROMPT
+  - COT_CLASSIFICATION_WITH_INTENT_SYSTEM_PROMPT
+  - WILDGUARD_TEMPLATE
+  - SAFEGUARD_SYSTEM_PROMPT
+
 The student model (fine-tuned via reasoning distillation) receives the same
 context at both training time (causal.py) and evaluation time (safety_experiment.py).
 
@@ -56,6 +67,19 @@ OUTPUT_FORMAT_WITH_INTENT: str = _t["output_format_with_intent"].strip()
 # Keys: 'without_intent', 'with_intent'.  Each value is a format string with
 # placeholders {annotator_harmful_label} and optionally {intent}.
 TEACHER_GROUND_TRUTH: dict = _t["teacher_ground_truth"]
+
+# ── Safety classifier prompts (used by eval_safety_classifier.py) ────────────
+_sc = _t["safety_classifier"]
+
+CLASSIFICATION_SYSTEM_PROMPT: str = _sc["classification_system_prompt"].strip()
+CLASSIFICATION_WITH_INTENT_SYSTEM_PROMPT: str = _sc["classification_with_intent_system_prompt"].strip()
+GENERATION_SYSTEM_PROMPT: str = _sc["generation_system_prompt"].strip()
+GENERATION_JSON_SYSTEM_PROMPT: str = _sc["generation_json_system_prompt"].strip()
+COT_CLASSIFICATION_SYSTEM_PROMPT: str = _sc["cot_classification_system_prompt"].strip()
+COT_GENERATION_SYSTEM_PROMPT: str = _sc["cot_generation_system_prompt"].strip()
+COT_CLASSIFICATION_WITH_INTENT_SYSTEM_PROMPT: str = _sc["cot_classification_with_intent_system_prompt"].strip()
+WILDGUARD_TEMPLATE: str = _sc["wildguard_template"].strip()
+SAFEGUARD_SYSTEM_PROMPT: str = _sc["safeguard_system_prompt"].strip()
 
 
 # ── Public helpers ────────────────────────────────────────────────────────────
