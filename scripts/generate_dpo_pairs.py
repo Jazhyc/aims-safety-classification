@@ -155,10 +155,15 @@ def classify_intents_llm_t0(llm, lora_request, intent_texts: list) -> list:
 
 
 def _all_have_t0(parsed: list) -> bool:
-    """Return True if every sample that has a parsed intent already carries a harm_t0 label."""
+    """Return True if T=0 classification has already run.
+
+    Checks for key presence rather than non-None value: after classification,
+    every sample with a parsed intent has a 'harm_t0' key (value may be None
+    when the model output couldn't be parsed — that still counts as classified).
+    """
     for d in parsed:
         for s in d.get("samples", []):
-            if s.get("intent") and s.get("harm_t0") is None:
+            if s.get("intent") and "harm_t0" not in s:
                 return False
     return True
 
@@ -337,7 +342,16 @@ def run(args):
             )
         else:
             judge_llm = llm   # reuse base model without LoRA
-        judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_id)
+        # Resolve model ID to local snapshot path before loading the tokenizer.
+        # AutoTokenizer calls is_base_mistral() which makes a network request
+        # that fails under HF_HUB_OFFLINE=1. Passing a local directory path
+        # skips that check entirely.
+        from huggingface_hub import snapshot_download
+        try:
+            local_judge_path = snapshot_download(judge_model_id, local_files_only=True)
+        except Exception:
+            local_judge_path = judge_model_id  # already a local path
+        judge_tokenizer = AutoTokenizer.from_pretrained(local_judge_path)
 
     # ------------------------------------------------------------------
     # 3. Generate k samples per prompt OR re-attach from loaded file
