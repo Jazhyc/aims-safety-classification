@@ -10,10 +10,11 @@ Pipeline per training prompt:
   5. rejected = samples whose T=0 harm label ≠ gold_harm.
 
 Outputs (all in --output-dir):
-  parsed_samples.jsonl   — raw k samples per prompt (for debugging / re-use)
-  dpo_pairs.jsonl        — one (chosen, rejected) pair per prompt
-  contrastive_pairs.jsonl— one chosen + ALL rejected per prompt (InfoNCE)
-  summary.json           — run statistics
+  parsed_samples.jsonl      — raw k samples per prompt (for debugging / re-use)
+  dpo_pairs.jsonl           — one (chosen, rejected) pair per prompt
+  contrastive_pairs.jsonl   — one chosen + ALL rejected per prompt (InfoNCE)
+  summary.json              — run statistics
+  intent_filter_examples.jsonl — per-sample judge verdicts (only with --intent-filter)
 
 Usage (from project root):
     python scripts/generate_dpo_pairs.py \\
@@ -23,9 +24,23 @@ Usage (from project root):
         --num-samples  5 \\
         --temperature  0.8
 
-    # If you already have parsed_samples.jsonl from a previous run, skip generation:
+    # Step 1 — generate samples + T=0 labels (SFT 8B):
+    python scripts/generate_dpo_pairs.py \\
+        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
+        --base-model   meta-llama/Llama-3.1-8B-Instruct \\
+        --output-dir   data/dpo_pairs/train_t0.8
+
+    # Step 2 — judge-only pass with a larger model (SFT not loaded):
     python scripts/generate_dpo_pairs.py \\
         --from-samples data/dpo_pairs/train_t0.8/parsed_samples.jsonl \\
+        --intent-filter \\
+        --judge-model  meta-llama/Llama-3.1-70B-Instruct \\
+        --output-dir   data/dpo_pairs/train_t0.8_filtered
+
+    # Single-pass with same model as judge (original behaviour):
+    python scripts/generate_dpo_pairs.py \\
+        --from-samples data/dpo_pairs/train_t0.8/parsed_samples.jsonl \\
+        --intent-filter \\
         --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/dpo_pairs/train_t0.8
@@ -139,83 +154,91 @@ def classify_intents_llm_t0(llm, lora_request, intent_texts: list) -> list:
     return [norm_harm(o.outputs[0].text.strip()) for o in outputs]
 
 
-def judge_intent_similarity_llm(llm, pairs: list) -> list:
-    """
-    Use the base LLM (no LoRA adapter) to judge whether each generated intent
-    expresses the same underlying purpose as the gold intent.
+def _all_have_t0(parsed: list) -> bool:
+    """Return True if every sample that has a parsed intent already carries a harm_t0 label."""
+    for d in parsed:
+        for s in d.get("samples", []):
+            if s.get("intent") and s.get("harm_t0") is None:
+                return False
+    return True
 
-    Runs without the SFT LoRA adapter to avoid bias from the fine-tuned model
-    judging its own outputs.
+
+def parse_verdict(text: str) -> str:
+    """Parse a judge verdict string into one of: good_match | decent_match | bad_match | unknown."""
+    t = text.strip().lower()
+    if t.startswith("good"):   return "good_match"
+    if t.startswith("decent"): return "decent_match"
+    if t.startswith("bad"):    return "bad_match"
+    return "unknown"
+
+
+def judge_intent_similarity_llm(llm, triples: list, tokenizer) -> list:
+    """
+    Use an LLM judge (no LoRA adapter) to assess whether each generated intent
+    is a valid annotation of the prompt from a safety perspective.
+
+    Uses tokenizer.apply_chat_template so the prompt format is model-agnostic
+    (Llama, Gemma, Qwen, etc.).  Pass a separate judge model + tokenizer to
+    avoid SFT adapter bias and to allow using a larger judge (e.g. 70B).
 
     Args:
-        pairs: list of (gold_intent, generated_intent) tuples
+        llm:      vLLM LLM instance for the judge model (no LoRA).
+        triples:  list of (prompt, gold_intent, generated_intent).
+                  gold_intent is a human-annotated reference — a valid example
+                  of what a correct annotation looks like.
+        tokenizer: HuggingFace tokenizer for the judge model, used to apply
+                   the correct chat template.
 
     Returns:
-        list of bools — True if same purpose, False if different
+        list of str — one of "good_match" | "decent_match" | "bad_match" | "unknown"
+        per input triple.
     """
     from vllm import SamplingParams
 
     system = (
-        "You are a precise semantic similarity judge. "
-        "Your only job is to decide whether two intent descriptions express the same underlying purpose. "
-        "Reply with exactly one word: yes or no."
+        "You are annotating user prompts in a safety context.\n"
+        "You will be shown a user prompt, a reference intent (human-annotated), "
+        "and a generated intent.\n\n"
+        "The reference intent is a valid example of what a correct annotation looks like. "
+        "Your job is to decide whether the generated intent is also a valid annotation "
+        "of this prompt from a safety perspective.\n\n"
+        "The generated intent does not need to match the reference word-for-word. "
+        "It only needs to correctly capture what the user is trying to accomplish "
+        "and whether that purpose is harmful or benign. "
+        "Check whether there are major contradictions: does the generated intent "
+        "misrepresent the user's actual goal, or does it correctly identify the "
+        "safety-relevant purpose?\n\n"
+        "Reply with exactly one of:\n"
+        "good_match   — correctly captures the user's safety-relevant purpose\n"
+        "decent_match — plausible given the prompt but misses some nuance or specificity\n"
+        "bad_match    — wrong about the user's actual goal or contains a major contradiction"
     )
     prompts = [
-        f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system}"
-        f"<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
-        f"Intent A: {gold}\n"
-        f"Intent B: {generated}\n\n"
-        f"Do Intent A and Intent B express the same underlying purpose?"
-        f"<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
-        for gold, generated in pairs
+        tokenizer.apply_chat_template(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": (
+                    f"Prompt: {prompt}\n\n"
+                    f"Reference intent: {gold}\n"
+                    f"Generated intent: {generated}\n\n"
+                    f"Verdict:"
+                )},
+            ],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        for prompt, gold, generated in triples
     ]
     params = SamplingParams(
         n=1,
-        max_tokens=5,
+        max_tokens=15,
         temperature=0.0,
         top_p=1.0,
         skip_special_tokens=True,
     )
-    # No lora_request — use base model to avoid SFT adapter bias
     outputs = llm.generate(prompts, params)
-    return [o.outputs[0].text.strip().lower().startswith("yes") for o in outputs]
+    return [parse_verdict(o.outputs[0].text) for o in outputs]
 
-
-# ---------------------------------------------------------------------------
-def score_intent_similarity_nli(pairs: list, model_name: str, threshold: float) -> tuple:
-    """
-    Use a cross-encoder NLI model to score whether each generated intent
-    entails (agrees with) the gold intent.
-
-    Uses cross-encoder/nli-deberta-v3-base by default.
-    Label order for this model: [contradiction=0, entailment=1, neutral=2].
-    A sample is considered "different intent" when entailment score < threshold.
-
-    Args:
-        pairs:      list of (gold_intent, generated_intent) tuples
-        model_name: HuggingFace model ID for the cross-encoder
-        threshold:  entailment score below which intents are considered different
-
-    Returns:
-        (same_intent_flags, entailment_scores)
-        same_intent_flags: list of bools — True if entailment >= threshold
-        entailment_scores: list of floats — raw entailment probability per pair
-    """
-    from sentence_transformers import CrossEncoder
-    import numpy as np
-    from scipy.special import softmax
-
-    print(f"  Loading NLI model: {model_name}")
-    nli_model = CrossEncoder(model_name)
-
-    # CrossEncoder expects list of (text_a, text_b) — we check if gold entails generated
-    input_pairs = [(gold, generated) for gold, generated in pairs]
-    raw_scores  = nli_model.predict(input_pairs)                    # shape (n, 3)
-    probs       = softmax(raw_scores, axis=1)                       # normalise to [0,1]
-    entailment_scores = probs[:, 1].tolist()                        # index 1 = entailment
-
-    same_intent_flags = [s >= threshold for s in entailment_scores]
-    return same_intent_flags, entailment_scores
 
 
 # I/O helpers
@@ -258,41 +281,74 @@ def run(args):
     examples = list(train_dataset)
 
     # ------------------------------------------------------------------
-    # 2. Load vLLM (needed for generation and / or T=0 reclassification)
+    # 2. Early-load parsed samples (if provided) to decide which models
+    #    are actually needed before allocating GPU memory.
     # ------------------------------------------------------------------
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
+    from transformers import AutoTokenizer
 
-    print(f"\n=== Loading model ===")
-    print(f"  Base model   : {args.base_model}")
-    print(f"  LoRA adapter : {args.adapter_path}")
-
-    llm = LLM(
-        model=args.base_model,
-        tokenizer=args.adapter_path,
-        enable_lora=True,
-        max_lora_rank=64,
-        max_loras=1,
-        limit_mm_per_prompt={"image": 0},
-        gpu_memory_utilization=0.90,
-        max_model_len=2048,
-        dtype="bfloat16",
-        enforce_eager=True,
-    )
-    lora_request = LoRARequest("sft_lora", 1, args.adapter_path)
-
-    # ------------------------------------------------------------------
-    # 3. Generate k samples per prompt OR load from previous run
-    # ------------------------------------------------------------------
+    all_parsed = None
     if args.from_samples:
         print(f"\n=== Loading parsed samples from {args.from_samples} ===")
         all_parsed = load_jsonl(args.from_samples)
+
+    judge_model_id = args.judge_model or args.base_model
+
+    # SFT model needed for: (a) T=0.8 generation, (b) T=0 reclassification.
+    # Skip both when resuming from a file that already has harm_t0 on every sample.
+    need_sft = (all_parsed is None) or (not _all_have_t0(all_parsed))
+
+    # Judge model needed when --intent-filter is active.
+    # Use a separate instance when judge differs from base model — they can't
+    # share GPU memory (e.g. 70B judge alongside 8B SFT).
+    use_separate_judge = args.intent_filter and (judge_model_id != args.base_model)
+
+    llm = lora_request = None
+    if need_sft:
+        print(f"\n=== Loading SFT model ===")
+        print(f"  Base model   : {args.base_model}")
+        print(f"  LoRA adapter : {args.adapter_path}")
+        llm = LLM(
+            model=args.base_model,
+            tokenizer=args.adapter_path,
+            enable_lora=True,
+            max_lora_rank=64,
+            max_loras=1,
+            limit_mm_per_prompt={"image": 0},
+            gpu_memory_utilization=0.90,
+            max_model_len=2048,
+            dtype="bfloat16",
+            enforce_eager=True,
+        )
+        lora_request = LoRARequest("sft_lora", 1, args.adapter_path)
+
+    judge_llm = judge_tokenizer = None
+    if args.intent_filter:
+        if use_separate_judge:
+            print(f"\n=== Loading judge model ===")
+            print(f"  Judge model  : {judge_model_id}")
+            judge_llm = LLM(
+                model=judge_model_id,
+                gpu_memory_utilization=0.90,
+                max_model_len=4096,
+                dtype="bfloat16",
+                enforce_eager=True,
+            )
+        else:
+            judge_llm = llm   # reuse base model without LoRA
+        judge_tokenizer = AutoTokenizer.from_pretrained(judge_model_id)
+
+    # ------------------------------------------------------------------
+    # 3. Generate k samples per prompt OR re-attach from loaded file
+    # ------------------------------------------------------------------
+    if all_parsed is not None:
         # Re-attach examples list in the same order
         examples = [
             {
-                "id":            d["id"],
-                "prompt":        d["prompt"],
-                "intent":        d["gold_intent"],
+                "id":             d["id"],
+                "prompt":         d["prompt"],
+                "intent":         d["gold_intent"],
                 "Annotator Harm": d["gold_harm"],
             }
             for d in all_parsed
@@ -337,37 +393,45 @@ def run(args):
 
     # ------------------------------------------------------------------
     # 4. Re-classify every generated intent at T=0 for reliable labels
+    #    (skipped when resuming from a file that already has harm_t0)
     # ------------------------------------------------------------------
-    print("\n=== Re-classifying intents at T=0 ===")
+    if need_sft:
+        print("\n=== Re-classifying intents at T=0 ===")
 
-    flat_intents: list[str] = []
-    flat_idx: list[tuple[int, int]] = []   # (prompt_idx, sample_idx)
+        flat_intents: list[str] = []
+        flat_idx: list[tuple[int, int]] = []   # (prompt_idx, sample_idx)
 
-    for i, d in enumerate(all_parsed):
-        for j, s in enumerate(d["samples"]):
-            if s["intent"]:
-                flat_intents.append(s["intent"])
-                flat_idx.append((i, j))
+        for i, d in enumerate(all_parsed):
+            for j, s in enumerate(d["samples"]):
+                if s["intent"]:
+                    flat_intents.append(s["intent"])
+                    flat_idx.append((i, j))
 
-    print(f"  Classifying {len(flat_intents)} intent texts...")
-    t0_labels = classify_intents_llm_t0(llm, lora_request, flat_intents)
+        print(f"  Classifying {len(flat_intents)} intent texts...")
+        t0_labels = classify_intents_llm_t0(llm, lora_request, flat_intents)
 
-    for (i, j), label in zip(flat_idx, t0_labels):
-        all_parsed[i]["samples"][j]["harm_t0"] = label
+        for (i, j), label in zip(flat_idx, t0_labels):
+            all_parsed[i]["samples"][j]["harm_t0"] = label
 
-    assigned = sum(1 for l in t0_labels if l is not None)
-    print(f"  Labels assigned: {assigned} / {len(flat_intents)}")
+        assigned = sum(1 for l in t0_labels if l is not None)
+        print(f"  Labels assigned: {assigned} / {len(flat_intents)}")
+
+        # Re-save with harm_t0 populated so a subsequent judge-only pass
+        # (--from-samples --intent-filter --judge-model <large>) can skip
+        # reloading the SFT model entirely.
+        save_jsonl(all_parsed, output_dir / "parsed_samples.jsonl")
+    else:
+        print("\n=== Skipping T=0 reclassification (harm_t0 already cached) ===")
 
     # ------------------------------------------------------------------
-    # 4b. Intent filter: score correct-label samples for intent similarity
+    # 4b. Intent filter: judge correct-label samples for intent validity
     # ------------------------------------------------------------------
-    llm_filter_examples = []   # for intent_filter_llm_examples.jsonl
-    nli_filter_examples = []   # for intent_filter_nli_examples.jsonl
+    filter_examples = []   # for intent_filter_examples.jsonl
 
     if args.intent_filter:
-        # Collect all samples where harm_t0 == gold_harm (currently skipped)
-        filter_pairs = []   # (gold_intent, generated_intent)
-        filter_idx   = []   # (prompt_idx, sample_idx)
+        # Collect all samples where harm_t0 == gold_harm
+        filter_triples = []   # (prompt, gold_intent, generated_intent)
+        filter_idx     = []   # (prompt_idx, sample_idx)
 
         for i, d in enumerate(all_parsed):
             gold_intent = d.get("gold_intent", "")
@@ -376,66 +440,41 @@ def run(args):
                 continue
             for j, s in enumerate(d["samples"]):
                 if s.get("intent") and s.get("harm_t0") == gold_harm:
-                    filter_pairs.append((gold_intent, s["intent"]))
+                    filter_triples.append((d["prompt"], gold_intent, s["intent"]))
                     filter_idx.append((i, j))
 
-        print(f"\n  Filtering {len(filter_pairs)} correct-label samples for intent similarity...")
+        print(f"\n  Judging {len(filter_triples)} correct-label samples for intent validity...")
 
-        # ── LLM judge ──────────────────────────────────────────────────
-        if args.filter_method in ("llm", "both"):
-            print("\n=== LLM judge (base model, no LoRA) ===")
-            llm_same_flags = judge_intent_similarity_llm(llm, filter_pairs)
-            for (i, j), is_same in zip(filter_idx, llm_same_flags):
-                all_parsed[i]["samples"][j]["llm_same_intent"] = is_same
-            n_diff_llm = sum(1 for f in llm_same_flags if not f)
-            print(f"  Different intent (LLM): {n_diff_llm} / {len(filter_pairs)}")
+        print(f"\n=== LLM judge ({judge_model_id}) ===")
+        verdicts = judge_intent_similarity_llm(judge_llm, filter_triples, judge_tokenizer)
+        for (i, j), verdict in zip(filter_idx, verdicts):
+            all_parsed[i]["samples"][j]["judge_verdict"] = verdict
 
-        # ── NLI model ──────────────────────────────────────────────────
-        if args.filter_method in ("nli", "both"):
-            print(f"\n=== NLI model (threshold={args.nli_threshold}) ===")
-            nli_same_flags, nli_scores = score_intent_similarity_nli(
-                filter_pairs, args.nli_model, args.nli_threshold
-            )
-            for (i, j), is_same, score in zip(filter_idx, nli_same_flags, nli_scores):
-                all_parsed[i]["samples"][j]["nli_same_intent"] = is_same
-                all_parsed[i]["samples"][j]["nli_entailment_score"] = score
-            n_diff_nli = sum(1 for f in nli_same_flags if not f)
-            print(f"  Different intent (NLI): {n_diff_nli} / {len(filter_pairs)}")
+        n_bad = sum(1 for v in verdicts if v == "bad_match")
+        n_decent = sum(1 for v in verdicts if v == "decent_match")
+        n_good = sum(1 for v in verdicts if v == "good_match")
+        print(f"  good_match: {n_good}  decent_match: {n_decent}  bad_match: {n_bad}  "
+              f"unknown: {len(verdicts) - n_good - n_decent - n_bad}")
 
-        # ── Merge: a sample is rejected if flagged by either active method ──
+        # bad_match → add as rejected; good/decent → keep as chosen
         for (i, j) in filter_idx:
             s = all_parsed[i]["samples"][j]
-            flags = []
-            if args.filter_method in ("llm", "both"):
-                flags.append(not s.get("llm_same_intent", True))
-            if args.filter_method in ("nli", "both"):
-                flags.append(not s.get("nli_same_intent", True))
-            s["same_intent"] = not any(flags)   # False = flagged as different
+            s["same_intent"] = (s.get("judge_verdict") != "bad_match")
 
-        # ── Build inspection examples ───────────────────────────────────
-        for (i, j), (gold_intent, gen_intent) in zip(filter_idx, filter_pairs):
-            s    = all_parsed[i]["samples"][j]
-            d    = all_parsed[i]
-            base = {
+        # Build inspection examples
+        for (i, j), (prompt, gold_intent, gen_intent) in zip(filter_idx, filter_triples):
+            s = all_parsed[i]["samples"][j]
+            d = all_parsed[i]
+            filter_examples.append({
                 "id":               d["id"],
-                "prompt":           d["prompt"],
+                "prompt":           prompt,
                 "gold_intent":      gold_intent,
                 "gold_harm":        d["gold_harm"],
                 "generated_intent": gen_intent,
                 "harm_t0":          s["harm_t0"],
+                "judge_verdict":    s.get("judge_verdict"),
                 "added_as_rejected": not s["same_intent"],
-            }
-            if args.filter_method in ("llm", "both"):
-                llm_filter_examples.append({
-                    **base,
-                    "judge_same_intent": s.get("llm_same_intent"),
-                })
-            if args.filter_method in ("nli", "both"):
-                nli_filter_examples.append({
-                    **base,
-                    "nli_entailment_score": s.get("nli_entailment_score"),
-                    "nli_same_intent":      s.get("nli_same_intent"),
-                })
+            })
 
     # ------------------------------------------------------------------
     # 5. Build DPO and contrastive pairs
@@ -529,11 +568,8 @@ def run(args):
     print("\n=== Saving outputs ===")
     save_jsonl(dpo_pairs,         output_dir / "dpo_pairs.jsonl")
     save_jsonl(contrastive_pairs, output_dir / "contrastive_pairs.jsonl")
-    if args.intent_filter:
-        if llm_filter_examples:
-            save_jsonl(llm_filter_examples, output_dir / "intent_filter_llm_examples.jsonl")
-        if nli_filter_examples:
-            save_jsonl(nli_filter_examples, output_dir / "intent_filter_nli_examples.jsonl")
+    if args.intent_filter and filter_examples:
+        save_jsonl(filter_examples, output_dir / "intent_filter_examples.jsonl")
 
     # ------------------------------------------------------------------
     # 7. Summary
@@ -628,23 +664,17 @@ def parse_args():
     # Intent filter
     p.add_argument(
         "--intent-filter", action="store_true", default=False,
-        help="Enable intent similarity filter. Correct-label samples with semantically "
-             "different intent are added as extra rejected pairs.",
+        help="Enable intent validity filter. Correct-label samples judged as bad_match "
+             "by the LLM judge are added as extra rejected pairs.",
     )
     p.add_argument(
-        "--filter-method", choices=["llm", "nli", "both"], default="llm",
-        help="Method for intent similarity scoring. "
-             "'llm': base LLM judge (no LoRA). "
-             "'nli': cross-encoder NLI model. "
-             "'both': run both, reject if either flags the sample.",
-    )
-    p.add_argument(
-        "--nli-model", type=str, default="cross-encoder/nli-deberta-v3-base",
-        help="HuggingFace model ID for the NLI cross-encoder.",
-    )
-    p.add_argument(
-        "--nli-threshold", type=float, default=0.5,
-        help="Entailment score below which intents are considered different (NLI method).",
+        "--judge-model", type=str, default=None,
+        help="HuggingFace model ID for the intent judge. Defaults to --base-model. "
+             "Set to a larger model (e.g. meta-llama/Llama-3.1-70B-Instruct or "
+             "google/gemma-3-27b-it) to use a separate judge instance. "
+             "When different from --base-model, the SFT model is not loaded — "
+             "run without --intent-filter first to cache harm_t0 labels, then "
+             "re-run with --from-samples --intent-filter --judge-model <model>.",
     )
 
     # Output
