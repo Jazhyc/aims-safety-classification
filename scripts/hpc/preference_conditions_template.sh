@@ -34,7 +34,7 @@ fi
 # Shared defaults (override via sbatch --export)
 # ---------------------------------------------------------------------------
 BASE_MODEL="${BASE_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
-BASE_SFT_ADAPTER="${BASE_SFT_ADAPTER:-models/sft/llm_sweep/base_sft_adapter}"
+BASE_SFT_ADAPTER="${BASE_SFT_ADAPTER:-trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter}"
 JUDGE_MODEL="${JUDGE_MODEL:-google/gemma-3-27b-it}"
 
 SEED="${SEED:-22}"

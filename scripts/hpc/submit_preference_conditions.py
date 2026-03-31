@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--template", default=TEMPLATE, help="SLURM template script path.")
 
     p.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct")
-    p.add_argument("--base-sft-adapter", default="models/sft/llm_sweep/base_sft_adapter")
+    p.add_argument("--base-sft-adapter", default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--judge-model", default="google/gemma-3-27b-it")
     p.add_argument("--seed", type=int, default=22)
 
