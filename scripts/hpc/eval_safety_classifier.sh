@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=safety_exp
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 #SBATCH --mem=16GB
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=rtx_pro_6000:1
