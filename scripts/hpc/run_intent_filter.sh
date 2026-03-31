@@ -15,15 +15,15 @@ source .venv/bin/activate
 
 PROJECTS_DIR="${PROJECTS_DIR:-/scratch/s4351495}"
 export HF_HOME="${HF_HOME:-${PROJECTS_DIR}/huggingface_cache}"
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
+# Do NOT set HF_HUB_OFFLINE here — the judge model may need to be downloaded
+# if it is not already in the local cache.
 export VLLM_USE_V1=0
 
 # Override these via environment when submitting, e.g.:
 #   JUDGE_MODEL="RedHatAI/gemma-3-27b-it-quantized.w4a16" \
 #   OUTPUT_DIR="data/dpo_pairs/train_t0.8_filtered_gemma27b" \
 #   sbatch scripts/hpc/run_intent_filter.sh
-JUDGE_MODEL="${JUDGE_MODEL:-RedHatAI/gemma-3-27b-it-quantized.w4a16}"
+JUDGE_MODEL="${JUDGE_MODEL:-google/gemma-3-27b-it}"
 OUTPUT_DIR="${OUTPUT_DIR:-data/dpo_pairs/train_t0.8_intent_filtered}"
 
 echo "Judge model : ${JUDGE_MODEL}"
