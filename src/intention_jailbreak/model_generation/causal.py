@@ -2,6 +2,7 @@ import os
 import json
 import re
 import gc
+import shutil
 import torch
 from pathlib import Path
 from tqdm import tqdm
@@ -531,6 +532,7 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
         "num_train_epochs": epochs,
         "weight_decay": weight_decay,
         "save_total_limit": 2,
+        "save_only_model": True,
         "logging_dir": logs_dir,
         "load_best_model_at_end": True,
         "metric_for_best_model": "eval_loss",
@@ -741,7 +743,7 @@ def run_causal_flow(config):
             try:
                 import wandb as _wandb
                 if _wandb.run is not None:
-                    _wandb.run.summary["adapter_path"] = adapter_dir
+                    _wandb.run.summary["adapter_path"] = os.path.abspath(adapter_dir)
                     _wandb.run.summary["classification_only"] = bool(
                         config.get("data", {}).get("classification_only", False)
                     )
@@ -754,6 +756,13 @@ def run_causal_flow(config):
             trainer.save_model(model_save_dir)
             tokenizer.save_pretrained(model_save_dir)
             print(f"Model and tokenizer saved to {model_save_dir}")
+
+        # Delete the Trainer checkpoint directory — checkpoints are only needed
+        # during training for load_best_model_at_end; the final adapter above is
+        # the only artifact we keep.
+        if os.path.isdir(output_dir):
+            shutil.rmtree(output_dir)
+            print(f"Cleaned up training checkpoints: {output_dir}")
 
         eval_results = trainer.evaluate()
         print(f"[Causal LM] Validation loss: {eval_results['eval_loss']}")

@@ -35,6 +35,7 @@ Usage:
 
 import os
 import json
+import time
 import warnings
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
@@ -98,11 +99,18 @@ def load_test_dataset(data_cfg: dict) -> Tuple[Any, str, bool]:
         rename_map["Prompt"] = "prompt"
     if "Intent" in dataset.column_names:
         rename_map["Intent"] = "intent"
+    if "user_input" in dataset.column_names and "prompt" not in dataset.column_names:
+        rename_map["user_input"] = "prompt"
     existing_renames = {k: v for k, v in rename_map.items() if k in dataset.column_names}
     if existing_renames:
         dataset = dataset.rename_columns(existing_renames)
 
     harm_column = data_cfg.get("harm_column", "Annotator Harm")
+
+    label_map = data_cfg.get("label_map")
+    if label_map and harm_column in dataset.column_names:
+        str_map = {str(k): v for k, v in label_map.items()}
+        dataset = dataset.map(lambda x: {**x, harm_column: str_map.get(str(x[harm_column]), str(x[harm_column]))})
 
     if data_cfg.get("all_harmful", False) and harm_column not in dataset.column_names:
         print(f"  Creating synthetic harm column '{harm_column}' with all 'harmful' labels")
@@ -216,12 +224,19 @@ def _process_results(
     wandb_run,
     all_metrics: dict,
     result_files_written: List[Path],
+    elapsed_s: float = 0.0,
 ) -> None:
     """Compute metrics, print summary, save to disk, and log to W&B."""
     if not results:
         return
 
     metrics = compute_metrics(results)
+    total_tokens = sum(r.get("num_tokens", 0) for r in results)
+    tokens_per_second = total_tokens / elapsed_s if elapsed_s > 0 else 0.0
+    metrics["total_tokens"] = total_tokens
+    metrics["elapsed_s"] = elapsed_s
+    metrics["tokens_per_second"] = tokens_per_second
+
     metric_key = f"{dataset_name}/{condition}"
     all_metrics[metric_key] = metrics
 
@@ -229,6 +244,7 @@ def _process_results(
     print(f"    Accuracy: {metrics['accuracy']:.4f} ({metrics['correct']}/{metrics['total']})")
     print(f"    Precision: {metrics['precision']:.4f}, Recall: {metrics['recall']:.4f}, F1: {metrics['f1']:.4f}")
     print(f"    Missing predictions: {metrics['missing_predictions']}")
+    print(f"    Tokens generated: {total_tokens:,}  |  Time: {elapsed_s:.1f}s  |  Throughput: {tokens_per_second:.1f} tok/s")
 
     pipeline_output_dir = paths_cfg.get("output_dir")
     output_dir = (
@@ -248,6 +264,9 @@ def _process_results(
             f"{metric_key}/f1": metrics["f1"],
             f"{metric_key}/correct": metrics["correct"],
             f"{metric_key}/total": metrics["total"],
+            f"{metric_key}/total_tokens": total_tokens,
+            f"{metric_key}/elapsed_s": elapsed_s,
+            f"{metric_key}/tokens_per_second": tokens_per_second,
         })
 
 
@@ -270,16 +289,21 @@ def _run_baseline_on_datasets(
         print(f"{'='*80}")
 
         test_dataset, harm_column, _ = load_test_dataset(data_cfg)
+        t0 = time.monotonic()
         results = run_fn(test_dataset, sampling_params, harm_column)
+        elapsed_s = time.monotonic() - t0
 
         _process_results(
             results, condition, dataset_name, data_cfg, paths_cfg,
             model_slug, wandb_run, all_metrics, result_files_written,
+            elapsed_s=elapsed_s,
         )
 
 
 def _validate_finetuned_adapters(conditions: List[str], finetuned_cfg: dict) -> None:
     """Raise ValueError if any requested finetuned condition is missing its adapter."""
+    if finetuned_cfg.get("use_merged", False):
+        return  # merged model is loaded as model.name; no adapter paths needed
     checks = {
         "finetuned_generation": ("generation_adapter", "finetuned.generation_adapter"),
         "finetuned_classification": ("classification_adapter", "finetuned.classification_adapter"),
@@ -343,11 +367,14 @@ def main(cfg: DictConfig):
         if cond not in VALID_CONDITIONS:
             raise ValueError(f"Invalid condition: {cond}. Valid: {VALID_CONDITIONS}")
 
+    use_merged = finetuned_cfg.get("use_merged", False)
+
     finetuned_conditions = {
         "finetuned_generation", "finetuned_classification",
         "finetuned_reasoning_classification", "finetuned_reasoning_generation",
     }
     needs_finetuned = bool(set(conditions) & finetuned_conditions)
+    needs_finetuned_lora = needs_finetuned and not use_merged
     needs_llamaguard = "llamaguard_classification" in conditions
     needs_wildguard = "wildguard_classification" in conditions
     needs_safeguard = "safeguard_classification" in conditions
@@ -357,7 +384,7 @@ def main(cfg: DictConfig):
     safeguard_model = safeguard_cfg.get("name", "openai/gpt-oss-safeguard-120b")
 
     # Download missing fine-tuned adapters from W&B registry
-    if artifacts_cfg.get("enabled", False) and needs_finetuned:
+    if artifacts_cfg.get("enabled", False) and needs_finetuned_lora:
         registry_project = artifacts_cfg["registry_project"]
         artifact_entity = artifacts_cfg.get("entity", None)
         adapter_keys = {
@@ -415,8 +442,10 @@ def main(cfg: DictConfig):
 
     # Load main model
     print(f"\n=== Loading Model: {model_cfg['name']} ===")
+    if use_merged:
+        print("Merged model mode: LoRA disabled (weights already baked in)")
     llm_extra: Dict[str, Any] = {"limit_mm_per_prompt": {"image": 0}}
-    if needs_finetuned:
+    if needs_finetuned_lora:
         llm_extra["enable_lora"] = True
         llm_extra["max_lora_rank"] = lora_cfg.get("rank", 16)
         llm_extra["max_loras"] = 4
@@ -428,14 +457,17 @@ def main(cfg: DictConfig):
         classification_lora_request,
         reasoning_classification_lora_request,
         reasoning_generation_lora_request,
-    ) = _setup_lora_requests(finetuned_cfg)
+    ) = _setup_lora_requests(finetuned_cfg) if not use_merged else (None, None, None, None)
 
-    generation_adapter = finetuned_cfg.get("generation_adapter")
-    tokenizer_path = (
-        generation_adapter
-        if generation_adapter and os.path.exists(generation_adapter)
-        else model_cfg["name"]
-    )
+    if use_merged:
+        tokenizer_path = model_cfg["name"]
+    else:
+        generation_adapter = finetuned_cfg.get("generation_adapter")
+        tokenizer_path = (
+            generation_adapter
+            if generation_adapter and os.path.exists(generation_adapter)
+            else model_cfg["name"]
+        )
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
     sampling_params = SamplingParams(
@@ -466,16 +498,16 @@ def main(cfg: DictConfig):
         for condition in conditions:
             print(f"\n--- Condition: {condition} ---")
 
-            if condition == "finetuned_generation" and generation_lora_request is None:
+            if condition == "finetuned_generation" and generation_lora_request is None and not use_merged:
                 print(f"  Skipping {condition} (no generation adapter)")
                 continue
-            if condition == "finetuned_classification" and classification_lora_request is None:
+            if condition == "finetuned_classification" and classification_lora_request is None and not use_merged:
                 print(f"  Skipping {condition} (no classification adapter)")
                 continue
-            if condition == "finetuned_reasoning_classification" and reasoning_classification_lora_request is None:
+            if condition == "finetuned_reasoning_classification" and reasoning_classification_lora_request is None and not use_merged:
                 print(f"  Skipping {condition} (no reasoning classification adapter)")
                 continue
-            if condition == "finetuned_reasoning_generation" and reasoning_generation_lora_request is None:
+            if condition == "finetuned_reasoning_generation" and reasoning_generation_lora_request is None and not use_merged:
                 print(f"  Skipping {condition} (no reasoning generation adapter)")
                 continue
             if condition in ("vanilla_with_human_intent", "zeroshot_cot_classification_with_intent") and not has_intent:
@@ -485,6 +517,7 @@ def main(cfg: DictConfig):
                 print(f"  Skipping {condition} (no model intents)")
                 continue
 
+            t0 = time.monotonic()
             results = run_condition_on_dataset(
                 condition=condition,
                 llm=llm,
@@ -499,10 +532,12 @@ def main(cfg: DictConfig):
                 reasoning_classification_lora_request=reasoning_classification_lora_request,
                 reasoning_generation_lora_request=reasoning_generation_lora_request,
             )
+            elapsed_s = time.monotonic() - t0
 
             _process_results(
                 results, condition, dataset_name, data_cfg, paths_cfg,
                 model_slug, wandb_run, all_metrics, result_files_written,
+                elapsed_s=elapsed_s,
             )
 
     # Free the main model before loading any prior-work baseline
@@ -585,6 +620,7 @@ def main(cfg: DictConfig):
     for key, metrics in all_metrics.items():
         print(f"\n{key}:")
         print(f"  Accuracy: {metrics['accuracy']:.4f}, F1: {metrics['f1']:.4f}")
+        print(f"  Tokens: {metrics.get('total_tokens', 0):,}  |  Time: {metrics.get('elapsed_s', 0):.1f}s  |  Throughput: {metrics.get('tokens_per_second', 0):.1f} tok/s")
 
     if wandb_run is not None:
         wandb.finish()

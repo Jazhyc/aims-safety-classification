@@ -248,6 +248,7 @@ def run_finetuned_generation(
             "true_harm_binary": map_harm_to_binary(true_harm),
             "predicted_harm": predicted_harm,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "finetuned_generation",
         })
     return results
@@ -278,6 +279,7 @@ def run_finetuned_classification(
             "true_harm_binary": map_harm_to_binary(true_harm),
             "predicted_harm": extract_harm_label(generated_text),
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "finetuned_classification",
         })
     return results
@@ -327,6 +329,7 @@ def run_vanilla_classification(
             "true_harm_binary": map_harm_to_binary(true_harm),
             "predicted_harm": predicted_harm,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "vanilla_classification",
         })
     return results
@@ -400,6 +403,7 @@ def run_vanilla_generation(
             "true_harm_binary": map_harm_to_binary(true_harm),
             "predicted_harm": predicted_harm,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "vanilla_generation",
         })
     return results
@@ -456,6 +460,7 @@ def run_vanilla_classification_with_intent(
             "true_harm_binary": map_harm_to_binary(true_harm),
             "predicted_harm": predicted_harm,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": condition_name,
         }
         if intent_source == "model" and model_intents:
@@ -507,6 +512,7 @@ def run_zeroshot_cot_classification(
             "predicted_harm": predicted_harm,
             "reasoning": reasoning,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "zeroshot_cot_classification",
         })
     return results
@@ -555,6 +561,7 @@ def run_zeroshot_cot_generation(
             "predicted_harm": predicted_harm,
             "reasoning": reasoning,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "zeroshot_cot_generation",
         })
     return results
@@ -602,6 +609,7 @@ def run_zeroshot_cot_classification_with_intent(
             "predicted_harm": predicted_harm,
             "reasoning": reasoning,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "zeroshot_cot_classification_with_intent",
         })
     return results
@@ -634,6 +642,7 @@ def run_finetuned_reasoning_classification(
             "predicted_harm": predicted_harm,
             "reasoning": reasoning,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "finetuned_reasoning_classification",
         })
     return results
@@ -668,6 +677,7 @@ def run_finetuned_reasoning_generation(
             "predicted_harm": predicted_harm,
             "reasoning": reasoning,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "finetuned_reasoning_generation",
         })
     return results
@@ -729,6 +739,7 @@ def run_llamaguard_classification(
             "true_harm_binary": map_harm_to_binary(true_harm),
             "predicted_harm": predicted_harm,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "llamaguard_classification",
         })
     return results
@@ -782,6 +793,7 @@ def run_wildguard_classification(
             "true_harm_binary": map_harm_to_binary(true_harm),
             "predicted_harm": predicted_harm,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "wildguard_classification",
         })
     return results
@@ -850,6 +862,7 @@ def run_safeguard_classification(
             "true_harm_binary": map_harm_to_binary(true_harm),
             "predicted_harm": predicted_harm,
             "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
             "condition": "safeguard_classification",
         })
     return results

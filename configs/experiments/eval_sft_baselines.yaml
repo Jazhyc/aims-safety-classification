@@ -30,6 +30,10 @@ sft_models_dir: "models/sft"
 
 # Adapter paths — overridden at launch time by submit_sft_eval.py
 finetuned:
+  # Set to true when model.name points to a pre-merged model (via scripts/merge_adapter.py).
+  # Only needed with --use-merged in submit_sft_eval.py; default LoRA path leaves this false.
+  use_merged: false
+
   generation_adapter: "${sft_models_dir}/hyperparam_sweep/lr_0.0002_e_5_adapter"
   classification_adapter: "${sft_models_dir}/hyperparam_sweep_clf/lr_0.0001_e_5_adapter"
 
@@ -65,6 +69,25 @@ datasets:
     harm_column: "label"
     use_manual_split: false
     output_dir: "data/safety_experiment/sft/xstest"
+
+  - name: "toxic-chat"
+    dataset_name: "lmsys/toxic-chat"
+    subset: "toxicchat0124"
+    split: "test"
+    harm_column: "toxicity"
+    use_manual_split: false
+    label_map:
+      0: "safe"
+      1: "harmful"
+    output_dir: "data/safety_experiment/sft/toxic_chat"
+
+  - name: "aegis"
+    dataset_name: "nvidia/Aegis-AI-Content-Safety-Dataset-2.0"
+    subset: null
+    split: "test"
+    harm_column: "prompt_label"
+    use_manual_split: false
+    output_dir: "data/safety_experiment/sft/aegis"
 
 generation:
   max_new_tokens: 64   # sufficient for "Intent: <text>; Harm: safe/harmful"
