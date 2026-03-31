@@ -185,6 +185,7 @@ def step_a_filter_wildguard(args) -> bool:
         return True
     cmd = [
         sys.executable, "scripts/dataset_analysis/filter_wildguard_easy.py",
+        "--model-path", args.wildguard_model_path,
         "--output-dir", str(candidates.parent),
     ]
     return run(cmd, "Pre A – Filter WildGuardMix easy examples")
@@ -348,6 +349,8 @@ def parse_args():
     # Augmentation paths (only used with --augment)
     p.add_argument("--wildguard-candidates",  default="data/wildguard_easy/candidates.jsonl",
                    help="Output of filter_wildguard_easy.py.")
+    p.add_argument("--wildguard-model-path",  default="answerdotai/ModernBERT-large",
+                   help="HF model ID or local path used by filter_wildguard_easy.py.")
     p.add_argument("--wildguard-pairs-dir",   default="data/wildguard_easy/dpo_pairs",
                    help="DPO pairs generated from WildGuardMix easy examples.")
     p.add_argument("--augmented-pairs-dir",   default="data/dpo_pairs/augmented",

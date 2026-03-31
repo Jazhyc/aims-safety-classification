@@ -62,6 +62,7 @@ SFT_PRED_DIR_JUDGE="${SFT_PRED_DIR_JUDGE:-data/predictions/sft_judge}"
 
 ANNOTATED_PAIRS_DIR="${ANNOTATED_PAIRS_DIR:-${HARD_PAIRS_DIR}}"
 WILDGUARD_CANDIDATES="${WILDGUARD_CANDIDATES:-data/wildguard_easy/candidates.jsonl}"
+WILDGUARD_MODEL_PATH="${WILDGUARD_MODEL_PATH:-answerdotai/ModernBERT-large}"
 WILDGUARD_PAIRS_DIR="${WILDGUARD_PAIRS_DIR:-data/wildguard_easy/dpo_pairs}"
 SFT_EXAMPLES_OUTPUT="${SFT_EXAMPLES_OUTPUT:-data/wildguard_easy/sft_examples.jsonl}"
 AUGMENTED_MERGED_PAIRS_DIR="${AUGMENTED_MERGED_PAIRS_DIR:-data/dpo_pairs/augmented}"
@@ -134,6 +135,7 @@ case "${STAGE}" in
       --augment \
       --pairs-dir "${ANNOTATED_PAIRS_DIR}" \
       --wildguard-candidates "${WILDGUARD_CANDIDATES}" \
+      --wildguard-model-path "${WILDGUARD_MODEL_PATH}" \
       --wildguard-pairs-dir "${WILDGUARD_PAIRS_DIR}" \
       --augmented-pairs-dir "${AUGMENTED_MERGED_PAIRS_DIR}" \
       --sft-examples-output "${SFT_EXAMPLES_OUTPUT}" \
@@ -164,6 +166,7 @@ case "${STAGE}" in
       --augment \
       --pairs-dir "${ANNOTATED_PAIRS_DIR}" \
       --wildguard-candidates "${WILDGUARD_CANDIDATES}" \
+      --wildguard-model-path "${WILDGUARD_MODEL_PATH}" \
       --wildguard-pairs-dir "${WILDGUARD_PAIRS_DIR}" \
       --augmented-pairs-dir "${AUGMENTED_MERGED_PAIRS_DIR}" \
       --sft-examples-output "${SFT_EXAMPLES_OUTPUT}" \

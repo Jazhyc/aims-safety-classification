@@ -81,6 +81,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sft-pred-dir-judge", default="data/predictions/sft_judge")
 
     p.add_argument("--wildguard-candidates", default="data/wildguard_easy/candidates.jsonl")
+    p.add_argument("--wildguard-model-path", default="answerdotai/ModernBERT-large")
     p.add_argument("--wildguard-pairs-dir", default="data/wildguard_easy/dpo_pairs")
     p.add_argument("--sft-examples-output", default="data/wildguard_easy/sft_examples.jsonl")
     p.add_argument("--augmented-merged-pairs-dir", default="data/dpo_pairs/augmented")
@@ -124,6 +125,7 @@ def main() -> None:
         "SFT_PRED_DIR_JUDGE": args.sft_pred_dir_judge,
         "ANNOTATED_PAIRS_DIR": args.hard_pairs_dir,
         "WILDGUARD_CANDIDATES": args.wildguard_candidates,
+        "WILDGUARD_MODEL_PATH": args.wildguard_model_path,
         "WILDGUARD_PAIRS_DIR": args.wildguard_pairs_dir,
         "SFT_EXAMPLES_OUTPUT": args.sft_examples_output,
         "AUGMENTED_MERGED_PAIRS_DIR": args.augmented_merged_pairs_dir,
