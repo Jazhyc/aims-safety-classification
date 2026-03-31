@@ -105,7 +105,7 @@ paths:
 
 vllm:
   gpu_memory_utilization: 0.90
-  max_model_len: 2048
+  max_model_len: 4096
   dtype: "bfloat16"
   enforce_eager: false
   flash_attn_version: null

@@ -6,6 +6,9 @@ For each (teacher × student × condition) combination, queries the correspondin
 W&B project for the run with the highest val_harm_f1, then submits a SLURM eval
 job using that adapter on all test datasets.
 
+Already-completed combinations (all 5 dataset output files present) are skipped
+automatically. Use --force to re-evaluate them.
+
 --cleanup removes every adapter in models/distillation-sweep/ that was not
 selected as best across any combination. Combine with --dry-run to preview
 deletions before committing.
@@ -13,6 +16,8 @@ deletions before committing.
 Usage:
     python scripts/hpc/submit_distillation_eval.py --dry-run
     python scripts/hpc/submit_distillation_eval.py
+    python scripts/hpc/submit_distillation_eval.py --force
+    python scripts/hpc/submit_distillation_eval.py --traces-version v7
     python scripts/hpc/submit_distillation_eval.py --cleanup --dry-run
     python scripts/hpc/submit_distillation_eval.py --cleanup
 """
@@ -53,7 +58,7 @@ STUDENT_MODELS = [
 
 LEARNING_RATES = [1e-5, 2e-5, 5e-5, 1e-4, 2e-4]
 CONDITIONS = ["without_intent", "with_intent"]
-TRACES_VERSION = "v6"
+DEFAULT_TRACES_VERSION = "v6"
 
 # Maps training condition → eval condition name used by eval_safety_classifier.py
 CONDITION_TO_EVAL = {
@@ -61,14 +66,28 @@ CONDITION_TO_EVAL = {
     "with_intent":    "finetuned_reasoning_generation",
 }
 
+# Dataset output subdirectory names — must match eval_distillation.yaml
+EVAL_DATASET_DIRS = [
+    "annotated_intents",
+    "wildguardmix",
+    "xstest",
+    "toxic_chat",
+    "aegis",
+]
 
-# ── Path helpers ──────────────────────────────────────────────────────────────
 
-def _adapter_path(teacher_slug: str, student_slug: str, condition: str, lr: float) -> Path:
-    cond_slug = condition.replace("_", "-")
-    lr_str = f"{lr:.0e}"
-    run_name = f"{teacher_slug}--{student_slug}--{cond_slug}--lr{lr_str}--{TRACES_VERSION}"
-    return DISTILLATION_SWEEP_DIR / f"{run_name}_adapter"
+# ── Completion check ──────────────────────────────────────────────────────────
+
+def _is_done(output_dir: str) -> bool:
+    """
+    Return True if all eval dataset subdirectories contain at least one .jsonl
+    file, indicating this combination has already been fully evaluated.
+    """
+    base = PROJECT_ROOT / output_dir
+    return all(
+        any((base / ds_dir).glob("*.jsonl"))
+        for ds_dir in EVAL_DATASET_DIRS
+    )
 
 
 # ── W&B query ─────────────────────────────────────────────────────────────────
@@ -77,6 +96,7 @@ def fetch_best_adapter(
     teacher_slug: str,
     student_slug: str,
     condition: str,
+    traces_version: str,
 ) -> tuple[Path | None, float | None]:
     """
     Query the W&B project for this (teacher × student) pair and return the
@@ -105,6 +125,11 @@ def fetch_best_adapter(
             or run.config.get("data", {}).get("reasoning_traces_condition")
         )
         if run_condition != condition:
+            continue
+
+        # Filter by traces version if present in run name or config
+        run_version = run.config.get("data", {}).get("traces_version")
+        if run_version is not None and run_version != traces_version:
             continue
 
         f1 = run.summary.get("val_harm_f1")
@@ -176,14 +201,26 @@ def main():
         "--cleanup", action="store_true",
         help="Delete all adapters in models/distillation-sweep/ that were not selected as best.",
     )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Re-submit eval jobs even for combinations that already have output files.",
+    )
+    parser.add_argument(
+        "--traces-version", default=DEFAULT_TRACES_VERSION, metavar="VERSION",
+        help=f"Reasoning traces version to select adapters for (default: {DEFAULT_TRACES_VERSION}).",
+    )
     args = parser.parse_args()
+
+    traces_version = args.traces_version
 
     n_combos = len(TEACHER_MODELS) * len(STUDENT_MODELS) * len(CONDITIONS)
     print_header(
         "Distillation Eval — Best Adapter Selection",
         f"{len(TEACHER_MODELS)} teachers × {len(STUDENT_MODELS)} students × "
         f"{len(CONDITIONS)} conditions = {n_combos} combinations"
-        + (" [DRY RUN]" if args.dry_run else ""),
+        f"  |  traces: {traces_version}"
+        + (" [DRY RUN]" if args.dry_run else "")
+        + (" [FORCE]" if args.force else ""),
     )
 
     if not args.dry_run:
@@ -191,6 +228,7 @@ def main():
 
     submitted = []
     not_found = []
+    skipped = []
     best_adapters: set[Path] = set()
 
     for teacher_hf, teacher_slug in TEACHER_MODELS:
@@ -200,7 +238,9 @@ def main():
                 label = f"{student_slug} / {condition}"
                 print(f"\n  [{label}]")
 
-                best_adapter, best_f1 = fetch_best_adapter(teacher_slug, student_slug, condition)
+                best_adapter, best_f1 = fetch_best_adapter(
+                    teacher_slug, student_slug, condition, traces_version,
+                )
 
                 if best_adapter is None:
                     print(f"    [skip] No qualifying run found in W&B")
@@ -218,6 +258,12 @@ def main():
                 print(f"    adapter:   {best_adapter.name}")
                 print(f"    f1:        {best_f1:.4f}")
                 print(f"    condition: {eval_condition}")
+
+                # Skip already-completed combinations
+                if not args.force and _is_done(output_dir):
+                    print(f"    [done] Output files already present — skipping (use --force to re-run)")
+                    skipped.append(label)
+                    continue
 
                 if args.dry_run:
                     print(f"    [dry-run] would submit eval job")
@@ -240,12 +286,16 @@ def main():
     print("\n" + "=" * 60)
     if args.dry_run:
         found = n_combos - len(not_found)
-        print(f"Dry run: {found}/{n_combos} adapters found.")
+        print(f"Dry run: {found}/{n_combos} adapters found, {len(skipped)} already done.")
     else:
-        print(f"Submitted {len(submitted)}/{n_combos - len(not_found)} eval jobs.")
+        print(f"Submitted {len(submitted)} eval jobs  |  {len(skipped)} skipped (done)  |  {len(not_found)} not found.")
     if not_found:
         print(f"Not found ({len(not_found)}):")
         for label in not_found:
+            print(f"  {label}")
+    if skipped:
+        print(f"Already done ({len(skipped)}):")
+        for label in skipped:
             print(f"  {label}")
     print("=" * 60)
 
