@@ -302,12 +302,18 @@ def load_samples_for_split(data_cfg: dict, split: str) -> list:
     """
     Load samples from one Hub split of the annotated intents dataset.
 
+    Each annotation row is treated as a separate training sample.  The train
+    split may contain multiple annotations (different annotators) for the same
+    WildGuard prompt; all are included so their distinct harm labels and intents
+    are represented in the traces.
+
     Args:
         data_cfg: The ``dataset`` block from reasoning_traces.yaml.
         split:    Hub split name: "train", "validation", or "test".
 
     Returns:
-        List of dicts with keys: wildguard_id, prompt, prompt_harm_label, intent, split.
+        List of dicts with keys: annotation_id, wildguard_id, prompt,
+        prompt_harm_label, intent, split.
     """
     import random
 
@@ -326,24 +332,27 @@ def load_samples_for_split(data_cfg: dict, split: str) -> list:
         annotated_ds = load_dataset(ai_name, split=split)
     print(f"    Raw size: {len(annotated_ds)}")
 
-    # Deduplicate by Wildguard ID (train split may have multiple annotations per prompt)
-    seen_ids = {}
+    # Keep every annotation as a separate sample (no wildguard_id deduplication).
+    # The annotation_id (dataset "ID" column) uniquely identifies each row and
+    # is included in output entries so consumers can distinguish multiple
+    # annotations for the same prompt.
+    available = []
     for row in annotated_ds:
+        ann_id = row.get("ID")
         wg_id = row.get("Wildguard ID")
-        if wg_id is not None and wg_id not in seen_ids:
-            prompt = row.get("Prompt", "").strip()
-            harm_label = row.get(harm_column)
-            if prompt and harm_label is not None:
-                seen_ids[wg_id] = {
-                    "wildguard_id": wg_id,
-                    "prompt": prompt,
-                    "prompt_harm_label": harm_label,
-                    "intent": row.get("Intent", ""),
-                    "split": split,
-                }
+        prompt = row.get("Prompt", "").strip()
+        harm_label = row.get(harm_column)
+        if prompt and harm_label is not None:
+            available.append({
+                "annotation_id": ann_id,
+                "wildguard_id": wg_id,
+                "prompt": prompt,
+                "prompt_harm_label": harm_label,
+                "intent": row.get("Intent", ""),
+                "split": split,
+            })
 
-    available = list(seen_ids.values())
-    print(f"    Unique samples with harm labels: {len(available)}")
+    print(f"    Samples with harm labels: {len(available)}")
 
     rng = random.Random(seed)
     rng.shuffle(available)
@@ -369,6 +378,7 @@ def load_all_samples(data_cfg: dict) -> list:
 
 def _make_raw_entry(sample: dict, condition: str, raw_text: str, parsed: dict) -> dict:
     return {
+        "annotation_id": sample.get("annotation_id"),
         "wildguard_id": sample["wildguard_id"],
         "prompt": sample["prompt"],
         "intent": sample["intent"],
@@ -382,6 +392,7 @@ def _make_raw_entry(sample: dict, condition: str, raw_text: str, parsed: dict) -
 
 def _make_parsed_entry(sample: dict, condition: str, parsed: dict) -> dict:
     return {
+        "annotation_id": sample.get("annotation_id"),
         "wildguard_id": sample["wildguard_id"],
         "prompt": sample["prompt"],
         "split": sample["split"],

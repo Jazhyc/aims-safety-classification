@@ -243,7 +243,7 @@ def load_reasoning_traces_dataset(data_cfg):
                     continue
 
         filtered.append({
-            "id": str(rec.get("wildguard_id", "")),
+            "id": str(rec.get("annotation_id") or rec.get("wildguard_id", "")),
             "prompt": rec.get("prompt", ""),
             "intent": rec.get("ground_truth", {}).get("intent", ""),
             "harm_label": harm_binary,   # "harmful" or "safe"

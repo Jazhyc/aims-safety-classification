@@ -22,17 +22,21 @@ model:
 
 training:
   epochs: 5
-  batch_size: 48
+  batch_size: 8
   learning_rate: 5e-5
   weight_decay: 0.00
   gradient_accumulation: 1
   fp16: false
   bf16: true
   optim: "paged_adamw_8bit"
+  adam_beta1: 0.9
+  adam_beta2: 0.98
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.1
   gradient_checkpointing: false
   torch_compile: false
   padding_free: true
-  skip_vllm_eval: true   # skip post-training vLLM inference — avoids GPU OOM after SFT
+  skip_vllm_eval: false  # run post-training vLLM eval on validation set to get harm F1
 
 data:
   use_reasoning_traces: true
@@ -69,7 +73,7 @@ generation:
 
 peft:
   use_lora: true
-  r: 32
+  lora_rank: 32   # NOTE: causal.py reads "lora_rank", not "r"
   lora_alpha: 64
   lora_dropout: 0
   bias: "none"
