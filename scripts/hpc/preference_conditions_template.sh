@@ -1,0 +1,190 @@
+#!/bin/bash
+#SBATCH --job-name=preference-cond
+#SBATCH --time=10:00:00
+#SBATCH --mem=64GB
+#SBATCH --partition=gpu
+#SBATCH --gpus-per-node=a100:1
+#SBATCH --output=logs/slurm/%x-%j.out
+
+set -euo pipefail
+
+module purge
+module load Python/3.12.3-GCCcore-13.3.0
+module load CUDA/12.8.0
+
+PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
+cd "${PROJECT_ROOT}"
+
+source .venv/bin/activate
+if [ -f "${HOME}/.wandb_secrets" ]; then
+  # shellcheck disable=SC1090
+  source "${HOME}/.wandb_secrets"
+fi
+
+export PYTHONUNBUFFERED=1
+
+STAGE="${STAGE:-}"
+if [ -z "${STAGE}" ]; then
+  echo "ERROR: STAGE is required."
+  echo "Valid STAGE values: hard_dpo | judge_dpo | augment_prep | sft_aug | dpo_aug"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Shared defaults (override via sbatch --export)
+# ---------------------------------------------------------------------------
+BASE_MODEL="${BASE_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
+BASE_SFT_ADAPTER="${BASE_SFT_ADAPTER:-models/sft/llm_sweep/base_sft_adapter}"
+JUDGE_MODEL="${JUDGE_MODEL:-google/gemma-3-27b-it}"
+
+SEED="${SEED:-22}"
+TEMPERATURE="${TEMPERATURE:-0.8}"
+K_SAMPLES="${K_SAMPLES:-5}"
+EPOCHS="${EPOCHS:-3}"
+LEARNING_RATE="${LEARNING_RATE:-5e-5}"
+BATCH_SIZE="${BATCH_SIZE:-2}"
+GRAD_ACCUM="${GRAD_ACCUM:-8}"
+DPO_BETA="${DPO_BETA:-0.1}"
+
+WANDB_PROJECT="${WANDB_PROJECT:-intention-jailbreak}"
+WANDB_PROJECT_SFT="${WANDB_PROJECT_SFT:-sft-hyperparam-sweep}"
+
+# Condition paths
+HARD_PAIRS_DIR="${HARD_PAIRS_DIR:-data/dpo_pairs/hard}"
+HARD_BALANCED_DIR="${HARD_BALANCED_DIR:-data/dpo_pairs/hard_balanced}"
+HARD_DPO_OUTPUT="${HARD_DPO_OUTPUT:-trained_models/causal/dpo-hard}"
+SFT_PRED_DIR_HARD="${SFT_PRED_DIR_HARD:-data/predictions/sft_hard}"
+
+JUDGE_PAIRS_DIR="${JUDGE_PAIRS_DIR:-data/dpo_pairs/judge}"
+JUDGE_BALANCED_DIR="${JUDGE_BALANCED_DIR:-data/dpo_pairs/judge_balanced}"
+JUDGE_DPO_OUTPUT="${JUDGE_DPO_OUTPUT:-trained_models/causal/dpo-judge}"
+SFT_PRED_DIR_JUDGE="${SFT_PRED_DIR_JUDGE:-data/predictions/sft_judge}"
+
+ANNOTATED_PAIRS_DIR="${ANNOTATED_PAIRS_DIR:-${HARD_PAIRS_DIR}}"
+WILDGUARD_CANDIDATES="${WILDGUARD_CANDIDATES:-data/wildguard_easy/candidates.jsonl}"
+WILDGUARD_PAIRS_DIR="${WILDGUARD_PAIRS_DIR:-data/wildguard_easy/dpo_pairs}"
+SFT_EXAMPLES_OUTPUT="${SFT_EXAMPLES_OUTPUT:-data/wildguard_easy/sft_examples.jsonl}"
+AUGMENTED_MERGED_PAIRS_DIR="${AUGMENTED_MERGED_PAIRS_DIR:-data/dpo_pairs/augmented}"
+
+AUG_SFT_MODEL_SAVE_DIR="${AUG_SFT_MODEL_SAVE_DIR:-models/sft/llm_sweep/augmented_sft}"
+AUG_SFT_ADAPTER_PATH="${AUG_SFT_ADAPTER_PATH:-${AUG_SFT_MODEL_SAVE_DIR}_adapter}"
+AUG_SFT_OUTPUT_DIR="${AUG_SFT_OUTPUT_DIR:-data/train_results/sft_augmented}"
+AUG_SFT_LOGS_DIR="${AUG_SFT_LOGS_DIR:-logs/sft_augmented}"
+AUG_SFT_PRED_DIR="${AUG_SFT_PRED_DIR:-data/predictions/sft_augmented}"
+AUG_SFT_WANDB_NAME="${AUG_SFT_WANDB_NAME:-sft-augmented}"
+
+AUG_BALANCED_DIR="${AUG_BALANCED_DIR:-data/dpo_pairs/augmented_balanced}"
+AUG_DPO_OUTPUT="${AUG_DPO_OUTPUT:-trained_models/causal/dpo-augmented}"
+
+echo "======================================================================"
+echo " Preference Condition Stage"
+echo "  Stage       : ${STAGE}"
+echo "  Project root: ${PROJECT_ROOT}"
+echo "  Base model  : ${BASE_MODEL}"
+echo "======================================================================"
+
+case "${STAGE}" in
+  hard_dpo)
+    python scripts/run_preference_pipeline.py \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model "${BASE_MODEL}" \
+      --pairs-dir "${HARD_PAIRS_DIR}" \
+      --balanced-pairs-dir "${HARD_BALANCED_DIR}" \
+      --dpo-output-dir "${HARD_DPO_OUTPUT}" \
+      --sft-pred-dir "${SFT_PRED_DIR_HARD}" \
+      --temperature "${TEMPERATURE}" \
+      --k-samples "${K_SAMPLES}" \
+      --epochs "${EPOCHS}" \
+      --learning-rate "${LEARNING_RATE}" \
+      --batch-size "${BATCH_SIZE}" \
+      --grad-accum "${GRAD_ACCUM}" \
+      --dpo-beta "${DPO_BETA}" \
+      --seed "${SEED}" \
+      --wandb-project "${WANDB_PROJECT}" \
+      --skip-steps 6
+    ;;
+
+  judge_dpo)
+    python scripts/run_preference_pipeline.py \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model "${BASE_MODEL}" \
+      --intent-filter \
+      --judge-model "${JUDGE_MODEL}" \
+      --pairs-dir "${JUDGE_PAIRS_DIR}" \
+      --balanced-pairs-dir "${JUDGE_BALANCED_DIR}" \
+      --dpo-output-dir "${JUDGE_DPO_OUTPUT}" \
+      --sft-pred-dir "${SFT_PRED_DIR_JUDGE}" \
+      --temperature "${TEMPERATURE}" \
+      --k-samples "${K_SAMPLES}" \
+      --epochs "${EPOCHS}" \
+      --learning-rate "${LEARNING_RATE}" \
+      --batch-size "${BATCH_SIZE}" \
+      --grad-accum "${GRAD_ACCUM}" \
+      --dpo-beta "${DPO_BETA}" \
+      --seed "${SEED}" \
+      --wandb-project "${WANDB_PROJECT}" \
+      --skip-steps 6
+    ;;
+
+  augment_prep)
+    # Pre-steps A/B/C only: filter WildGuard, generate easy DPO pairs, merge pairs.
+    python scripts/run_preference_pipeline.py \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model "${BASE_MODEL}" \
+      --augment \
+      --pairs-dir "${ANNOTATED_PAIRS_DIR}" \
+      --wildguard-candidates "${WILDGUARD_CANDIDATES}" \
+      --wildguard-pairs-dir "${WILDGUARD_PAIRS_DIR}" \
+      --augmented-pairs-dir "${AUGMENTED_MERGED_PAIRS_DIR}" \
+      --sft-examples-output "${SFT_EXAMPLES_OUTPUT}" \
+      --temperature "${TEMPERATURE}" \
+      --k-samples "${K_SAMPLES}" \
+      --seed "${SEED}" \
+      --skip-steps 1,2,3,4,5,6
+    ;;
+
+  sft_aug)
+    python scripts/baselines/train_generator.py \
+      --config-name=llm_sweep \
+      model.name="${BASE_MODEL}" \
+      data.extra_train_data="${SFT_EXAMPLES_OUTPUT}" \
+      paths.model_save_dir="${AUG_SFT_MODEL_SAVE_DIR}" \
+      paths.output_dir="${AUG_SFT_OUTPUT_DIR}" \
+      paths.logs_dir="${AUG_SFT_LOGS_DIR}" \
+      paths.predictions_dir="${AUG_SFT_PRED_DIR}" \
+      wandb.project="${WANDB_PROJECT_SFT}" \
+      wandb.name="${AUG_SFT_WANDB_NAME}"
+    ;;
+
+  dpo_aug)
+    # Uses merged pairs from augment_prep and augmented SFT adapter as init.
+    python scripts/run_preference_pipeline.py \
+      --adapter-path "${AUG_SFT_ADAPTER_PATH}" \
+      --base-model "${BASE_MODEL}" \
+      --augment \
+      --pairs-dir "${ANNOTATED_PAIRS_DIR}" \
+      --wildguard-candidates "${WILDGUARD_CANDIDATES}" \
+      --wildguard-pairs-dir "${WILDGUARD_PAIRS_DIR}" \
+      --augmented-pairs-dir "${AUGMENTED_MERGED_PAIRS_DIR}" \
+      --sft-examples-output "${SFT_EXAMPLES_OUTPUT}" \
+      --balanced-pairs-dir "${AUG_BALANCED_DIR}" \
+      --dpo-output-dir "${AUG_DPO_OUTPUT}" \
+      --sft-pred-dir "${AUG_SFT_PRED_DIR}" \
+      --epochs "${EPOCHS}" \
+      --learning-rate "${LEARNING_RATE}" \
+      --batch-size "${BATCH_SIZE}" \
+      --grad-accum "${GRAD_ACCUM}" \
+      --dpo-beta "${DPO_BETA}" \
+      --seed "${SEED}" \
+      --wandb-project "${WANDB_PROJECT}" \
+      --skip-steps 1,6
+    ;;
+
+  *)
+    echo "ERROR: Unknown STAGE='${STAGE}'"
+    exit 2
+    ;;
+esac
+
+echo ""
+echo "Stage ${STAGE} completed."

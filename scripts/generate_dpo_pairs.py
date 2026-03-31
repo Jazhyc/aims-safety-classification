@@ -276,23 +276,33 @@ def run(args):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # 1. Load dataset — HF train split only
-    # ------------------------------------------------------------------
-    print("\n=== Loading dataset (HF train split) ===")
-    train_dataset = preprocess_data(split="train")
-    train_dataset = apply_binary_harm_mapping(train_dataset, binary_harm_mapping=True)
-
-    print(f"  Train: {len(train_dataset)}")
-    examples = list(train_dataset)
-
-    # ------------------------------------------------------------------
-    # 2. Early-load parsed samples (if provided) to decide which models
-    #    are actually needed before allocating GPU memory.
+    # 1. Load dataset — HF train split OR custom JSONL
     # ------------------------------------------------------------------
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
     from transformers import AutoTokenizer
 
+    if args.from_jsonl:
+        print(f"\n=== Loading prompts from {args.from_jsonl} ===")
+        with open(args.from_jsonl, encoding="utf-8") as fh:
+            raw_records = [json.loads(line) for line in fh if line.strip()]
+        examples = [
+            {"id": r["id"], "prompt": r["prompt"],
+             "intent": None, "Annotator Harm": r["gold_harm"]}
+            for r in raw_records
+        ]
+        print(f"  Loaded {len(examples)} prompts")
+    else:
+        print("\n=== Loading dataset (HF train split) ===")
+        train_dataset = preprocess_data(split="train")
+        train_dataset = apply_binary_harm_mapping(train_dataset, binary_harm_mapping=True)
+        print(f"  Train: {len(train_dataset)}")
+        examples = list(train_dataset)
+
+    # ------------------------------------------------------------------
+    # 2. Early-load parsed samples (if provided) to decide which models
+    #    are actually needed before allocating GPU memory.
+    # ------------------------------------------------------------------
     all_parsed = None
     if args.from_samples:
         print(f"\n=== Loading parsed samples from {args.from_samples} ===")
@@ -521,7 +531,7 @@ def run(args):
         prompt      = d["prompt"]
         ex_id       = d["id"]
 
-        if not gold_harm or not gold_intent:
+        if not gold_harm:
             n_no_gold += 1
             continue
 
@@ -535,8 +545,20 @@ def run(args):
             n_no_valid += 1
             continue
 
-        # chosen is always the ground-truth annotation
-        chosen_text = f"Intent: {gold_intent}; Harm: {gold_harm}"
+        if gold_intent:
+            # Annotated data: chosen is always the ground-truth annotation.
+            chosen_text = f"Intent: {gold_intent}; Harm: {gold_harm}"
+            chosen_intent_str = gold_intent
+        else:
+            # WildGuardMix (no gold annotation): pick the longest T=0-correct sample
+            # as a synthetic chosen. If none agree with gold_harm, skip this prompt.
+            correct = [s for s in valid if s["harm_t0"] == gold_harm]
+            if not correct:
+                n_no_valid += 1
+                continue
+            best = max(correct, key=lambda s: len(s["intent"]))
+            chosen_intent_str = best["intent"]
+            chosen_text = f"Intent: {chosen_intent_str}; Harm: {gold_harm}"
 
         # Priority 1: generated samples whose T=0 label disagrees with gold
         rejecteds = [s for s in valid if s["harm_t0"] != gold_harm]
@@ -562,7 +584,7 @@ def run(args):
         dpo_pairs.append({
             "id":              ex_id,
             "prompt":          prompt,
-            "gold_intent":     gold_intent,
+            "gold_intent":     chosen_intent_str,
             "gold_harm":       gold_harm,
             "chosen":          chosen_text,
             "rejected":        f"Intent: {rejected_dpo['intent']}; Harm: {rejected_dpo['harm_t0']}",
@@ -575,7 +597,7 @@ def run(args):
         contrastive_pairs.append({
             "id":          ex_id,
             "prompt":      prompt,
-            "gold_intent": gold_intent,
+            "gold_intent": chosen_intent_str,
             "gold_harm":   gold_harm,
             "chosen":      chosen_text,
             "rejecteds": [
@@ -610,7 +632,8 @@ def run(args):
         "temperature":           args.temperature,
         "num_samples":           args.num_samples,
         "intent_filter":         args.intent_filter,
-        "split":                 "train",
+        "from_jsonl":            args.from_jsonl,
+        "split":                 "train" if not args.from_jsonl else "custom_jsonl",
         "n_prompts_total":       n_total,
         "n_skipped_no_gold":  n_no_gold,
         "n_skipped_no_valid": n_no_valid,
@@ -685,6 +708,16 @@ def parse_args():
         "--from-samples", type=str, default=None,
         help="Path to parsed_samples.jsonl from a previous run. "
              "Skips the T=temperature generation step.",
+    )
+
+    # Custom input dataset (for WildGuardMix augmentation)
+    p.add_argument(
+        "--from-jsonl", type=str, default=None,
+        help="Path to a JSONL file with {id, prompt, gold_harm} records to use as "
+             "the prompt source instead of the HF annotated train split. "
+             "Intended for WildGuardMix augmentation (see filter_wildguard_easy.py). "
+             "Note: gold_intent will be None for these records, so they will not "
+             "contribute DPO pairs via the intent-filter path.",
     )
 
     # Intent filter

@@ -246,6 +246,32 @@ def load_reasoning_traces_dataset(data_cfg):
     return Dataset.from_list(filtered)
 
 
+def load_extra_train_data(path: str):
+    """
+    Load supplementary training examples from a JSONL file.
+
+    Expected columns per record: prompt, intent, gold_harm.
+    Returns a HuggingFace Dataset with columns (prompt, intent, Annotator Harm)
+    so it can be passed directly through create_prompt_completion in causal.py.
+    """
+    import json
+    from datasets import Dataset
+
+    records = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                r = json.loads(line)
+                records.append({
+                    "prompt":         r["prompt"],
+                    "intent":         r["intent"],
+                    "Annotator Harm": r["gold_harm"],
+                })
+    print(f"  Loaded {len(records)} extra training examples from {path}")
+    return Dataset.from_list(records)
+
+
 def save_preds_causal(model_name, llm, lora_request, tokenizer, eval_dataset, split_name, config, max_length=256):
     """
     Generate predictions using VLLM for faster inference.
@@ -681,6 +707,16 @@ def run_causal_flow(config):
         print("Loading dataset splits from Hub...")
         train_dataset = _load_and_format("train")
         val_dataset = _load_and_format("validation")
+
+        extra_train_path = data_cfg.get("extra_train_data")
+        if extra_train_path:
+            from datasets import concatenate_datasets
+            extra_ds = load_extra_train_data(extra_train_path)
+            extra_ds = apply_binary_harm_mapping(extra_ds, binary_harm_mapping)
+            extra_ds = extra_ds.map(create_prompt_completion, batched=True)
+            train_dataset = concatenate_datasets([train_dataset, extra_ds])
+            print(f"  Augmented train with {len(extra_ds)} extra examples from {extra_train_path}")
+
         print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
 
     # Print example of training data

@@ -36,6 +36,10 @@ data:
   # use_reasoning_traces: train on teacher-generated chain-of-thought traces instead of raw annotations.
   # Requires pre-generated traces from scripts/distillation/generate_reasoning_traces.py.
   use_reasoning_traces: false
+  # extra_train_data: path to a JSONL file with {prompt, intent, gold_harm} records to augment
+  # the annotated train split. Used for condition 4 (easy WildGuardMix augmentation).
+  # Generate with: run_preference_pipeline.py --augment (pre-steps A/B/C)
+  # extra_train_data: "data/wildguard_easy/sft_examples.jsonl"
 
 sft_models_dir: "models/sft"
 
