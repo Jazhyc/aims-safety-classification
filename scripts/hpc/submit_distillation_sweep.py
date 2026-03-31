@@ -36,25 +36,27 @@ from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_
 # Add more teachers here once their traces are generated.
 TEACHER_MODELS = [
     ("moonshotai/kimi-k2.5",                           "moonshotai-kimi-k2.5"),
-    # ("openai/gpt-oss-120b",                            "openai-gpt-oss-120b"),
-    # ("RedHatAI/gemma-3-27b-it-quantized.w4a16",        "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
+    ("openai/gpt-oss-120b",                            "openai-gpt-oss-120b"),
+    ("RedHatAI/gemma-3-27b-it-quantized.w4a16",        "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
 ]
 
 # (HuggingFace model ID, short slug used in run names and W&B project names)
 STUDENT_MODELS = [
     ("meta-llama/Llama-3.1-8B-Instruct",        "llama-3.1-8b"),
-    # ("google/gemma-3-12b-it",                    "gemma-3-12b"),
+    ("google/gemma-3-12b-it",                    "gemma-3-12b"),
+    ("mistralai/Ministral-8B-Instruct-2410",     "ministral-8b"),
+    ("Qwen/Qwen3-8B",                            "qwen3-8b"),
+    
+    # Ignore MOE for now
     # ("openai/gpt-oss-20b",                       "gpt-oss-20b"),
-    # ("mistralai/Ministral-3-8B-Instruct-2512",   "ministral-3-8b"),
-    # ("Qwen/Qwen3-8B",                            "qwen3-8b"),
 ]
 
 LEARNING_RATES = [
     1e-5,
-    # 2e-5,
-    # 5e-5,
-    # 1e-4,
-    # 2e-4,
+    2e-5,
+    5e-5,
+    1e-4,
+    2e-4,
 ]
 
 CONDITIONS = ["without_intent", "with_intent"]

@@ -162,15 +162,6 @@ def _normalise_harm(label: str) -> str:
     return label
 
 
-def _gt_word_recall(gt: str, pred: str) -> float:
-    """Fraction of GT intent words that appear in the predicted intent."""
-    gt_words = {re.sub(r"[^a-z0-9]", "", w) for w in gt.lower().split() if w.strip()}
-    if not gt_words:
-        return 1.0
-    pred_words = {re.sub(r"[^a-z0-9]", "", w) for w in pred.lower().split() if w.strip()}
-    return len(gt_words & pred_words) / len(gt_words)
-
-
 def load_reasoning_traces_dataset(data_cfg):
     """
     Load reasoning traces from a parsed_results.json file produced by
@@ -219,7 +210,6 @@ def load_reasoning_traces_dataset(data_cfg):
     available_conditions = list({r.get("condition") for r in records})
     filtered = []
     n_dropped_harm = 0
-    n_dropped_intent = 0
     for rec in records:
         if rec.get("condition") != condition:
             continue
@@ -234,13 +224,6 @@ def load_reasoning_traces_dataset(data_cfg):
             if pred_harm and harm_binary != _normalise_harm(pred_harm):
                 n_dropped_harm += 1
                 continue
-
-            if condition == "with_intent":
-                gt_intent   = rec.get("ground_truth", {}).get("intent", "")
-                pred_intent = (rec.get("predicted") or {}).get("prompt_intent", "")
-                if _gt_word_recall(gt_intent, pred_intent) < 1.0:
-                    n_dropped_intent += 1
-                    continue
 
         filtered.append({
             "id": str(rec.get("annotation_id") or rec.get("wildguard_id", "")),
@@ -259,7 +242,6 @@ def load_reasoning_traces_dataset(data_cfg):
     print(f"  Loaded {len(filtered)} examples (condition='{condition}')")
     if filter_disagreements:
         print(f"  Filtered (harm disagreement):   {n_dropped_harm}")
-        print(f"  Filtered (intent disagreement): {n_dropped_intent}")
     return Dataset.from_list(filtered)
 
 

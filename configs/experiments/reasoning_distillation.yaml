@@ -49,8 +49,8 @@ data:
   # "with_intent":    trains a generator  (Reasoning + Intent + Prompt harm)
   reasoning_traces_condition: "without_intent"
 
-  # Drop examples where the teacher's predicted harm label or intent (with_intent only)
-  # disagrees with the ground truth — keeps reasoning-to-label chains consistent.
+  # Drop examples where the teacher's predicted harm label disagrees with the
+  # ground truth — keeps reasoning-to-label chains consistent.
   filter_teacher_disagreements: true
 
 # Base directory for distillation model adapters. Override this to point to a
