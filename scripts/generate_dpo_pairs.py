@@ -332,7 +332,7 @@ def run(args):
                 model=judge_model_id,
                 gpu_memory_utilization=0.90,
                 max_model_len=4096,
-                dtype="bfloat16",
+                dtype="auto",        # auto-detects quantization (e.g. W4A16)
                 enforce_eager=True,
             )
         else:
