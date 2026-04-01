@@ -32,7 +32,7 @@ from intention_jailbreak.training import (
 )
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="train_config")
+@hydra.main(version_base=None, config_path="../../configs", config_name="train_config")
 def main(cfg: DictConfig):
     """Main training function."""
     
