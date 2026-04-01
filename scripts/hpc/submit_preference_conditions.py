@@ -39,11 +39,14 @@ def submit_stage(
     stage: str,
     export_vars: dict[str, str],
     template: str,
+    sbatch_opts: list[str] | None = None,
     dependency: str | None = None,
     dry_run: bool = False,
 ) -> str:
     env = {**export_vars, "STAGE": stage}
     cmd = ["sbatch"]
+    if sbatch_opts:
+        cmd.extend(sbatch_opts)
     if dependency:
         cmd.append(f"--dependency=afterok:{dependency}")
     cmd.append(f"--export={_export_arg(env)}")
@@ -73,6 +76,18 @@ def parse_args() -> argparse.Namespace:
                    help="Pass --force-from N to run_preference_pipeline.py stages.")
     p.add_argument("--force-augment", action="store_true",
                    help="Pass --force-augment to augmentation stages.")
+    p.add_argument("--all-gpushort", action="store_true",
+                   help="Run all stages on gpushort (4h max; may timeout for long training stages).")
+
+    # Lean default resources (tuned for faster scheduling)
+    p.add_argument("--short-partition", default="gpushort")
+    p.add_argument("--long-partition", default="gpumedium")
+    p.add_argument("--short-time", default="04:00:00")
+    p.add_argument("--long-time", default="10:00:00")
+    p.add_argument("--short-mem", default="32G")
+    p.add_argument("--long-mem", default="48G")
+    p.add_argument("--short-cpus", type=int, default=4)
+    p.add_argument("--long-cpus", type=int, default=6)
 
     p.add_argument("--wandb-project", default="intention-jailbreak")
     p.add_argument("--wandb-project-sft", default="sft-hyperparam-sweep")
@@ -152,28 +167,74 @@ def main() -> None:
 
     jobs: list[tuple[str, str]] = []
 
+    def stage_sbatch_opts(stage: str) -> list[str]:
+        short = [
+            f"--partition={args.short_partition}",
+            f"--time={args.short_time}",
+            f"--mem={args.short_mem}",
+            f"--cpus-per-task={args.short_cpus}",
+            "--gpus-per-node=a100:1",
+        ]
+        long = [
+            f"--partition={args.long_partition}",
+            f"--time={args.long_time}",
+            f"--mem={args.long_mem}",
+            f"--cpus-per-task={args.long_cpus}",
+            "--gpus-per-node=a100:1",
+        ]
+        if args.all_gpushort:
+            return short
+        if stage in {"hard_dpo", "augment_prep"}:
+            return short
+        return long
+
     hard_job = submit_stage(
-        "hard_dpo", export_vars, args.template, dependency=None, dry_run=args.dry_run
+        "hard_dpo",
+        export_vars,
+        args.template,
+        sbatch_opts=stage_sbatch_opts("hard_dpo"),
+        dependency=None,
+        dry_run=args.dry_run,
     )
     jobs.append(("hard_dpo", hard_job))
 
     judge_job = submit_stage(
-        "judge_dpo", export_vars, args.template, dependency=None, dry_run=args.dry_run
+        "judge_dpo",
+        export_vars,
+        args.template,
+        sbatch_opts=stage_sbatch_opts("judge_dpo"),
+        dependency=None,
+        dry_run=args.dry_run,
     )
     jobs.append(("judge_dpo", judge_job))
 
     augment_prep_job = submit_stage(
-        "augment_prep", export_vars, args.template, dependency=hard_job, dry_run=args.dry_run
+        "augment_prep",
+        export_vars,
+        args.template,
+        sbatch_opts=stage_sbatch_opts("augment_prep"),
+        dependency=hard_job,
+        dry_run=args.dry_run,
     )
     jobs.append(("augment_prep", augment_prep_job))
 
     sft_aug_job = submit_stage(
-        "sft_aug", export_vars, args.template, dependency=augment_prep_job, dry_run=args.dry_run
+        "sft_aug",
+        export_vars,
+        args.template,
+        sbatch_opts=stage_sbatch_opts("sft_aug"),
+        dependency=augment_prep_job,
+        dry_run=args.dry_run,
     )
     jobs.append(("sft_aug", sft_aug_job))
 
     dpo_aug_job = submit_stage(
-        "dpo_aug", export_vars, args.template, dependency=sft_aug_job, dry_run=args.dry_run
+        "dpo_aug",
+        export_vars,
+        args.template,
+        sbatch_opts=stage_sbatch_opts("dpo_aug"),
+        dependency=sft_aug_job,
+        dry_run=args.dry_run,
     )
     jobs.append(("dpo_aug", dpo_aug_job))
 

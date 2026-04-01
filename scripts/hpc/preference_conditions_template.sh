@@ -123,11 +123,29 @@ case "${STAGE}" in
     ;;
 
   judge_dpo)
+    # Two-pass judge flow to avoid loading base + large judge model at once:
+    # pass 1 -> generate samples with SFT model
+    # pass 2 -> run intent filter with judge model from cached samples
+    python scripts/generate_dpo_pairs.py \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model "${BASE_MODEL}" \
+      --output-dir "${JUDGE_PAIRS_DIR}" \
+      --temperature "${TEMPERATURE}" \
+      --num-samples "${K_SAMPLES}" \
+      --max-model-len "${MAX_MODEL_LEN}"
+
+    python scripts/generate_dpo_pairs.py \
+      --from-samples "${JUDGE_PAIRS_DIR}/parsed_samples.jsonl" \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model "${BASE_MODEL}" \
+      --output-dir "${JUDGE_PAIRS_DIR}" \
+      --intent-filter \
+      --judge-model "${JUDGE_MODEL}" \
+      --max-model-len "${MAX_MODEL_LEN}"
+
     python scripts/run_preference_pipeline.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
-      --intent-filter \
-      --judge-model "${JUDGE_MODEL}" \
       --pairs-dir "${JUDGE_PAIRS_DIR}" \
       --balanced-pairs-dir "${JUDGE_BALANCED_DIR}" \
       --dpo-output-dir "${JUDGE_DPO_OUTPUT}" \
@@ -143,7 +161,7 @@ case "${STAGE}" in
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
-      --skip-steps 6
+      --skip-steps 1,6
     ;;
 
   augment_prep)
