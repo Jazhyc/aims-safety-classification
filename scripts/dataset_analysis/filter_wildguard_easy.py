@@ -1,11 +1,10 @@
 """
 Filter WildGuardMix training set for high-confidence ("easy") examples.
 
-Uses a single ModernBERT sequence-classification model (typically from
-HuggingFace Hub) to score each prompt and keeps only examples where the model is
-highly confident — either harmful (prob > harm_threshold) or safe
-(prob < safe_threshold). These examples provide clean, unambiguous signal for
-augmenting the SFT and DPO training sets.
+Uses the trained ModernBERT ensemble classifier checkpoint to score each prompt
+and keeps only examples where the model is highly confident — either harmful
+(prob > harm_threshold) or safe (prob < safe_threshold). These examples provide
+clean, unambiguous signal for augmenting the SFT and DPO training sets.
 
 Examples from the human-annotated set (Jazhyc/wildguard-annotated-intents) are
 removed to prevent train/eval leakage.
@@ -37,11 +36,12 @@ from datasets import Dataset
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from intention_jailbreak.dataset import wildguardmix
+from intention_jailbreak.ensemble.deepensembleclassifier import DeepEnsembleClassifier
 from intention_jailbreak.model_generation.preprocessing import preprocess_data
 from intention_jailbreak.training import tokenize_dataset
 
 
-MODEL_PATH = "answerdotai/ModernBERT-large"
+MODEL_PATH = "models/modernbert-ensemble/final_model"
 BATCH_SIZE = 256
 MAX_LENGTH = 2048
 NUM_WORKERS = 4
@@ -57,12 +57,13 @@ def load_annotated_prompts() -> set:
 
 
 def load_model_and_tokenizer(model_path: str, device: torch.device):
-    """Load single-model ModernBERT classifier and tokenizer."""
+    """Load ModernBERT ensemble classifier and tokenizer."""
     print(f"\nLoading model from: {model_path}")
     tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model = AutoModelForSequenceClassification.from_pretrained(
+    model = DeepEnsembleClassifier.from_pretrained(
         model_path,
-        torch_dtype=torch.bfloat16,
+        model_class=AutoModelForSequenceClassification,
+        dtype=torch.bfloat16,
     )
 
     model = model.to(device)
@@ -159,7 +160,7 @@ def main(args):
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--model-path", type=str, default=MODEL_PATH,
-                   help="HF model ID or path to ModernBERT sequence-classification checkpoint.")
+                   help="Path to trained ModernBERT ensemble checkpoint.")
     p.add_argument("--harm-threshold", type=float, default=0.85,
                    help="Minimum harmful_probability to include as 'harmful'.")
     p.add_argument("--safe-threshold", type=float, default=0.15,

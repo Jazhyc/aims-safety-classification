@@ -88,6 +88,7 @@ def step1_generate_pairs(args) -> bool:
         "--output-dir",     args.pairs_dir,
         "--temperature",    str(args.temperature),
         "--num-samples",    str(args.k_samples),
+        "--max-model-len",  str(args.max_model_len),
     ]
     if args.intent_filter:
         cmd += ["--intent-filter", "--judge-model", args.judge_model]
@@ -204,6 +205,7 @@ def step_b_generate_wildguard_pairs(args) -> bool:
         "--output-dir",     args.wildguard_pairs_dir,
         "--temperature",    str(args.temperature),
         "--num-samples",    str(args.k_samples),
+        "--max-model-len",  str(args.max_model_len),
     ]
     return run(cmd, "Pre B – Generate DPO pairs for WildGuardMix easy examples")
 
@@ -349,7 +351,7 @@ def parse_args():
     # Augmentation paths (only used with --augment)
     p.add_argument("--wildguard-candidates",  default="data/wildguard_easy/candidates.jsonl",
                    help="Output of filter_wildguard_easy.py.")
-    p.add_argument("--wildguard-model-path",  default="answerdotai/ModernBERT-large",
+    p.add_argument("--wildguard-model-path",  default="models/modernbert-ensemble/final_model",
                    help="HF model ID or local path used by filter_wildguard_easy.py.")
     p.add_argument("--wildguard-pairs-dir",   default="data/wildguard_easy/dpo_pairs",
                    help="DPO pairs generated from WildGuardMix easy examples.")
@@ -361,6 +363,8 @@ def parse_args():
     # Pair generation
     p.add_argument("--temperature",  type=float, default=0.8)
     p.add_argument("--k-samples",    type=int,   default=5)
+    p.add_argument("--max-model-len", type=int,  default=4096,
+                   help="vLLM max context length used in pair generation.")
     p.add_argument("--intent-filter", action="store_true",
                    help="Run LLM judge on correct-label samples and add bad_match "
                         "outputs as extra DPO rejected pairs (condition 3).")

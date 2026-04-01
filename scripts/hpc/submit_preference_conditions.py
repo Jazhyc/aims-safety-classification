@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--base-sft-adapter", default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--judge-model", default="google/gemma-3-27b-it")
+    p.add_argument("--max-model-len", type=int, default=4096)
     p.add_argument("--seed", type=int, default=22)
 
     p.add_argument("--wandb-project", default="intention-jailbreak")
@@ -81,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sft-pred-dir-judge", default="data/predictions/sft_judge")
 
     p.add_argument("--wildguard-candidates", default="data/wildguard_easy/candidates.jsonl")
-    p.add_argument("--wildguard-model-path", default="answerdotai/ModernBERT-large")
+    p.add_argument("--wildguard-model-path", default="models/modernbert-ensemble/final_model")
     p.add_argument("--wildguard-pairs-dir", default="data/wildguard_easy/dpo_pairs")
     p.add_argument("--sft-examples-output", default="data/wildguard_easy/sft_examples.jsonl")
     p.add_argument("--augmented-merged-pairs-dir", default="data/dpo_pairs/augmented")
@@ -112,6 +113,7 @@ def main() -> None:
         "BASE_MODEL": args.base_model,
         "BASE_SFT_ADAPTER": args.base_sft_adapter,
         "JUDGE_MODEL": args.judge_model,
+        "MAX_MODEL_LEN": str(args.max_model_len),
         "SEED": str(args.seed),
         "WANDB_PROJECT": args.wandb_project,
         "WANDB_PROJECT_SFT": args.wandb_project_sft,

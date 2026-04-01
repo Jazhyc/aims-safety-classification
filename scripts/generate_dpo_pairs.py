@@ -332,7 +332,7 @@ def run(args):
             max_loras=1,
             limit_mm_per_prompt={"image": 0},
             gpu_memory_utilization=0.90,
-            max_model_len=2048,
+            max_model_len=args.max_model_len,
             dtype="bfloat16",
             enforce_eager=True,
         )
@@ -702,6 +702,10 @@ def parse_args():
                    help="Sampling temperature for negative generation.")
     p.add_argument("--top-p",       type=float, default=0.95)
     p.add_argument("--max-new-tokens", type=int, default=64)
+    p.add_argument(
+        "--max-model-len", type=int, default=4096,
+        help="Maximum total prompt length for vLLM generation.",
+    )
 
     # Re-use previous generation
     p.add_argument(

@@ -40,6 +40,7 @@ JUDGE_MODEL="${JUDGE_MODEL:-google/gemma-3-27b-it}"
 SEED="${SEED:-22}"
 TEMPERATURE="${TEMPERATURE:-0.8}"
 K_SAMPLES="${K_SAMPLES:-5}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 EPOCHS="${EPOCHS:-3}"
 LEARNING_RATE="${LEARNING_RATE:-5e-5}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
@@ -62,7 +63,7 @@ SFT_PRED_DIR_JUDGE="${SFT_PRED_DIR_JUDGE:-data/predictions/sft_judge}"
 
 ANNOTATED_PAIRS_DIR="${ANNOTATED_PAIRS_DIR:-${HARD_PAIRS_DIR}}"
 WILDGUARD_CANDIDATES="${WILDGUARD_CANDIDATES:-data/wildguard_easy/candidates.jsonl}"
-WILDGUARD_MODEL_PATH="${WILDGUARD_MODEL_PATH:-answerdotai/ModernBERT-large}"
+WILDGUARD_MODEL_PATH="${WILDGUARD_MODEL_PATH:-models/modernbert-ensemble/final_model}"
 WILDGUARD_PAIRS_DIR="${WILDGUARD_PAIRS_DIR:-data/wildguard_easy/dpo_pairs}"
 SFT_EXAMPLES_OUTPUT="${SFT_EXAMPLES_OUTPUT:-data/wildguard_easy/sft_examples.jsonl}"
 AUGMENTED_MERGED_PAIRS_DIR="${AUGMENTED_MERGED_PAIRS_DIR:-data/dpo_pairs/augmented}"
@@ -95,6 +96,7 @@ case "${STAGE}" in
       --sft-pred-dir "${SFT_PRED_DIR_HARD}" \
       --temperature "${TEMPERATURE}" \
       --k-samples "${K_SAMPLES}" \
+      --max-model-len "${MAX_MODEL_LEN}" \
       --epochs "${EPOCHS}" \
       --learning-rate "${LEARNING_RATE}" \
       --batch-size "${BATCH_SIZE}" \
@@ -117,6 +119,7 @@ case "${STAGE}" in
       --sft-pred-dir "${SFT_PRED_DIR_JUDGE}" \
       --temperature "${TEMPERATURE}" \
       --k-samples "${K_SAMPLES}" \
+      --max-model-len "${MAX_MODEL_LEN}" \
       --epochs "${EPOCHS}" \
       --learning-rate "${LEARNING_RATE}" \
       --batch-size "${BATCH_SIZE}" \
@@ -141,6 +144,7 @@ case "${STAGE}" in
       --sft-examples-output "${SFT_EXAMPLES_OUTPUT}" \
       --temperature "${TEMPERATURE}" \
       --k-samples "${K_SAMPLES}" \
+      --max-model-len "${MAX_MODEL_LEN}" \
       --seed "${SEED}" \
       --skip-steps 1,2,3,4,5,6
     ;;
