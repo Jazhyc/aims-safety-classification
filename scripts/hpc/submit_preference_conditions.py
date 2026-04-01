@@ -67,6 +67,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--judge-model", default="google/gemma-3-27b-it")
     p.add_argument("--max-model-len", type=int, default=4096)
     p.add_argument("--seed", type=int, default=22)
+    p.add_argument("--force", action="store_true",
+                   help="Pass --force to run_preference_pipeline.py stages.")
+    p.add_argument("--force-from", type=int, default=None,
+                   help="Pass --force-from N to run_preference_pipeline.py stages.")
+    p.add_argument("--force-augment", action="store_true",
+                   help="Pass --force-augment to augmentation stages.")
 
     p.add_argument("--wandb-project", default="intention-jailbreak")
     p.add_argument("--wandb-project-sft", default="sft-hyperparam-sweep")
@@ -115,6 +121,9 @@ def main() -> None:
         "JUDGE_MODEL": args.judge_model,
         "MAX_MODEL_LEN": str(args.max_model_len),
         "SEED": str(args.seed),
+        "FORCE": "1" if args.force else "0",
+        "FORCE_FROM": "" if args.force_from is None else str(args.force_from),
+        "FORCE_AUGMENT": "1" if args.force_augment else "0",
         "WANDB_PROJECT": args.wandb_project,
         "WANDB_PROJECT_SFT": args.wandb_project_sft,
         "HARD_PAIRS_DIR": args.hard_pairs_dir,

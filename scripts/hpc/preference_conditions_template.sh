@@ -46,6 +46,9 @@ LEARNING_RATE="${LEARNING_RATE:-5e-5}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
 GRAD_ACCUM="${GRAD_ACCUM:-8}"
 DPO_BETA="${DPO_BETA:-0.1}"
+FORCE="${FORCE:-0}"
+FORCE_FROM="${FORCE_FROM:-}"
+FORCE_AUGMENT="${FORCE_AUGMENT:-0}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-intention-jailbreak}"
 WANDB_PROJECT_SFT="${WANDB_PROJECT_SFT:-sft-hyperparam-sweep}"
@@ -85,6 +88,17 @@ echo "  Project root: ${PROJECT_ROOT}"
 echo "  Base model  : ${BASE_MODEL}"
 echo "======================================================================"
 
+PIPELINE_RESTART_ARGS=()
+if [ "${FORCE}" = "1" ]; then
+  PIPELINE_RESTART_ARGS+=(--force)
+fi
+if [ -n "${FORCE_FROM}" ]; then
+  PIPELINE_RESTART_ARGS+=(--force-from "${FORCE_FROM}")
+fi
+if [ "${FORCE_AUGMENT}" = "1" ]; then
+  PIPELINE_RESTART_ARGS+=(--force-augment)
+fi
+
 case "${STAGE}" in
   hard_dpo)
     python scripts/run_preference_pipeline.py \
@@ -104,6 +118,7 @@ case "${STAGE}" in
       --dpo-beta "${DPO_BETA}" \
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
+      "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 6
     ;;
 
@@ -127,6 +142,7 @@ case "${STAGE}" in
       --dpo-beta "${DPO_BETA}" \
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
+      "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 6
     ;;
 
@@ -146,6 +162,7 @@ case "${STAGE}" in
       --k-samples "${K_SAMPLES}" \
       --max-model-len "${MAX_MODEL_LEN}" \
       --seed "${SEED}" \
+      "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 1,2,3,4,5,6
     ;;
 
@@ -184,6 +201,7 @@ case "${STAGE}" in
       --dpo-beta "${DPO_BETA}" \
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
+      "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 1,6
     ;;
 
