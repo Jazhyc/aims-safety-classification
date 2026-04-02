@@ -64,6 +64,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--dry-run", action="store_true", help="Print sbatch commands only.")
     p.add_argument("--template", default=TEMPLATE, help="SLURM template script path.")
+    p.add_argument("--start-from", default=None,
+                   choices=["hard_dpo", "judge_dpo", "augment_prep", "sft_aug", "dpo_aug"],
+                   help="Skip all stages before this one (useful for resuming after a failure).")
 
     p.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--base-sft-adapter", default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")

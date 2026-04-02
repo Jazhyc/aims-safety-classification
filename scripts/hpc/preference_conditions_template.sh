@@ -188,7 +188,7 @@ case "${STAGE}" in
     python scripts/baselines/train_generator.py \
       --config-name=llm_sweep \
       model.name="${BASE_MODEL}" \
-      data.extra_train_data="${SFT_EXAMPLES_OUTPUT}" \
+      +data.extra_train_data="${SFT_EXAMPLES_OUTPUT}" \
       paths.model_save_dir="${AUG_SFT_MODEL_SAVE_DIR}" \
       paths.output_dir="${AUG_SFT_OUTPUT_DIR}" \
       paths.logs_dir="${AUG_SFT_LOGS_DIR}" \
