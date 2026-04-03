@@ -49,6 +49,7 @@ DPO_BETA="${DPO_BETA:-0.1}"
 FORCE="${FORCE:-0}"
 FORCE_FROM="${FORCE_FROM:-}"
 FORCE_AUGMENT="${FORCE_AUGMENT:-0}"
+ATN_IMPL="${ATN_IMPL:-flash_attention_2}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-intention-jailbreak}"
 WANDB_PROJECT_SFT="${WANDB_PROJECT_SFT:-sft-hyperparam-sweep}"
@@ -188,6 +189,7 @@ case "${STAGE}" in
     python scripts/baselines/train_generator.py \
       --config-name=llm_sweep \
       model.name="${BASE_MODEL}" \
+      model.attn_implementation="${ATN_IMPL}" \
       +data.extra_train_data="${SFT_EXAMPLES_OUTPUT}" \
       paths.model_save_dir="${AUG_SFT_MODEL_SAVE_DIR}" \
       paths.output_dir="${AUG_SFT_OUTPUT_DIR}" \

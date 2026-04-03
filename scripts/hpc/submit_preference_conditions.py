@@ -169,6 +169,22 @@ def main() -> None:
     }
 
     jobs: list[tuple[str, str]] = []
+    submitted_job_ids: dict[str, str] = {}
+
+    stage_order = ["hard_dpo", "judge_dpo", "augment_prep", "sft_aug", "dpo_aug"]
+    base_dependencies = {
+        "hard_dpo": None,
+        "judge_dpo": None,
+        "augment_prep": "hard_dpo",
+        "sft_aug": "augment_prep",
+        "dpo_aug": "sft_aug",
+    }
+
+    if args.start_from:
+        start_idx = stage_order.index(args.start_from)
+        stages_to_submit = stage_order[start_idx:]
+    else:
+        stages_to_submit = stage_order
 
     def stage_sbatch_opts(stage: str) -> list[str]:
         short = [
@@ -191,55 +207,19 @@ def main() -> None:
             return short
         return long
 
-    hard_job = submit_stage(
-        "hard_dpo",
-        export_vars,
-        args.template,
-        sbatch_opts=stage_sbatch_opts("hard_dpo"),
-        dependency=None,
-        dry_run=args.dry_run,
-    )
-    jobs.append(("hard_dpo", hard_job))
-
-    judge_job = submit_stage(
-        "judge_dpo",
-        export_vars,
-        args.template,
-        sbatch_opts=stage_sbatch_opts("judge_dpo"),
-        dependency=None,
-        dry_run=args.dry_run,
-    )
-    jobs.append(("judge_dpo", judge_job))
-
-    augment_prep_job = submit_stage(
-        "augment_prep",
-        export_vars,
-        args.template,
-        sbatch_opts=stage_sbatch_opts("augment_prep"),
-        dependency=hard_job,
-        dry_run=args.dry_run,
-    )
-    jobs.append(("augment_prep", augment_prep_job))
-
-    sft_aug_job = submit_stage(
-        "sft_aug",
-        export_vars,
-        args.template,
-        sbatch_opts=stage_sbatch_opts("sft_aug"),
-        dependency=augment_prep_job,
-        dry_run=args.dry_run,
-    )
-    jobs.append(("sft_aug", sft_aug_job))
-
-    dpo_aug_job = submit_stage(
-        "dpo_aug",
-        export_vars,
-        args.template,
-        sbatch_opts=stage_sbatch_opts("dpo_aug"),
-        dependency=sft_aug_job,
-        dry_run=args.dry_run,
-    )
-    jobs.append(("dpo_aug", dpo_aug_job))
+    for stage in stages_to_submit:
+        dep_stage = base_dependencies[stage]
+        dep_job_id = submitted_job_ids.get(dep_stage) if dep_stage else None
+        job_id = submit_stage(
+            stage,
+            export_vars,
+            args.template,
+            sbatch_opts=stage_sbatch_opts(stage),
+            dependency=dep_job_id,
+            dry_run=args.dry_run,
+        )
+        submitted_job_ids[stage] = job_id
+        jobs.append((stage, job_id))
 
     print("\nSubmitted stages:")
     for stage, job_id in jobs:
