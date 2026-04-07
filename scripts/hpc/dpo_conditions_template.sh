@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=preference-cond
+#SBATCH --job-name=dpo-cond
 #SBATCH --time=10:00:00
 #SBATCH --mem=64GB
 #SBATCH --partition=gpu
