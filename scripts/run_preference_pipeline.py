@@ -115,9 +115,12 @@ def step3_train_dpo(args) -> bool:
     if _cached(adapter_out):
         print(f"\n[SKIP] Step 3 – DPO adapter already exists at {args.dpo_output_dir}_adapter")
         return True
+    # Unbalanced mode: train directly on raw pairs (no undersampling); use
+    # harmful_weight to correct class imbalance in the loss instead.
+    pairs_dir = args.pairs_dir if args.unbalanced else args.balanced_pairs_dir
     cmd = [
         sys.executable, "scripts/train_dpo.py",
-        "--pairs-path",           str(Path(args.balanced_pairs_dir) / "dpo_pairs.jsonl"),
+        "--pairs-path",           str(Path(pairs_dir) / "dpo_pairs.jsonl"),
         "--adapter-path",         args.adapter_path,
         "--base-model",           args.base_model,
         "--output-dir",           args.dpo_output_dir,
@@ -131,6 +134,8 @@ def step3_train_dpo(args) -> bool:
         "--wandb-project",        args.wandb_project,
         "--wandb-run",            f"dpo-beta{args.dpo_beta}",
     ]
+    if args.harmful_weight != 1.0:
+        cmd += ["--harmful-weight", str(args.harmful_weight)]
     return run(cmd, "Step 3 – DPO training")
 
 
@@ -378,6 +383,13 @@ def parse_args():
     p.add_argument("--batch-size",      type=int,   default=2)
     p.add_argument("--grad-accum",      type=int,   default=8)
     p.add_argument("--dpo-beta",        type=float, default=0.1)
+    p.add_argument("--harmful-weight",  type=float, default=1.0,
+                   help="Up-weight harmful pairs in DPO loss to correct class imbalance "
+                        "(use n_safe/n_harmful, e.g. 1.4 for unbalanced annotated pairs). "
+                        "Passed to train_dpo.py --harmful-weight.")
+    p.add_argument("--unbalanced",      action="store_true",
+                   help="Skip step 2 (pair balancing) and train on raw pairs with "
+                        "--harmful-weight to correct imbalance instead.")
 
     # Pipeline control
     p.add_argument("--augment",       action="store_true",

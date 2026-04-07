@@ -99,6 +99,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--judge-beta", type=float, default=None,
                    help="Override DPO beta for judge_dpo only.")
 
+    # ── Hard DPO overrides ─────────────────────────────────────────────────
+    p.add_argument("--unbalanced", action="store_true",
+                   help="Train hard_dpo on unbalanced pairs (skip undersampling step 2). "
+                        "Use with --harmful-weight to correct imbalance in the loss.")
+    p.add_argument("--harmful-weight", type=float, default=1.4,
+                   help="Loss up-weight for harmful pairs when --unbalanced is set "
+                        "(n_safe/n_harmful ≈ 1.4 for annotated intents).")
+
+    # ── Aug DPO overrides ──────────────────────────────────────────────────
+    p.add_argument("--aug-epochs", type=int, default=1,
+                   help="DPO epochs for dpo_aug. Default 1 to avoid over-training "
+                        "on the large augmented pair set (~19K pairs).")
+
     # ── SLURM resources ────────────────────────────────────────────────────
     p.add_argument("--short-partition", default="gpushort")
     p.add_argument("--long-partition", default="gpumedium")
@@ -139,6 +152,9 @@ def main() -> None:
         "JUDGE_FROM_SAMPLES": "1" if args.judge_from_samples else "",
         "JUDGE_EPOCHS":      "" if args.judge_epochs is None else str(args.judge_epochs),
         "JUDGE_BETA":        "" if args.judge_beta is None else str(args.judge_beta),
+        "UNBALANCED":        "1" if args.unbalanced else "0",
+        "HARMFUL_WEIGHT":    str(args.harmful_weight),
+        "AUG_EPOCHS":        str(args.aug_epochs),
     }
 
     def sbatch_opts(stage: str) -> list[str]:

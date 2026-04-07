@@ -48,6 +48,9 @@ LEARNING_RATE="${LEARNING_RATE:-5e-5}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
 GRAD_ACCUM="${GRAD_ACCUM:-8}"
 DPO_BETA="${DPO_BETA:-0.1}"
+HARMFUL_WEIGHT="${HARMFUL_WEIGHT:-1.0}"
+UNBALANCED="${UNBALANCED:-0}"
+AUG_EPOCHS="${AUG_EPOCHS:-1}"
 FORCE="${FORCE:-0}"
 FORCE_FROM="${FORCE_FROM:-}"
 FORCE_AUGMENT="${FORCE_AUGMENT:-0}"
@@ -110,6 +113,13 @@ fi
 
 case "${STAGE}" in
   hard_dpo)
+    HARD_SKIP_STEPS="6"
+    HARD_EXTRA_ARGS=()
+    if [ "${UNBALANCED}" = "1" ]; then
+      # Skip balancing step; use harmful_weight in loss instead
+      HARD_SKIP_STEPS="2,6"
+      HARD_EXTRA_ARGS+=(--unbalanced --harmful-weight "${HARMFUL_WEIGHT}")
+    fi
     python scripts/run_preference_pipeline.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
@@ -128,7 +138,8 @@ case "${STAGE}" in
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
-      --skip-steps 6
+      "${HARD_EXTRA_ARGS[@]}" \
+      --skip-steps "${HARD_SKIP_STEPS}"
     ;;
 
   judge_dpo)
@@ -223,7 +234,7 @@ case "${STAGE}" in
       --balanced-pairs-dir "${AUG_BALANCED_DIR}" \
       --dpo-output-dir "${AUG_DPO_OUTPUT}" \
       --sft-pred-dir "${AUG_SFT_PRED_DIR}" \
-      --epochs "${EPOCHS}" \
+      --epochs "${AUG_EPOCHS}" \
       --learning-rate "${LEARNING_RATE}" \
       --batch-size "${BATCH_SIZE}" \
       --grad-accum "${GRAD_ACCUM}" \
