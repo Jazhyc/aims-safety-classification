@@ -89,6 +89,7 @@ def step1_generate_pairs(args) -> bool:
         "--temperature",    str(args.temperature),
         "--num-samples",    str(args.k_samples),
         "--max-model-len",  str(args.max_model_len),
+        "--seed",           str(args.seed),
     ]
     if args.intent_filter:
         cmd += ["--intent-filter", "--judge-model", args.judge_model]
@@ -278,7 +279,9 @@ def main():
 
     # Build the set of steps to run
     skip = set(int(s) for s in args.skip_steps.split(",") if s.strip()) if args.skip_steps else set()
-    force_from = args.force_from if args.force_from else (1 if args.force else None)
+    # --force starts from step 2 to protect pairs; --force-pairs or --force-from 1
+    # are the only ways to regenerate pairs intentionally.
+    force_from = args.force_from if args.force_from else (1 if args.force_pairs else (2 if args.force else None))
 
     results = {}
 
@@ -288,9 +291,14 @@ def main():
             results[step_num] = "skipped"
             continue
 
-        # --force / --force-from: delete cache sentinel so the step re-runs
+        # --force / --force-from: delete cache sentinel so the step re-runs.
+        # Step 1 (pair generation) is only cleared when --force-pairs is set
+        # or when force_from explicitly targets step 1.
         if force_from and step_num >= force_from:
-            _clear_cache(step_num, args)
+            if step_num == 1 and not args.force_pairs and force_from != 1:
+                pass  # protect pairs from accidental regeneration
+            else:
+                _clear_cache(step_num, args)
 
         ok = step_fn(args)
         results[step_num] = "ok" if ok else "FAILED"
@@ -397,7 +405,12 @@ def parse_args():
     p.add_argument("--force-augment", action="store_true",
                    help="Re-run augmentation pre-steps A/B/C even if cached.")
     p.add_argument("--force",         action="store_true",
-                   help="Re-run all main steps, ignoring cached outputs.")
+                   help="Re-run steps 2–5 (training + eval), ignoring cached outputs. "
+                        "Does NOT regenerate pairs (step 1) — use --force-pairs for that.")
+    p.add_argument("--force-pairs",   action="store_true",
+                   help="Force regeneration of DPO pairs (step 1). "
+                        "Only use this intentionally — pairs are stochastic and "
+                        "changing them makes results incomparable across runs.")
     p.add_argument("--force-from",    type=int, default=None, metavar="N",
                    help="Re-run from step N onward.")
     p.add_argument("--skip-steps",    type=str, default="",

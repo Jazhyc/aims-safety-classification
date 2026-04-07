@@ -416,6 +416,7 @@ def run(args):
             max_tokens=args.max_new_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
+            seed=args.seed,
             skip_special_tokens=True,
         )
 
@@ -722,6 +723,9 @@ def parse_args():
     p.add_argument("--temperature", type=float, default=0.8,
                    help="Sampling temperature for negative generation.")
     p.add_argument("--top-p",       type=float, default=0.95)
+    p.add_argument("--seed",        type=int,   default=22,
+                   help="Random seed for vLLM sampling (passed to SamplingParams). "
+                        "Fixes pair generation across runs with the same inputs.")
     p.add_argument("--max-new-tokens", type=int, default=64)
     p.add_argument(
         "--max-model-len", type=int, default=4096,
