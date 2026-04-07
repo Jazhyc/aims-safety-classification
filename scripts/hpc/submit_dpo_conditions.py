@@ -90,6 +90,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--judge-tensor-parallel", type=int, default=2,
                    help="GPUs for judge model tensor parallelism (2 for 27B on A100-40GB).")
     p.add_argument("--seed", type=int, default=22)
+    p.add_argument("--dpo-beta", type=float, default=0.1,
+                   help="DPO beta for hard_dpo, augment_prep, and dpo_aug stages.")
 
     # ── Judge-specific overrides ────────────────────────────────────────────
     p.add_argument("--judge-from-samples", action="store_true",
@@ -146,6 +148,7 @@ def main() -> None:
         "JUDGE_MODEL":            args.judge_model,
         "JUDGE_TENSOR_PARALLEL":  str(args.judge_tensor_parallel),
         "SEED":              str(args.seed),
+        "DPO_BETA":          str(args.dpo_beta),
         "FORCE":             "1" if args.force else "0",
         "FORCE_FROM":        "" if args.force_from is None else str(args.force_from),
         "FORCE_AUGMENT":     "1" if args.force_augment else "0",
