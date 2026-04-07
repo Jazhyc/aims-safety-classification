@@ -64,6 +64,12 @@ JUDGE_PAIRS_DIR="${JUDGE_PAIRS_DIR:-data/dpo_pairs/judge}"
 JUDGE_BALANCED_DIR="${JUDGE_BALANCED_DIR:-data/dpo_pairs/judge_balanced}"
 JUDGE_DPO_OUTPUT="${JUDGE_DPO_OUTPUT:-trained_models/causal/dpo-judge}"
 SFT_PRED_DIR_JUDGE="${SFT_PRED_DIR_JUDGE:-data/predictions/sft_judge}"
+# Override epochs/beta for judge independently of the global EPOCHS/DPO_BETA.
+# Falls back to global values when not set or empty.
+JUDGE_EPOCHS="${JUDGE_EPOCHS:=${EPOCHS}}"
+JUDGE_BETA="${JUDGE_BETA:=${DPO_BETA}}"
+# Set to non-empty to skip sample generation and reuse cached parsed_samples.jsonl
+JUDGE_FROM_SAMPLES="${JUDGE_FROM_SAMPLES:-}"
 
 ANNOTATED_PAIRS_DIR="${ANNOTATED_PAIRS_DIR:-${HARD_PAIRS_DIR}}"
 WILDGUARD_CANDIDATES="${WILDGUARD_CANDIDATES:-data/wildguard_easy/candidates.jsonl}"
@@ -124,16 +130,19 @@ case "${STAGE}" in
     ;;
 
   judge_dpo)
-    # Two-pass judge flow to avoid loading base + large judge model at once:
-    # pass 1 -> generate samples with SFT model
-    # pass 2 -> run intent filter with judge model from cached samples
-    python scripts/generate_dpo_pairs.py \
-      --adapter-path "${BASE_SFT_ADAPTER}" \
-      --base-model "${BASE_MODEL}" \
-      --output-dir "${JUDGE_PAIRS_DIR}" \
-      --temperature "${TEMPERATURE}" \
-      --num-samples "${K_SAMPLES}" \
-      --max-model-len "${MAX_MODEL_LEN}"
+    # Two-pass judge flow. Pass 1 (sample generation) is skipped when
+    # JUDGE_FROM_SAMPLES is set — reuses cached parsed_samples.jsonl.
+    if [ -z "${JUDGE_FROM_SAMPLES}" ]; then
+      python scripts/generate_dpo_pairs.py \
+        --adapter-path "${BASE_SFT_ADAPTER}" \
+        --base-model "${BASE_MODEL}" \
+        --output-dir "${JUDGE_PAIRS_DIR}" \
+        --temperature "${TEMPERATURE}" \
+        --num-samples "${K_SAMPLES}" \
+        --max-model-len "${MAX_MODEL_LEN}"
+    else
+      echo "[judge_dpo] Skipping sample generation — reusing ${JUDGE_PAIRS_DIR}/parsed_samples.jsonl"
+    fi
 
     python scripts/generate_dpo_pairs.py \
       --from-samples "${JUDGE_PAIRS_DIR}/parsed_samples.jsonl" \
@@ -151,14 +160,11 @@ case "${STAGE}" in
       --balanced-pairs-dir "${JUDGE_BALANCED_DIR}" \
       --dpo-output-dir "${JUDGE_DPO_OUTPUT}" \
       --sft-pred-dir "${SFT_PRED_DIR_JUDGE}" \
-      --temperature "${TEMPERATURE}" \
-      --k-samples "${K_SAMPLES}" \
-      --max-model-len "${MAX_MODEL_LEN}" \
-      --epochs "${EPOCHS}" \
+      --epochs "${JUDGE_EPOCHS}" \
       --learning-rate "${LEARNING_RATE}" \
       --batch-size "${BATCH_SIZE}" \
       --grad-accum "${GRAD_ACCUM}" \
-      --dpo-beta "${DPO_BETA}" \
+      --dpo-beta "${JUDGE_BETA}" \
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       "${PIPELINE_RESTART_ARGS[@]}" \

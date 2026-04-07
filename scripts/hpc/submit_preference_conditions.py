@@ -89,8 +89,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--long-time", default="10:00:00")
     p.add_argument("--short-mem", default="32G")
     p.add_argument("--long-mem", default="48G")
-    p.add_argument("--short-cpus", type=int, default=4)
-    p.add_argument("--long-cpus", type=int, default=6)
+    p.add_argument("--short-cpus", type=int, default=2)
+    p.add_argument("--long-cpus", type=int, default=4)
 
     p.add_argument("--wandb-project", default="intention-jailbreak")
     p.add_argument("--wandb-project-sft", default="sft-hyperparam-sweep")
@@ -104,6 +104,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--judge-balanced-dir", default="data/dpo_pairs/judge_balanced")
     p.add_argument("--judge-dpo-output", default="trained_models/causal/dpo-judge")
     p.add_argument("--sft-pred-dir-judge", default="data/predictions/sft_judge")
+    p.add_argument("--judge-epochs", type=int, default=None,
+                   help="Override epochs for judge_dpo only (defaults to --epochs).")
+    p.add_argument("--judge-beta", type=float, default=None,
+                   help="Override DPO beta for judge_dpo only (defaults to --dpo-beta).")
+    p.add_argument("--judge-from-samples", action="store_true",
+                   help="Skip sample generation for judge_dpo; reuse cached parsed_samples.jsonl.")
 
     p.add_argument("--wildguard-candidates", default="data/wildguard_easy/candidates.jsonl")
     p.add_argument("--wildguard-model-path", default="models/modernbert-ensemble/final_model")
@@ -152,6 +158,9 @@ def main() -> None:
         "JUDGE_BALANCED_DIR": args.judge_balanced_dir,
         "JUDGE_DPO_OUTPUT": args.judge_dpo_output,
         "SFT_PRED_DIR_JUDGE": args.sft_pred_dir_judge,
+        "JUDGE_EPOCHS": str(args.judge_epochs) if args.judge_epochs else "",
+        "JUDGE_BETA": str(args.judge_beta) if args.judge_beta else "",
+        "JUDGE_FROM_SAMPLES": "1" if args.judge_from_samples else "",
         "ANNOTATED_PAIRS_DIR": args.hard_pairs_dir,
         "WILDGUARD_CANDIDATES": args.wildguard_candidates,
         "WILDGUARD_MODEL_PATH": args.wildguard_model_path,
