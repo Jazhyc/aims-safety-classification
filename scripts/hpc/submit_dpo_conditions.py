@@ -75,6 +75,8 @@ def parse_args() -> argparse.Namespace:
                    help="Print sbatch commands without submitting.")
     p.add_argument("--start-from", choices=STAGE_ORDER, default=None,
                    help="Skip all stages before this one (resume after failure).")
+    p.add_argument("--skip-stages", nargs="+", choices=STAGE_ORDER, default=[],
+                   metavar="STAGE", help="Stages to exclude from submission (e.g. judge_dpo).")
     p.add_argument("--force", action="store_true",
                    help="Re-run all pipeline steps, ignoring cached outputs.")
     p.add_argument("--force-from", type=int, default=None, metavar="N",
@@ -177,12 +179,15 @@ def main() -> None:
         ]
 
     stages = STAGE_ORDER[STAGE_ORDER.index(args.start_from):] if args.start_from else STAGE_ORDER
+    stages = [s for s in stages if s not in args.skip_stages]
 
     submitted: dict[str, str] = {}
     jobs: list[tuple[str, str]] = []
 
     for stage in stages:
         dep_stage  = DEPENDENCIES[stage]
+        # If the dependency stage was skipped, look up its predecessor's job ID instead
+        # so the chain still works (e.g. augment_prep after hard_dpo when judge_dpo skipped).
         dep_job_id = submitted.get(dep_stage) if dep_stage else None
         job_id = submit_stage(
             stage, export_vars, sbatch_opts(stage),
