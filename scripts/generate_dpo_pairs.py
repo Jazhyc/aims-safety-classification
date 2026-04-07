@@ -362,12 +362,14 @@ def run(args):
         if use_separate_judge:
             print(f"\n=== Loading judge model ===")
             print(f"  Judge model  : {judge_model_id}")
+            print(f"  Judge GPUs   : {args.judge_tensor_parallel}")
             judge_llm = LLM(
                 model=judge_model_id,
                 gpu_memory_utilization=0.90,
                 max_model_len=4096,
                 dtype="auto",        # auto-detects quantization (e.g. W4A16)
                 enforce_eager=True,
+                tensor_parallel_size=args.judge_tensor_parallel,
             )
         elif llm is not None:
             judge_llm = llm   # reuse already-loaded SFT model (no LoRA for judging)
@@ -382,6 +384,7 @@ def run(args):
                 max_model_len=4096,
                 dtype="auto",
                 enforce_eager=True,
+                tensor_parallel_size=args.judge_tensor_parallel,
             )
         # Resolve model ID to local snapshot path before loading the tokenizer.
         # AutoTokenizer calls is_base_mistral() which makes a network request
@@ -757,6 +760,11 @@ def parse_args():
              "When different from --base-model, the SFT model is not loaded — "
              "run without --intent-filter first to cache harm_t0 labels, then "
              "re-run with --from-samples --intent-filter --judge-model <model>.",
+    )
+    p.add_argument(
+        "--judge-tensor-parallel", type=int, default=1,
+        help="Number of GPUs for tensor-parallel inference of the judge model. "
+             "Set to 2 for 27B models on 40 GB A100s (fits in bfloat16 across 2 GPUs).",
     )
 
     # Output

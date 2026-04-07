@@ -87,6 +87,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--base-sft-adapter",
                    default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--judge-model", default="google/gemma-3-27b-it")
+    p.add_argument("--judge-tensor-parallel", type=int, default=2,
+                   help="GPUs for judge model tensor parallelism (2 for 27B on A100-40GB).")
     p.add_argument("--seed", type=int, default=22)
 
     # ── Judge-specific overrides ────────────────────────────────────────────
@@ -128,7 +130,8 @@ def main() -> None:
         "PROJECT_ROOT":      str(Path.cwd()),
         "BASE_MODEL":        args.base_model,
         "BASE_SFT_ADAPTER":  args.base_sft_adapter,
-        "JUDGE_MODEL":       args.judge_model,
+        "JUDGE_MODEL":            args.judge_model,
+        "JUDGE_TENSOR_PARALLEL":  str(args.judge_tensor_parallel),
         "SEED":              str(args.seed),
         "FORCE":             "1" if args.force else "0",
         "FORCE_FROM":        "" if args.force_from is None else str(args.force_from),
