@@ -22,6 +22,9 @@ if [ -f "${HOME}/.wandb_secrets" ]; then
 fi
 
 export PYTHONUNBUFFERED=1
+# Compute nodes have no internet — use only local HF cache
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 
 STAGE="${STAGE:-}"
 if [ -z "${STAGE}" ]; then
