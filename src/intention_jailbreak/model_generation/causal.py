@@ -796,9 +796,10 @@ def run_causal_flow(config):
         # Delete the Trainer checkpoint directory — checkpoints are only needed
         # during training for load_best_model_at_end; the final adapter above is
         # the only artifact we keep.
-        if os.path.isdir(output_dir):
-            shutil.rmtree(output_dir)
-            print(f"Cleaned up training checkpoints: {output_dir}")
+        checkpoint_dir = trainer.args.output_dir
+        if os.path.isdir(checkpoint_dir):
+            shutil.rmtree(checkpoint_dir)
+            print(f"Cleaned up training checkpoints: {checkpoint_dir}")
 
         eval_results = trainer.evaluate()
         print(f"[Causal LM] Validation loss: {eval_results['eval_loss']}")
