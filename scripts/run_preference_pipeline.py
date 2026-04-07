@@ -169,7 +169,7 @@ def step6_compare(args) -> bool:
     cmd = [
         sys.executable, "scripts/baselines/compare_models.py",
         "--sft",       sft_dir,
-        "--dpo",       dpo_dir,
+        "--dpo-hard",  dpo_dir,
         "--no-intent",
     ]
     return run(cmd, "Step 6 – Compare SFT vs DPO")

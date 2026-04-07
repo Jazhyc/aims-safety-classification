@@ -225,18 +225,24 @@ DATASET_LABELS = {
 def main():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--sft",         type=str, default="data/predictions/sft_baseline")
-    p.add_argument("--dpo",         type=str, default="trained_models/causal/llama-dpo/predictions")
-    p.add_argument("--contrastive", type=str, default="trained_models/causal/llama-contrastive/predictions")
+    p.add_argument("--dpo-hard",    type=str, default=None,
+                   help="Predictions dir for hard-only DPO condition.")
+    p.add_argument("--dpo-judge",   type=str, default=None,
+                   help="Predictions dir for judge-augmented DPO condition.")
+    p.add_argument("--dpo-aug",     type=str, default=None,
+                   help="Predictions dir for WildGuard-augmented DPO condition.")
     p.add_argument("--output-dir",  type=str, default="data/comparison")
     p.add_argument("--no-intent",   action="store_true",
                    help="Skip intent quality metrics (faster if sentence-transformers is slow).")
     args = p.parse_args()
 
-    model_dirs = {
-        "SFT baseline": args.sft,
-        "DPO":          args.dpo,
-        "Contrastive":  args.contrastive,
-    }
+    candidates = [
+        ("SFT baseline", args.sft),
+        ("DPO-hard",     args.dpo_hard),
+        ("DPO-judge",    args.dpo_judge),
+        ("DPO-aug",      args.dpo_aug),
+    ]
+    model_dirs = {name: path for name, path in candidates if path is not None}
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
