@@ -54,7 +54,7 @@ AUG_EPOCHS="${AUG_EPOCHS:-1}"
 FORCE="${FORCE:-0}"
 FORCE_FROM="${FORCE_FROM:-}"
 FORCE_AUGMENT="${FORCE_AUGMENT:-0}"
-ATN_IMPL="${ATN_IMPL:-flash_attention_2}"
+ATN_IMPL="${ATN_IMPL:-sdpa}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-intention-jailbreak}"
 WANDB_PROJECT_SFT="${WANDB_PROJECT_SFT:-sft-hyperparam-sweep}"

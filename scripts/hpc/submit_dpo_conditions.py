@@ -166,12 +166,14 @@ def main() -> None:
         time      = args.short_time      if use_short else args.long_time
         mem       = args.short_mem       if use_short else args.long_mem
         cpus      = args.short_cpus      if use_short else args.long_cpus
+        # judge_dpo loads Gemma 27B — needs 2× A100-40GB for tensor parallelism
+        gpus = f"a100:{args.judge_tensor_parallel}" if stage == "judge_dpo" else "a100:1"
         return [
             f"--partition={partition}",
             f"--time={time}",
             f"--mem={mem}",
             f"--cpus-per-task={cpus}",
-            "--gpus-per-node=a100:1",
+            f"--gpus-per-node={gpus}",
         ]
 
     stages = STAGE_ORDER[STAGE_ORDER.index(args.start_from):] if args.start_from else STAGE_ORDER
