@@ -212,6 +212,7 @@ def step_b_generate_wildguard_pairs(args) -> bool:
         "--temperature",    str(args.temperature),
         "--num-samples",    str(args.k_samples),
         "--max-model-len",  str(args.max_model_len),
+        "--seed",           str(args.seed),
     ]
     return run(cmd, "Pre B – Generate DPO pairs for WildGuardMix easy examples")
 
