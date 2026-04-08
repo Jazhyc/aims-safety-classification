@@ -35,9 +35,10 @@ from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_
 #   teacher_model.replace("/", "-")
 # Add more teachers here once their traces are generated.
 TEACHER_MODELS = [
-    ("moonshotai/kimi-k2.5",                           "moonshotai-kimi-k2.5"),
-    ("openai/gpt-oss-120b",                            "openai-gpt-oss-120b"),
-    ("RedHatAI/gemma-3-27b-it-quantized.w4a16",        "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
+    ("cyankiwi/gemma-4-31B-it-AWQ-4bit",               "cyankiwi-gemma-4-31b"),
+    # ("moonshotai/kimi-k2.5",                           "moonshotai-kimi-k2.5"),
+    # ("openai/gpt-oss-120b",                            "openai-gpt-oss-120b"),
+    # ("RedHatAI/gemma-3-27b-it-quantized.w4a16",        "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
 ]
 
 # (HuggingFace model ID, short slug used in run names and W&B project names)

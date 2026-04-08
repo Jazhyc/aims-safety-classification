@@ -117,7 +117,7 @@ def t5_trainer(
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
     )
 
     return trainer

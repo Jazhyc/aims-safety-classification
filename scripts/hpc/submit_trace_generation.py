@@ -34,8 +34,9 @@ from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_
 # Each tuple: (HuggingFace model ID, thinking_mode)
 # thinking_mode=false for non-native-thinking models.
 TEACHER_MODELS = [
-    ("openai/gpt-oss-120b",                         "false"),
-    ("RedHatAI/gemma-3-27b-it-quantized.w4a16",     "false"),
+    ("cyankiwi/gemma-4-31B-it-AWQ-4bit",            "false"),
+    # ("openai/gpt-oss-120b",                         "false"),
+    # ("RedHatAI/gemma-3-27b-it-quantized.w4a16",     "false"),
 ]
 
 TRACES_VERSION = "v6"

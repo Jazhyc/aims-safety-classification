@@ -738,7 +738,14 @@ def main(cfg: DictConfig):
         )
 
     output_dir = Path(paths_cfg.get("output_dir", "data/reasoning_traces"))
-    model_name_clean = model_cfg["name"].replace("/", "-")
+    # Per-model slug overrides. Must stay in sync with _TEACHER_SLUG_OVERRIDES in
+    # run_distillation_pipeline.py. Models not listed fall back to replace("/", "-").
+    _TEACHER_SLUG_OVERRIDES = {
+        "cyankiwi/gemma-4-31B-it-AWQ-4bit": "cyankiwi-gemma-4-31b",
+    }
+    model_name_clean = _TEACHER_SLUG_OVERRIDES.get(
+        model_cfg["name"], model_cfg["name"].replace("/", "-")
+    )
     output_dir = output_dir / model_name_clean
     output_dir.mkdir(parents=True, exist_ok=True)
 

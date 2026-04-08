@@ -44,8 +44,18 @@ CONDITION_MAP = {
 }
 
 
+# Per-model slug overrides. Models listed here use the short form instead of the
+# default replace("/", "-") to keep paths and W&B run names manageable.
+# Must stay in sync with the identical map in generate_reasoning_traces.py.
+_TEACHER_SLUG_OVERRIDES = {
+    "cyankiwi/gemma-4-31B-it-AWQ-4bit": "cyankiwi-gemma-4-31b",
+}
+
+
 def _teacher_slug(teacher_model: str) -> str:
     """Convert a model name to a filesystem-safe slug (mirrors generate_reasoning_traces.py)."""
+    if teacher_model in _TEACHER_SLUG_OVERRIDES:
+        return _TEACHER_SLUG_OVERRIDES[teacher_model]
     return teacher_model.replace("/", "-")
 
 
