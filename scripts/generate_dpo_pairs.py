@@ -337,13 +337,25 @@ def run(args):
     # share GPU memory (e.g. 70B judge alongside 8B SFT).
     use_separate_judge = args.intent_filter and (judge_model_id != args.base_model)
 
+    # Resolve model IDs to local snapshot paths so vLLM skips HF API calls.
+    # Compute nodes have no reliable internet; passing a local path avoids
+    # the list_repo_files / model_info network requests entirely.
+    from huggingface_hub import snapshot_download as _snap
+    def _local(model_id: str) -> str:
+        try:
+            return _snap(model_id, local_files_only=True)
+        except Exception:
+            return model_id  # already a local path or fallback to ID
+
     llm = lora_request = None
     if need_sft:
+        local_base = _local(args.base_model)
         print(f"\n=== Loading SFT model ===")
         print(f"  Base model   : {args.base_model}")
+        print(f"  Local path   : {local_base}")
         print(f"  LoRA adapter : {args.adapter_path}")
         llm = LLM(
-            model=args.base_model,
+            model=local_base,
             tokenizer=args.adapter_path,
             enable_lora=True,
             max_lora_rank=64,
@@ -359,11 +371,13 @@ def run(args):
     judge_llm = judge_tokenizer = None
     if args.intent_filter:
         if use_separate_judge:
+            local_judge = _local(judge_model_id)
             print(f"\n=== Loading judge model ===")
             print(f"  Judge model  : {judge_model_id}")
+            print(f"  Local path   : {local_judge}")
             print(f"  Judge GPUs   : {args.judge_tensor_parallel}")
             judge_llm = LLM(
-                model=judge_model_id,
+                model=local_judge,
                 gpu_memory_utilization=0.90,
                 max_model_len=4096,
                 dtype="auto",        # auto-detects quantization (e.g. W4A16)
@@ -375,10 +389,12 @@ def run(args):
         else:
             # Same model as base but SFT wasn't loaded (harm_t0 already cached).
             # Load the base model without LoRA for judging.
+            local_judge = _local(judge_model_id)
             print(f"\n=== Loading judge model (base, no LoRA) ===")
             print(f"  Judge model  : {judge_model_id}")
+            print(f"  Local path   : {local_judge}")
             judge_llm = LLM(
-                model=judge_model_id,
+                model=local_judge,
                 gpu_memory_utilization=0.90,
                 max_model_len=4096,
                 dtype="auto",
