@@ -1,0 +1,10 @@
+condition: judge
+betas: [0.1, 0.3, 0.5]
+epochs: [1, 2]
+unbalanced: false
+harmful_weight: 1.0
+
+sweep_dir: trained_models/causal/dpo-judge-sweep
+
+# Submitted via:
+#   python scripts/hpc/submit_judge_sweep.py --condition judge --betas 0.1 0.3 0.5 --epochs 1 2
