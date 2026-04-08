@@ -43,10 +43,10 @@ TEACHER_MODELS = [
 
 # (HuggingFace model ID, short slug used in run names and W&B project names)
 STUDENT_MODELS = [
-    ("meta-llama/Llama-3.1-8B-Instruct",        "llama-3.1-8b"),
+    # ("meta-llama/Llama-3.1-8B-Instruct",        "llama-3.1-8b"),
     ("google/gemma-3-12b-it",                    "gemma-3-12b"),
-    ("mistralai/Ministral-8B-Instruct-2410",     "ministral-8b"),
-    ("Qwen/Qwen3-8B",                            "qwen3-8b"),
+    # ("mistralai/Ministral-8B-Instruct-2410",     "ministral-8b"),
+    # ("Qwen/Qwen3-8B",                            "qwen3-8b"),
     
     # Ignore MOE for now
     # ("openai/gpt-oss-20b",                       "gpt-oss-20b"),

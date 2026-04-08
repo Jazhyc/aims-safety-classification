@@ -8,11 +8,57 @@ from pathlib import Path
 from tqdm import tqdm
 
 from transformers import (
+    AutoConfig,
     AutoTokenizer,
     AutoModelForCausalLM,
     BitsAndBytesConfig,
     EarlyStoppingCallback,
 )
+
+
+def _load_causal_lm(model_name: str, **kwargs):
+    """Load a causal LM, routing Gemma 3 models to the text-only causal class.
+
+    The HF repos for ``google/gemma-3-*-it`` are multimodal: the checkpoint stores
+    weights under a ``language_model.*`` / ``vision_tower.*`` / ``multi_modal_projector.*``
+    namespace, and ``AutoModelForCausalLM`` returns ``Gemma3ForConditionalGeneration``
+    whose ``forward`` is vision-aware (it requires ``token_type_ids``).
+
+    Loading directly with ``Gemma3ForCausalLM.from_pretrained`` doesn't work either,
+    because its expected keys (``model.layers.*``) don't match the multimodal prefix
+    so every weight ends up randomly initialized.
+
+    Workaround: load the full multimodal model, then build a ``Gemma3ForCausalLM``
+    wrapper that reuses the loaded language tower and lm_head, and drop the vision
+    components to free memory.
+    """
+    cfg = AutoConfig.from_pretrained(model_name)
+    if type(cfg).__name__ == "Gemma3Config":
+        from transformers import Gemma3ForCausalLM, Gemma3ForConditionalGeneration
+
+        full = Gemma3ForConditionalGeneration.from_pretrained(model_name, **kwargs)
+
+        # Build a CausalLM wrapper on the meta device so __init__ runs
+        # (registering submodules, generation_config, etc.) without allocating
+        # any real parameters — we'll graft the already-loaded language tower
+        # and lm_head from `full`.
+        with torch.device("meta"):
+            causal_lm = Gemma3ForCausalLM(full.config.text_config)
+        causal_lm.generation_config = getattr(full, "generation_config", causal_lm.generation_config)
+        causal_lm.model = full.model.language_model
+        causal_lm.lm_head = full.lm_head
+
+        # Free vision components — they're never used during text-only SFT.
+        del full.model.vision_tower
+        del full.model.multi_modal_projector
+        del full
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return causal_lm
+
+    return AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
 from transformers.integrations import WandbCallback
 
 
@@ -432,10 +478,10 @@ def setup_causal_model_and_tokenizer(config):
 
     if not use_lora:
         attn_implementation = model_cfg.get("attn_implementation", "flash_attention_2")
-        model = AutoModelForCausalLM.from_pretrained(
+        model = _load_causal_lm(
             model_name,
             attn_implementation=attn_implementation,
-            dtype=torch.bfloat16
+            dtype=torch.bfloat16,
         )
         model.config.use_cache = False
         align_tokenizer_with_model(tokenizer, model)
@@ -464,7 +510,7 @@ def setup_causal_model_and_tokenizer(config):
 
     trust_remote_code = bool(model_cfg.get("trust_remote_code", False))
     attn_implementation = model_cfg.get("attn_implementation", "flash_attention_2")
-    model = AutoModelForCausalLM.from_pretrained(
+    model = _load_causal_lm(
         model_name,
         quantization_config=bnb_config,
         device_map="auto",

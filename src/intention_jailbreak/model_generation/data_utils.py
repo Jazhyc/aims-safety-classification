@@ -6,46 +6,52 @@ from collections import Counter
 def align_tokenizer_with_model(tokenizer, model):
     """
     Align tokenizer special tokens with model config.
-    
+
     Transformers sometimes doesn't handle this automatically when loading
     models and tokenizers separately. This ensures consistency and prevents
     warnings about mismatched special tokens.
-    
+
     Args:
         tokenizer: The tokenizer instance
         model: The model instance with config
     """
+    # Composite configs (e.g. Gemma3Config for the multimodal variant) hold
+    # token IDs on an inner `text_config` rather than the top-level config.
+    cfg = model.config
+    if not hasattr(cfg, "pad_token_id") and hasattr(cfg, "text_config"):
+        cfg = cfg.text_config
+
     # Align pad token - model config takes precedence
-    if model.config.pad_token_id is not None:
-        tokenizer.pad_token_id = model.config.pad_token_id
+    if cfg.pad_token_id is not None:
+        tokenizer.pad_token_id = cfg.pad_token_id
     elif tokenizer.pad_token is None:
         # Fallback: use eos_token as pad_token
         tokenizer.pad_token = tokenizer.eos_token
-        model.config.pad_token_id = tokenizer.pad_token_id
+        cfg.pad_token_id = tokenizer.pad_token_id
     else:
         # Tokenizer has pad_token but model doesn't - update model
-        model.config.pad_token_id = tokenizer.pad_token_id
-    
+        cfg.pad_token_id = tokenizer.pad_token_id
+
     # Align BOS token - model config takes precedence
     # Handle both single token ID and list of IDs
-    if model.config.bos_token_id is not None:
-        bos_id = model.config.bos_token_id
+    if cfg.bos_token_id is not None:
+        bos_id = cfg.bos_token_id
         if isinstance(bos_id, list):
             bos_id = bos_id[0]
         tokenizer.bos_token_id = bos_id
     elif tokenizer.bos_token_id is not None:
-        model.config.bos_token_id = tokenizer.bos_token_id
-    
+        cfg.bos_token_id = tokenizer.bos_token_id
+
     # Align EOS token - model config takes precedence
     # Handle both single token ID and list of IDs (e.g., Gemma-3)
-    if model.config.eos_token_id is not None:
+    if cfg.eos_token_id is not None:
         # If model has multiple EOS tokens, use the first one
-        eos_id = model.config.eos_token_id
+        eos_id = cfg.eos_token_id
         if isinstance(eos_id, list):
             eos_id = eos_id[0]
         tokenizer.eos_token_id = eos_id
     elif tokenizer.eos_token_id is not None:
-        model.config.eos_token_id = tokenizer.eos_token_id
+        cfg.eos_token_id = tokenizer.eos_token_id
 
 
 def get_lengths(dataset, plot: bool = False) -> Tuple[int, int]:
