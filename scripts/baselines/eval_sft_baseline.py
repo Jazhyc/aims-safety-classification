@@ -33,10 +33,17 @@ from typing import Optional
 
 def _norm_harm(s: str) -> Optional[str]:
     """Normalise any harm label string to 'harmful' or 'safe'."""
-    s = s.strip().lower().rstrip(".").rstrip(";")
+    s = s.strip().lower().rstrip(".").rstrip(";").strip()
+    # Exact matches first
     if s in {"harmful", "unsafe", "dangerous"}:
         return "harmful"
     if s in {"safe", "harmless", "benign", "unharmful"}:
+        return "safe"
+    # Multi-word phrases: "extremely harmful", "very unsafe", "completely safe", etc.
+    # Also bare "harm" which is a truncation of "harmful" in some model outputs.
+    if any(w in s for w in ("harmful", "unsafe", "dangerous")) or s == "harm":
+        return "harmful"
+    if any(w in s for w in ("safe", "harmless", "benign", "unharmful")):
         return "safe"
     return None
 
@@ -45,22 +52,36 @@ def extract_intent_and_harm(raw_text: str):
     text = raw_text.strip()
     if "<think>" in text and "</think>" in text:
         text = text.split("</think>")[-1].strip()
-    m = re.search(r"Intent:\s*(.+?);\s*Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
+    m = re.search(r"Intent:\s*(.+?);\s*Harm:\s*(.+?)$", text, re.IGNORECASE | re.MULTILINE)
     if m:
         return m.group(1).strip(), _norm_harm(m.group(2))
-    m = re.search(r"Intent:\s*(.+?)\n\s*Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
+    m = re.search(r"Intent:\s*(.+?)\n\s*Harm:\s*(.+?)$", text, re.IGNORECASE | re.MULTILINE)
     if m:
         return m.group(1).strip(), _norm_harm(m.group(2))
-    m = re.search(r"Intent:\s*(.+?)\s+Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
+    m = re.search(r"Intent:\s*(.+?)\s+Harm:\s*(.+?)$", text, re.IGNORECASE | re.MULTILINE)
     if m:
         return m.group(1).strip(), _norm_harm(m.group(2))
-    m = re.search(r"^(.+?);\s*Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
+    m = re.search(r"^(.+?);\s*Harm:\s*(.+?)$", text, re.IGNORECASE | re.MULTILINE)
     if m:
         return m.group(1).strip(), _norm_harm(m.group(2))
     m = re.search(r"[;\n]\s*Harm:\s*(\S+)", text, re.IGNORECASE)
     if m:
         harm = _norm_harm(m.group(1))
         intent = re.sub(r"^Intent:\s*", "", text[:m.start()].strip(), flags=re.IGNORECASE).strip()
+        return intent or text, harm
+    # Fallback: bare harm word after a semicolon/whitespace (e.g. "; Harmful", "; Safe")
+    m = re.search(r"[;\s](harmful|unsafe|dangerous|safe|harmless|benign)\s*$", text, re.IGNORECASE)
+    if m:
+        harm = _norm_harm(m.group(1))
+        intent = text[:m.start()].strip()
+        intent = re.sub(r"^Intent:\s*", "", intent, flags=re.IGNORECASE).strip("; ")
+        return intent or text, harm
+    # Fallback: bare harm word anywhere at end of string (e.g. "Intent: ...\nHarmful")
+    m = re.search(r"\b(harmful|unsafe|dangerous|safe|harmless|benign)\s*$", text, re.IGNORECASE)
+    if m:
+        harm = _norm_harm(m.group(1))
+        intent = text[:m.start()].strip()
+        intent = re.sub(r"^Intent:\s*", "", intent, flags=re.IGNORECASE).strip("; ")
         return intent or text, harm
     m = re.search(r"^Intent:\s*(.+?)(?:;|$)", text, re.IGNORECASE | re.DOTALL)
     if m:
