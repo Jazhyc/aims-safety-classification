@@ -125,10 +125,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--long-partition", default="gpumedium")
     p.add_argument("--short-time", default="04:00:00")
     p.add_argument("--long-time", default="10:00:00")
-    p.add_argument("--short-mem", default="32G")
-    p.add_argument("--long-mem", default="48G")
+    p.add_argument("--short-mem", default="16G")
+    p.add_argument("--long-mem", default="24G")
     p.add_argument("--short-cpus", type=int, default=2)
-    p.add_argument("--long-cpus", type=int, default=4)
+    p.add_argument("--long-cpus", type=int, default=2)
     p.add_argument("--all-gpushort", action="store_true",
                    help="Force all stages onto gpushort (may timeout for training stages).")
 
@@ -173,8 +173,11 @@ def main() -> None:
         time      = args.short_time      if use_short else args.long_time
         mem       = args.short_mem       if use_short else args.long_mem
         cpus      = args.short_cpus      if use_short else args.long_cpus
-        # judge_dpo loads Gemma 27B — needs 2× A100-40GB for tensor parallelism
+        # judge_dpo loads Gemma 27B — needs 2× A100-40GB and more CPU/RAM
         gpus = f"a100:{args.judge_tensor_parallel}" if stage == "judge_dpo" else "a100:1"
+        if stage == "judge_dpo":
+            mem  = "32G"
+            cpus = 4
         return [
             f"--partition={partition}",
             f"--time={time}",

@@ -53,10 +53,12 @@ def parse_run_name(name: str) -> tuple[float, int]:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--sweep-dir", default="trained_models/causal/dpo-judge-sweep")
+    p.add_argument("--condition", choices=["judge", "hard"], default="judge")
+    p.add_argument("--sweep-dir", default=None,
+                   help="Override sweep dir (default: trained_models/causal/dpo-{condition}-sweep)")
     args = p.parse_args()
 
-    sweep_dir = Path(args.sweep_dir)
+    sweep_dir = Path(args.sweep_dir or f"trained_models/causal/dpo-{args.condition}-sweep")
     runs = sorted(sweep_dir.iterdir()) if sweep_dir.exists() else []
 
     rows = []

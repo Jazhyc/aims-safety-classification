@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=judge-sweep
+#SBATCH --job-name=dpo-sweep
 #SBATCH --time=08:00:00
 #SBATCH --mem=48G
 #SBATCH --partition=gpumedium
@@ -25,42 +25,52 @@ export PYTHONUNBUFFERED=1
 
 BASE_MODEL="${BASE_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
 BASE_SFT_ADAPTER="${BASE_SFT_ADAPTER:-trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter}"
-JUDGE_BETA="${JUDGE_BETA:-0.3}"
-JUDGE_EPOCHS="${JUDGE_EPOCHS:-1}"
+CONDITION="${CONDITION:-judge}"       # judge | hard
+SWEEP_BETA="${SWEEP_BETA:-0.3}"
+SWEEP_EPOCHS="${SWEEP_EPOCHS:-1}"
 SEED="${SEED:-22}"
 LEARNING_RATE="${LEARNING_RATE:-5e-5}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
 GRAD_ACCUM="${GRAD_ACCUM:-8}"
+HARMFUL_WEIGHT="${HARMFUL_WEIGHT:-1.0}"
+UNBALANCED="${UNBALANCED:-0}"
 
-OUTPUT_DIR="trained_models/causal/dpo-judge-sweep/beta${JUDGE_BETA}_e${JUDGE_EPOCHS}"
+PAIRS_DIR="data/dpo_pairs/${CONDITION}"
+BALANCED_DIR="data/dpo_pairs/${CONDITION}_balanced"
+OUTPUT_DIR="trained_models/causal/dpo-${CONDITION}-sweep/beta${SWEEP_BETA}_e${SWEEP_EPOCHS}"
 
 echo "======================================================================"
-echo " DPO-Judge Sweep Run"
-echo "  Beta        : ${JUDGE_BETA}"
-echo "  Epochs      : ${JUDGE_EPOCHS}"
+echo " DPO Condition Sweep"
+echo "  Condition   : ${CONDITION}"
+echo "  Beta        : ${SWEEP_BETA}"
+echo "  Epochs      : ${SWEEP_EPOCHS}"
+echo "  Unbalanced  : ${UNBALANCED}  (harmful_weight=${HARMFUL_WEIGHT})"
 echo "  Output dir  : ${OUTPUT_DIR}"
 echo "======================================================================"
 
-# Pairs and balanced pairs already exist from the main judge_dpo run.
-# Skip steps 1 (pair gen) and 6 (compare). Force step 3 onward so each
-# sweep run trains fresh even if a previous run used the same output dir.
+EXTRA_ARGS=()
+if [ "${UNBALANCED}" = "1" ]; then
+  EXTRA_ARGS+=(--unbalanced --harmful-weight "${HARMFUL_WEIGHT}")
+fi
+
 python scripts/run_preference_pipeline.py \
-  --adapter-path    "${BASE_SFT_ADAPTER}" \
-  --base-model      "${BASE_MODEL}" \
-  --pairs-dir       "data/dpo_pairs/judge" \
-  --balanced-pairs-dir "data/dpo_pairs/judge_balanced" \
-  --dpo-output-dir  "${OUTPUT_DIR}" \
-  --sft-pred-dir    "data/predictions/sft_hard" \
-  --epochs          "${JUDGE_EPOCHS}" \
-  --learning-rate   "${LEARNING_RATE}" \
-  --batch-size      "${BATCH_SIZE}" \
-  --grad-accum      "${GRAD_ACCUM}" \
-  --dpo-beta        "${JUDGE_BETA}" \
-  --seed            "${SEED}" \
-  --wandb-project   "intention-jailbreak" \
+  --adapter-path       "${BASE_SFT_ADAPTER}" \
+  --base-model         "${BASE_MODEL}" \
+  --pairs-dir          "${PAIRS_DIR}" \
+  --balanced-pairs-dir "${BALANCED_DIR}" \
+  --dpo-output-dir     "${OUTPUT_DIR}" \
+  --sft-pred-dir       "data/predictions/sft_hard" \
+  --epochs             "${SWEEP_EPOCHS}" \
+  --learning-rate      "${LEARNING_RATE}" \
+  --batch-size         "${BATCH_SIZE}" \
+  --grad-accum         "${GRAD_ACCUM}" \
+  --dpo-beta           "${SWEEP_BETA}" \
+  --seed               "${SEED}" \
+  --wandb-project      "intention-jailbreak" \
+  "${EXTRA_ARGS[@]}" \
   --force-from 3 \
   --skip-steps 1,6
 
 echo ""
-echo "Run beta=${JUDGE_BETA} epochs=${JUDGE_EPOCHS} completed."
+echo "Run ${CONDITION} beta=${SWEEP_BETA} epochs=${SWEEP_EPOCHS} completed."
 echo "Predictions at: ${OUTPUT_DIR}/predictions/"
