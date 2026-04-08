@@ -115,6 +115,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--aug-epochs", type=int, default=1,
                    help="DPO epochs for dpo_aug. Default 1 to avoid over-training "
                         "on the large augmented pair set (~19K pairs).")
+    p.add_argument("--no-sft-aug", action="store_true",
+                   help="Skip sft_aug and use the original SFT adapter as the init "
+                        "for dpo_aug instead of the augmented SFT. Avoids contamination "
+                        "from imbalanced sft_examples (74%% harmful).")
 
     # ── SLURM resources ────────────────────────────────────────────────────
     p.add_argument("--short-partition", default="gpushort")
@@ -160,6 +164,7 @@ def main() -> None:
         "UNBALANCED":        "1" if args.unbalanced else "0",
         "HARMFUL_WEIGHT":    str(args.harmful_weight),
         "AUG_EPOCHS":        str(args.aug_epochs),
+        "NO_SFT_AUG":        "1" if args.no_sft_aug else "0",
     }
 
     def sbatch_opts(stage: str) -> list[str]:
@@ -181,11 +186,17 @@ def main() -> None:
     stages = STAGE_ORDER[STAGE_ORDER.index(args.start_from):] if args.start_from else STAGE_ORDER
     stages = [s for s in stages if s not in args.skip_stages]
 
+    # --no-sft-aug: skip sft_aug and rewire dpo_aug to depend on augment_prep
+    dependencies = dict(DEPENDENCIES)
+    if args.no_sft_aug:
+        stages = [s for s in stages if s != "sft_aug"]
+        dependencies["dpo_aug"] = "augment_prep"
+
     submitted: dict[str, str] = {}
     jobs: list[tuple[str, str]] = []
 
     for stage in stages:
-        dep_stage  = DEPENDENCIES[stage]
+        dep_stage  = dependencies[stage]
         # If the dependency stage was skipped, look up its predecessor's job ID instead
         # so the chain still works (e.g. augment_prep after hard_dpo when judge_dpo skipped).
         dep_job_id = submitted.get(dep_stage) if dep_stage else None

@@ -85,6 +85,10 @@ AUGMENTED_MERGED_PAIRS_DIR="${AUGMENTED_MERGED_PAIRS_DIR:-data/dpo_pairs/augment
 
 AUG_SFT_MODEL_SAVE_DIR="${AUG_SFT_MODEL_SAVE_DIR:-models/sft/llm_sweep/augmented_sft}"
 AUG_SFT_ADAPTER_PATH="${AUG_SFT_ADAPTER_PATH:-${AUG_SFT_MODEL_SAVE_DIR}_adapter}"
+# When NO_SFT_AUG=1, dpo_aug starts from the original SFT adapter instead of
+# the augmented one (avoids the imbalanced sft_examples contamination).
+NO_SFT_AUG="${NO_SFT_AUG:-0}"
+DPO_AUG_INIT_ADAPTER="$( [ "${NO_SFT_AUG}" = "1" ] && echo "${BASE_SFT_ADAPTER}" || echo "${AUG_SFT_ADAPTER_PATH}" )"
 AUG_SFT_OUTPUT_DIR="${AUG_SFT_OUTPUT_DIR:-data/train_results/sft_augmented}"
 AUG_SFT_LOGS_DIR="${AUG_SFT_LOGS_DIR:-logs/sft_augmented}"
 AUG_SFT_PRED_DIR="${AUG_SFT_PRED_DIR:-data/predictions/sft_augmented}"
@@ -220,9 +224,11 @@ case "${STAGE}" in
     ;;
 
   dpo_aug)
-    # Uses merged pairs from augment_prep and augmented SFT adapter as init.
+    # Uses merged pairs from augment_prep.
+    # Init adapter: augmented SFT (default) or original SFT (when NO_SFT_AUG=1).
+    echo "  DPO-aug init adapter: ${DPO_AUG_INIT_ADAPTER}"
     python scripts/run_preference_pipeline.py \
-      --adapter-path "${AUG_SFT_ADAPTER_PATH}" \
+      --adapter-path "${DPO_AUG_INIT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --augment \
       --pairs-dir "${ANNOTATED_PAIRS_DIR}" \
