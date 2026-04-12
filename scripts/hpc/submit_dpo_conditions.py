@@ -4,7 +4,7 @@ Submit DPO condition stages on SLURM with dependencies.
 
 Stages:
   hard_dpo      — DPO on hard-only annotated pairs
-  judge_dpo     — DPO with LLM-judge intent rejecteds (Gemma 27B)
+  judge_dpo     — DPO with LLM-judge intent rejecteds (GPT-OSS 120B on RTX 6000 Pro)
   augment_prep  — WildGuard easy filtering + DPO pair merge (pre-steps A/B/C)
   sft_aug       — Retrain SFT with augmented data
   dpo_aug       — DPO on augmented merged pairs using augmented SFT init
@@ -16,7 +16,12 @@ Dependency chain:
 Usage:
   python scripts/hpc/submit_dpo_conditions.py
   python scripts/hpc/submit_dpo_conditions.py --dry-run
+  python scripts/hpc/submit_dpo_conditions.py --start-from judge_dpo --judge gpt-oss
+  python scripts/hpc/submit_dpo_conditions.py --start-from judge_dpo --judge gemma-27b --judge-from-samples
   python scripts/hpc/submit_dpo_conditions.py --start-from judge_dpo --judge-from-samples --judge-epochs 1 --judge-beta 0.3
+
+Judge presets (--judge <name>): gpt-oss | gemma-27b | gemma-27b-quant | llama-70b
+Individual --judge-model / --judge-gpu-type / --judge-tensor-parallel flags override preset values.
 """
 
 from __future__ import annotations
@@ -32,6 +37,39 @@ from slurm_utils import create_logs_dir, print_header, print_job_summary
 TEMPLATE = "scripts/hpc/dpo_conditions_template.sh"
 
 STAGE_ORDER = ["hard_dpo", "judge_dpo", "augment_prep", "sft_aug", "dpo_aug"]
+
+# Judge presets — each entry sets all GPU/model knobs for a known judge.
+# Keys are the short names passed to --judge.
+JUDGE_PRESETS: dict[str, dict] = {
+    "gpt-oss": {
+        "model":           "openai/gpt-oss-120b",
+        "gpu_type":        "rtx_pro_6000",
+        "tensor_parallel": 1,
+        "mem":             "32G",
+        "cpus":            4,
+    },
+    "gemma-27b": {
+        "model":           "google/gemma-3-27b-it",
+        "gpu_type":        "a100",
+        "tensor_parallel": 2,
+        "mem":             "32G",
+        "cpus":            4,
+    },
+    "gemma-27b-quant": {
+        "model":           "RedHatAI/gemma-3-27b-it-quantized.w4a16",
+        "gpu_type":        "a100",
+        "tensor_parallel": 1,
+        "mem":             "32G",
+        "cpus":            4,
+    },
+    "llama-70b": {
+        "model":           "meta-llama/Llama-3.1-70B-Instruct",
+        "gpu_type":        "a100",
+        "tensor_parallel": 2,
+        "mem":             "32G",
+        "cpus":            4,
+    },
+}
 
 DEPENDENCIES = {
     "hard_dpo":     None,
@@ -88,9 +126,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--base-sft-adapter",
                    default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
-    p.add_argument("--judge-model", default="google/gemma-3-27b-it")
-    p.add_argument("--judge-tensor-parallel", type=int, default=2,
-                   help="GPUs for judge model tensor parallelism (2 for 27B on A100-40GB).")
+    p.add_argument("--judge", choices=list(JUDGE_PRESETS), default=None, metavar="PRESET",
+                   help=f"Judge preset — sets model, GPU type, and tensor parallelism in one flag. "
+                        f"Choices: {', '.join(JUDGE_PRESETS)}. "
+                        f"Individual --judge-model / --judge-gpu-type / --judge-tensor-parallel "
+                        f"override preset values when both are given.")
+    p.add_argument("--judge-model", default=None,
+                   help="HuggingFace model ID for the judge. Overrides --judge preset.")
+    p.add_argument("--judge-tensor-parallel", type=int, default=None,
+                   help="GPUs for judge tensor parallelism. Overrides --judge preset.")
+    p.add_argument("--judge-gpu-type", default=None,
+                   help="SLURM GPU resource name for the judge node (e.g. rtx_pro_6000, a100). "
+                        "Overrides --judge preset.")
     p.add_argument("--seed", type=int, default=22)
     p.add_argument("--dpo-beta", type=float, default=0.1,
                    help="DPO beta for hard_dpo, augment_prep, and dpo_aug stages.")
@@ -145,14 +192,28 @@ def main() -> None:
     if not args.dry_run:
         create_logs_dir()
 
+    # Resolve judge preset → apply defaults, then let explicit flags override.
+    preset = JUDGE_PRESETS.get(args.judge, JUDGE_PRESETS["gpt-oss"]) if args.judge else JUDGE_PRESETS["gpt-oss"]
+    judge_model           = args.judge_model          or preset["model"]
+    judge_tensor_parallel = args.judge_tensor_parallel if args.judge_tensor_parallel is not None else preset["tensor_parallel"]
+    judge_gpu_type        = args.judge_gpu_type        or preset["gpu_type"]
+    judge_mem             = preset["mem"]
+    judge_cpus            = preset["cpus"]
+
+    if args.judge or args.judge_model:
+        print(f"  Judge        : {args.judge or 'custom'}")
+        print(f"  Judge model  : {judge_model}")
+        print(f"  Judge GPUs   : {judge_gpu_type}×{judge_tensor_parallel}")
+
     # Variables that the bash template cannot sensibly default (model IDs, seeds,
     # pipeline control flags). All path defaults live in the template itself.
     export_vars = {
         "PROJECT_ROOT":      str(Path.cwd()),
         "BASE_MODEL":        args.base_model,
         "BASE_SFT_ADAPTER":  args.base_sft_adapter,
-        "JUDGE_MODEL":            args.judge_model,
-        "JUDGE_TENSOR_PARALLEL":  str(args.judge_tensor_parallel),
+        "JUDGE_MODEL":            judge_model,
+        "JUDGE_TENSOR_PARALLEL":  str(judge_tensor_parallel),
+        "JUDGE_GPU_TYPE":         judge_gpu_type,
         "SEED":              str(args.seed),
         "DPO_BETA":          str(args.dpo_beta),
         "FORCE":             "1" if args.force else "0",
@@ -173,11 +234,11 @@ def main() -> None:
         time      = args.short_time      if use_short else args.long_time
         mem       = args.short_mem       if use_short else args.long_mem
         cpus      = args.short_cpus      if use_short else args.long_cpus
-        # judge_dpo loads Gemma 27B — needs 2× A100-40GB and more CPU/RAM
-        gpus = f"a100:{args.judge_tensor_parallel}" if stage == "judge_dpo" else "a100:1"
+        # judge_dpo loads a large judge model — resource needs come from preset
+        gpus = f"{judge_gpu_type}:{judge_tensor_parallel}" if stage == "judge_dpo" else "a100:1"
         if stage == "judge_dpo":
-            mem  = "32G"
-            cpus = 4
+            mem  = judge_mem
+            cpus = judge_cpus
         return [
             f"--partition={partition}",
             f"--time={time}",

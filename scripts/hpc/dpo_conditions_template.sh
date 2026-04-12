@@ -35,9 +35,10 @@ fi
 # ---------------------------------------------------------------------------
 BASE_MODEL="${BASE_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
 BASE_SFT_ADAPTER="${BASE_SFT_ADAPTER:-trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter}"
-JUDGE_MODEL="${JUDGE_MODEL:-google/gemma-3-27b-it}"
-# Gemma 27B needs 2× A100-40GB in bfloat16; set to 1 only for small judge models
-JUDGE_TENSOR_PARALLEL="${JUDGE_TENSOR_PARALLEL:-2}"
+JUDGE_MODEL="${JUDGE_MODEL:-openai/gpt-oss-120b}"
+# GPT-OSS 120B is natively 4-bit quantized; fits on a single RTX 6000 Pro (96 GB VRAM)
+JUDGE_TENSOR_PARALLEL="${JUDGE_TENSOR_PARALLEL:-1}"
+JUDGE_GPU_TYPE="${JUDGE_GPU_TYPE:-rtx_pro_6000}"
 
 SEED="${SEED:-22}"
 TEMPERATURE="${TEMPERATURE:-0.8}"
