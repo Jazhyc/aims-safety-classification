@@ -207,11 +207,19 @@ def train(args):
     print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
 
     # ── Tokenizer ─────────────────────────────────────────────────────────
-    # Resolve local snapshot path to avoid network calls (is_base_mistral check)
+    # Resolve local snapshot path to avoid network calls (is_base_mistral check).
+    # HF_HUB_CACHE takes priority (set in the SLURM template); fall back to
+    # HF_HOME/hub, then the standard ~/.cache/huggingface/hub default.
     import os as _os
-    _hf_home = _os.environ.get("HF_HOME", _os.path.expanduser("~/.cache/huggingface"))
+    _hf_hub_cache = _os.environ.get(
+        "HF_HUB_CACHE",
+        _os.path.join(
+            _os.environ.get("HF_HOME", _os.path.expanduser("~/.cache/huggingface")),
+            "hub",
+        ),
+    )
     _model_id = args.base_model.replace("/", "--")
-    _snapshots = _os.path.join(_hf_home, "hub", f"models--{_model_id}", "snapshots")
+    _snapshots = _os.path.join(_hf_hub_cache, f"models--{_model_id}", "snapshots")
     if _os.path.isdir(_snapshots):
         _snap = sorted(_os.listdir(_snapshots))[-1]
         _tok_path = _os.path.join(_snapshots, _snap)

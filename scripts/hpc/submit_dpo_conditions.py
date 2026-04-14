@@ -167,6 +167,16 @@ def parse_args() -> argparse.Namespace:
                         "for dpo_aug instead of the augmented SFT. Avoids contamination "
                         "from imbalanced sft_examples (74%% harmful).")
 
+    # ── Output path overrides ─────────────────────────────────────────────
+    p.add_argument("--judge-pairs-dir", default=None,
+                   help="Override JUDGE_PAIRS_DIR (default: data/dpo_pairs/judge).")
+    p.add_argument("--judge-balanced-dir", default=None,
+                   help="Override JUDGE_BALANCED_DIR.")
+    p.add_argument("--judge-dpo-output", default=None,
+                   help="Override JUDGE_DPO_OUTPUT (trained model save path).")
+    p.add_argument("--sft-pred-dir-judge", default=None,
+                   help="Override SFT_PRED_DIR_JUDGE.")
+
     # ── SLURM resources ────────────────────────────────────────────────────
     p.add_argument("--short-partition", default="gpushort")
     p.add_argument("--long-partition", default="gpumedium")
@@ -226,6 +236,10 @@ def main() -> None:
         "HARMFUL_WEIGHT":    str(args.harmful_weight),
         "AUG_EPOCHS":        str(args.aug_epochs),
         "NO_SFT_AUG":        "1" if args.no_sft_aug else "0",
+        **({} if args.judge_pairs_dir    is None else {"JUDGE_PAIRS_DIR":    args.judge_pairs_dir}),
+        **({} if args.judge_balanced_dir is None else {"JUDGE_BALANCED_DIR": args.judge_balanced_dir}),
+        **({} if args.judge_dpo_output   is None else {"JUDGE_DPO_OUTPUT":   args.judge_dpo_output}),
+        **({} if args.sft_pred_dir_judge is None else {"SFT_PRED_DIR_JUDGE": args.sft_pred_dir_judge}),
     }
 
     def sbatch_opts(stage: str) -> list[str]:
