@@ -220,14 +220,31 @@ def train(args):
     )
     _model_id = args.base_model.replace("/", "--")
     _snapshots = _os.path.join(_hf_hub_cache, f"models--{_model_id}", "snapshots")
+    _tok_path = args.base_model
     if _os.path.isdir(_snapshots):
-        _snap = sorted(_os.listdir(_snapshots))[-1]
-        _tok_path = _os.path.join(_snapshots, _snap)
-    else:
-        _tok_path = args.base_model
+        # Pick the newest snapshot that actually has tokenizer assets.
+        # Some cache snapshots can be incomplete (e.g., interrupted downloads).
+        for _snap in sorted(_os.listdir(_snapshots), reverse=True):
+            _candidate = _os.path.join(_snapshots, _snap)
+            if not _os.path.isdir(_candidate):
+                continue
+            if _os.path.exists(_os.path.join(_candidate, "tokenizer.json")) or _os.path.exists(
+                _os.path.join(_candidate, "tokenizer.model")
+            ):
+                _tok_path = _candidate
+                break
     # use_fast=True avoids instantiating LlamaTokenizer (slow/sentencepiece)
     # which fails for Llama 3.x models that have no tokenizer.model file.
-    tokenizer = AutoTokenizer.from_pretrained(_tok_path, local_files_only=True, use_fast=True)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(_tok_path, local_files_only=True, use_fast=True)
+    except (TypeError, OSError, ValueError):
+        # Fallback: let HF resolve from model id within the explicit cache dir.
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.base_model,
+            cache_dir=_hf_hub_cache,
+            local_files_only=True,
+            use_fast=True,
+        )
     tokenizer.padding_side = "left"
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
