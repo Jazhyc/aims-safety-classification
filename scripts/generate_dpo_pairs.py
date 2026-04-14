@@ -168,12 +168,16 @@ def _all_have_t0(parsed: list) -> bool:
     return True
 
 
-def parse_verdict(text: str) -> str:
-    """Parse a judge verdict string into one of: good_match | decent_match | bad_match | unknown."""
-    t = text.strip().lower()
-    if t.startswith("good"):   return "good_match"
-    if t.startswith("decent"): return "decent_match"
-    if t.startswith("bad"):    return "bad_match"
+def parse_verdict(text: str, reasoning: str = "") -> str:
+    """Parse a judge verdict string into one of: good_match | decent_match | bad_match | unknown.
+
+    Searches the full output (text + reasoning_content for thinking models like GPT-OSS)
+    for the verdict keyword anywhere, not just at the start.
+    """
+    combined = (text + " " + reasoning).strip().lower()
+    if "good_match"   in combined: return "good_match"
+    if "decent_match" in combined: return "decent_match"
+    if "bad_match"    in combined: return "bad_match"
     return "unknown"
 
 
@@ -254,13 +258,19 @@ def judge_intent_similarity_llm(llm, triples: list, tokenizer) -> list:
     ]
     params = SamplingParams(
         n=1,
-        max_tokens=15,
+        max_tokens=512,
         temperature=0.0,
         top_p=1.0,
         skip_special_tokens=True,
     )
     outputs = llm.generate(prompts, params)
-    return [parse_verdict(o.outputs[0].text) for o in outputs]
+    return [
+        parse_verdict(
+            o.outputs[0].text,
+            getattr(o.outputs[0], "reasoning_content", "") or "",
+        )
+        for o in outputs
+    ]
 
 
 
