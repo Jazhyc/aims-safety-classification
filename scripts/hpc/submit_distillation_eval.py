@@ -44,17 +44,17 @@ TEMPLATE_PATH = "scripts/hpc/distillation_eval_template.sh"
 # ── Sweep dimensions (must match submit_distillation_sweep.py) ────────────────
 
 TEACHER_MODELS = [
-    ("cyankiwi/gemma-4-31B-it-AWQ-4bit",             "cyankiwi-gemma-4-31b"),
-    # ("moonshotai/kimi-k2.5",                        "moonshotai-kimi-k2.5"),
-    # ("openai/gpt-oss-120b",                          "openai-gpt-oss-120b"),
-    # ("RedHatAI/gemma-3-27b-it-quantized.w4a16",      "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
+    ("cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit",  "cyankiwi-Mistral-Small-4-119B-2603-AWQ-4bit"),
+    ("cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit",          "cyankiwi-Qwen3.5-122B-A10B-AWQ-4bit"),
+    ("openai/gpt-oss-120b",                           "openai-gpt-oss-120b"),
+    ("RedHatAI/gemma-3-27b-it-quantized.w4a16",       "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
 ]
 
 STUDENT_MODELS = [
-    #("meta-llama/Llama-3.1-8B-Instruct",        "llama-3.1-8b"),
-    ("google/gemma-3-12b-it",                    "gemma-3-12b"),
-    #("mistralai/Ministral-8B-Instruct-2410",     "ministral-8b"),
-    #("Qwen/Qwen3-8B",                            "qwen3-8b"),
+    ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
+    ("google/gemma-3-12b-it",                          "gemma-3-12b"),
+    ("mistralai/Ministral-3-14B-Reasoning-2512",       "ministral-3-14b-reasoning"),
+    ("Qwen/Qwen3.5-9B",                                "qwen3.5-9b"),
 ]
 
 LEARNING_RATES = [1e-5, 2e-5, 5e-5, 1e-4, 2e-4]

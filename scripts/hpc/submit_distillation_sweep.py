@@ -31,25 +31,20 @@ from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_
 # ── Sweep dimensions ──────────────────────────────────────────────────────────
 
 # Teacher model slug → base dir for pre-generated reasoning traces.
-# Slug must match _teacher_slug() in run_distillation_pipeline.py:
-#   teacher_model.replace("/", "-")
-# Add more teachers here once their traces are generated.
+# Slug must match model_name.replace("/", "-") used by generate_reasoning_traces.py.
 TEACHER_MODELS = [
-    ("cyankiwi/gemma-4-31B-it-AWQ-4bit",               "cyankiwi-gemma-4-31b"),
-    # ("moonshotai/kimi-k2.5",                           "moonshotai-kimi-k2.5"),
-    # ("openai/gpt-oss-120b",                            "openai-gpt-oss-120b"),
-    # ("RedHatAI/gemma-3-27b-it-quantized.w4a16",        "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
+    ("cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit",  "cyankiwi-Mistral-Small-4-119B-2603-AWQ-4bit"),
+    ("cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit",          "cyankiwi-Qwen3.5-122B-A10B-AWQ-4bit"),
+    ("openai/gpt-oss-120b",                           "openai-gpt-oss-120b"),
+    ("RedHatAI/gemma-3-27b-it-quantized.w4a16",       "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
 ]
 
 # (HuggingFace model ID, short slug used in run names and W&B project names)
 STUDENT_MODELS = [
-    # ("meta-llama/Llama-3.1-8B-Instruct",        "llama-3.1-8b"),
-    ("google/gemma-3-12b-it",                    "gemma-3-12b"),
-    # ("mistralai/Ministral-8B-Instruct-2410",     "ministral-8b"),
-    # ("Qwen/Qwen3-8B",                            "qwen3-8b"),
-    
-    # Ignore MOE for now
-    # ("openai/gpt-oss-20b",                       "gpt-oss-20b"),
+    ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
+    ("mistralai/Ministral-3-14B-Reasoning-2512",        "ministral-3-14b-reasoning"),
+    ("Qwen/Qwen3.5-9B",                                "qwen3.5-9b"),
+    ("google/gemma-3-12b-it",                          "gemma-3-12b"),
 ]
 
 LEARNING_RATES = [

@@ -58,6 +58,55 @@ def _load_causal_lm(model_name: str, **kwargs):
 
         return causal_lm
 
+    if type(cfg).__name__ == "Mistral3Config":
+        from transformers import Ministral3ForCausalLM, Mistral3ForConditionalGeneration
+
+        full = Mistral3ForConditionalGeneration.from_pretrained(model_name, **kwargs)
+
+        with torch.device("meta"):
+            causal_lm = Ministral3ForCausalLM(full.config.text_config)
+        causal_lm.generation_config = getattr(full, "generation_config", causal_lm.generation_config)
+        causal_lm.model = full.model.language_model
+        causal_lm.lm_head = full.lm_head
+
+        del full.model.vision_tower
+        del full.model.multi_modal_projector
+        del full
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return causal_lm
+
+    if type(cfg).__name__ == "Gemma4Config":
+        from transformers import Gemma4ForCausalLM, Gemma4ForConditionalGeneration
+
+        # Gemma 4 has global attention layers with head_dim=512, which exceeds
+        # flash-attn's 256 limit. Fall back to eager — sdpa does not correctly
+        # handle Gemma 4's mixed local/global attention with sequence packing.
+        kwargs["attn_implementation"] = "eager"
+        full = Gemma4ForConditionalGeneration.from_pretrained(model_name, **kwargs)
+
+        # Gemma4ForCausalLM expects Gemma4TextConfig; build it on the meta device
+        # so __init__ registers submodules without allocating parameters, then
+        # graft the already-loaded language tower and lm_head from `full`.
+        with torch.device("meta"):
+            causal_lm = Gemma4ForCausalLM(full.config.text_config)
+        causal_lm.generation_config = getattr(full, "generation_config", causal_lm.generation_config)
+        causal_lm.model = full.model.language_model
+        causal_lm.lm_head = full.lm_head
+
+        # Free vision/audio components — never used during text-only SFT.
+        for attr in ("vision_tower", "embed_vision", "audio_tower", "embed_audio"):
+            if hasattr(full.model, attr):
+                delattr(full.model, attr)
+        del full
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return causal_lm
+
     return AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
 from transformers.integrations import WandbCallback
 
@@ -500,30 +549,44 @@ def setup_causal_model_and_tokenizer(config):
             "Install them with: pip install bitsandbytes peft"
         )
 
-    # 4-bit quantization config
-    load_in_4bit = bool(quant_cfg.get("load_in_4bit", True))
-    bnb_4bit_use_double_quant = bool(quant_cfg.get("bnb_4bit_use_double_quant", True))
-    bnb_4bit_quant_type = quant_cfg.get("bnb_4bit_quant_type", "nf4")
     compute_dtype_str = quant_cfg.get("bnb_4bit_compute_dtype", "bfloat16")
     compute_dtype = getattr(torch, compute_dtype_str, torch.bfloat16)
-
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=load_in_4bit,
-        bnb_4bit_use_double_quant=bnb_4bit_use_double_quant,
-        bnb_4bit_quant_type=bnb_4bit_quant_type,
-        bnb_4bit_compute_dtype=compute_dtype,
-    )
-
     trust_remote_code = bool(model_cfg.get("trust_remote_code", False))
     attn_implementation = model_cfg.get("attn_implementation", "flash_attention_2")
-    model = _load_causal_lm(
-        model_name,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=trust_remote_code,
-        attn_implementation=attn_implementation,
-        dtype=compute_dtype,
-    )
+
+    # Some models (e.g. openai/gpt-oss-20b) ship pre-quantized with their own
+    # quantization_config (e.g. Mxfp4Config). Passing a BitsAndBytesConfig on top
+    # raises a ValueError. Detect this and skip BnB for pre-quantized models.
+    pre_cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
+    model_already_quantized = getattr(pre_cfg, "quantization_config", None) is not None
+
+    if model_already_quantized:
+        print(f"Model {model_name} is pre-quantized; skipping BitsAndBytes config.")
+        model = _load_causal_lm(
+            model_name,
+            device_map="auto",
+            trust_remote_code=trust_remote_code,
+            attn_implementation=attn_implementation,
+        )
+    else:
+        # 4-bit QLoRA quantization
+        load_in_4bit = bool(quant_cfg.get("load_in_4bit", True))
+        bnb_4bit_use_double_quant = bool(quant_cfg.get("bnb_4bit_use_double_quant", True))
+        bnb_4bit_quant_type = quant_cfg.get("bnb_4bit_quant_type", "nf4")
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=load_in_4bit,
+            bnb_4bit_use_double_quant=bnb_4bit_use_double_quant,
+            bnb_4bit_quant_type=bnb_4bit_quant_type,
+            bnb_4bit_compute_dtype=compute_dtype,
+        )
+        model = _load_causal_lm(
+            model_name,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=trust_remote_code,
+            attn_implementation=attn_implementation,
+            dtype=compute_dtype,
+        )
 
     model.config.use_cache = False
 
@@ -634,7 +697,11 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
         training_args["adam_beta1"] = adam_beta1
     if adam_beta2 is not None:
         training_args["adam_beta2"] = adam_beta2
-    
+
+    max_steps = train_cfg.get("max_steps", -1)
+    if max_steps > 0:
+        training_args["max_steps"] = max_steps
+
     return training_args
 
 
