@@ -22,6 +22,7 @@ if [ -f "${HOME}/.wandb_secrets" ]; then
 fi
 
 export PYTHONUNBUFFERED=1
+export HF_HUB_CACHE="${HF_HUB_CACHE:-/scratch/${USER}/huggingface_cache}"
 
 STAGE="${STAGE:-}"
 if [ -z "${STAGE}" ]; then
