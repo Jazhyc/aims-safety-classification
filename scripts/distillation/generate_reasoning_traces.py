@@ -60,13 +60,31 @@ from intention_jailbreak.model_generation.prompt_templates import (
 )
 
 
-# Known thinking token pairs, ordered by prevalence.
-# Used by both tokenizer-based detection (vLLM) and text-based detection (API).
-_THINKING_PAIRS = [
-    ("<think>",      "</think>"),        # Qwen3, DeepSeek-R1, Kimi K2.5
-    ("<|thinking|>", "<|/thinking|>"),   # GLM 4 / GLM 5
-    ("analysis",     "assistantfinal"),  # GPT-OSS-120B (tokenizer detection only)
-]
+# ── Response schema for structured output parsing ────────────────────────────
+# Defines how to extract thinking blocks, reasoning, intent, and harm predictions
+# from the model output using HF transformers' parse_response schema-based parser.
+REASONING_TRACE_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "role": {"const": "assistant"},
+        "thinking": {
+            "type": "string",
+            "x-regex": r"^(.*?)(?=Reasoning:|$)",
+        },
+        "reasoning": {
+            "type": "string",
+            "x-regex": r"Reasoning:\s*(.+?)(?=(?:Prompt )?intent:|Prompt harm:|$)",
+        },
+        "prompt_intent": {
+            "type": "string",
+            "x-regex": r"(?:Prompt intent|Intent):\s*(.+?)(?=Prompt harm:|$)",
+        },
+        "prompt_harm": {
+            "type": "string",
+            "x-regex": r"Prompt harm:\s*([^\n]+)",
+        },
+    },
+}
 
 
 # ── Prompt builders ────────────────────────────────────────────────────────────
@@ -137,128 +155,73 @@ def _user_content_for_condition(condition: str, sample: dict) -> str:
 
 # ── Thinking token detection ───────────────────────────────────────────────────
 
-def detect_thinking_tokens(tokenizer) -> tuple[str, str]:
+def setup_response_schema(tokenizer) -> None:
     """
-    Infer thinking block delimiters from the tokenizer's special tokens.
+    Set up the response schema on the tokenizer for structured output parsing.
 
-    Returns (thinking_start, thinking_end), both empty strings if the model has
-    no known thinking tokens.
-
-    Known patterns (all major open-weight thinking models as of 2025):
-        <think> / </think>              — Qwen3, DeepSeek-R1, Kimi K2.5
-        <|thinking|> / <|/thinking|>   — GLM 4 / GLM 5
-        analysis / assistantfinal       — GPT-OSS-120B
-
-    How vLLM handles these with skip_special_tokens=True:
-        - Qwen3 / most models: opening token is stripped, closing remains in output
-        - GPT-OSS-120B: neither token is stripped (they are not in the special tokens
-          vocab but are still tracked here so the closing delimiter can be used for splitting)
+    This schema enables tokenizer.parse_response() to extract thinking blocks,
+    reasoning, intent, and harm predictions from model output using regex patterns.
     """
-    special = set(getattr(tokenizer, "all_special_tokens", []))
-    for start, end in _THINKING_PAIRS:
-        if start in special:
-            return start, end
-    return "", ""
+    tokenizer.response_schema = REASONING_TRACE_RESPONSE_SCHEMA
 
 
-def _detect_thinking_from_text(text: str) -> tuple[str, str]:
-    """
-    Infer thinking delimiters by inspecting the response text.
-
-    Used for API backends where no tokenizer is available.  Only checks pairs
-    whose closing delimiter is distinctive enough (skips "assistantfinal" which
-    could appear in regular model output).
-    """
-    for start, end in _THINKING_PAIRS[:2]:
-        if end in text:
-            return start, end
-    return "", ""
 
 
 # ── Output parser ──────────────────────────────────────────────────────────────
 
-def parse_response(
+def parse_model_output(
     raw_text: str,
-    thinking_start: str = "",
-    thinking_end: str = "",
+    tokenizer=None,
     pre_extracted_thinking: str | None = None,
 ) -> dict:
     """
-    Parse raw model output into structured ``{role, thinking, content}`` components.
+    Parse model output into structured fields (intent, harm, reasoning, thinking).
 
-    Mirrors the interface of ``tokenizer.parse_response`` (HuggingFace transformers ≥ 5).
-
-    Thinking block extraction (mutually exclusive, in priority order):
-      1. pre_extracted_thinking: already separated thinking (from vLLM reasoning_content
-         or OpenRouter's ``reasoning`` field).  raw_text is treated as content only.
-      2. thinking_end present in raw_text: split on the closing delimiter.
-         - If the opening token was stripped as a special token (e.g. Qwen3 / Kimi K2.5),
-           raw_text starts directly with the CoT content.
-         - If neither token was stripped (e.g. GPT-OSS-120B), raw_text starts with
-           thinking_start; it is stripped from the front of the thinking trace.
-      3. Auto-detect from text (no delimiters provided): scans for all known pairs,
-         including the GPT-OSS-120B ``analysis`` / ``assistantfinal`` pattern.
-      4. No match: thinking is empty, content is raw_text as-is.
+    Uses the tokenizer's schema-based parse_response method (HF transformers ≥ 5.5.0)
+    which applies regex patterns to extract structured fields from the raw text.
 
     Args:
-        raw_text:               Text from the model.
-        thinking_start:         Opening delimiter e.g. ``"<think>"``; empty string if
-                                the opening token is stripped before reaching here.
-        thinking_end:           Closing delimiter e.g. ``"</think>"``.
-        pre_extracted_thinking: Thinking content already extracted upstream; bypasses
-                                all in-text parsing when provided.
+        raw_text:               Raw model output text.
+        tokenizer:              Tokenizer with response_schema set. If None, uses
+                                fallback regex-based extraction.
+        pre_extracted_thinking: Pre-extracted thinking block (from vLLM reasoning_content
+                                or OpenRouter). Bypasses text-based extraction.
 
     Returns:
-        dict with keys ``role`` (``"assistant"``), ``thinking`` (str), ``content`` (str).
+        dict with keys: prompt_intent, prompt_harm, reasoning, thinking_trace.
     """
+    # Handle pre-extracted thinking (e.g., from vLLM's reasoning_content field)
     if pre_extracted_thinking is not None:
-        return {
-            "role":     "assistant",
-            "thinking": pre_extracted_thinking.strip(),
-            "content":  raw_text.strip(),
-        }
+        # If we have pre-extracted thinking, parse the remaining content for fields
+        parsed = _parse_content_fields(raw_text)
+        parsed["thinking_trace"] = pre_extracted_thinking.strip()
+        return parsed
 
-    if thinking_end and thinking_end in raw_text:
-        parts = raw_text.split(thinking_end, 1)
-        trace = parts[0].strip()
-        if thinking_start and trace.startswith(thinking_start):
-            trace = trace[len(thinking_start):].strip()
-        return {
-            "role":     "assistant",
-            "thinking": trace,
-            "content":  parts[1].strip(),
-        }
-
-    # Auto-detect: try all known thinking pairs (including GPT-OSS-120B)
-    for start, end in _THINKING_PAIRS:
-        if end in raw_text:
-            parts = raw_text.split(end, 1)
-            trace = parts[0].strip()
-            if start and trace.startswith(start):
-                trace = trace[len(start):].strip()
+    # Use tokenizer's schema-based parser if available (HF transformers ≥ 5.5.0)
+    if tokenizer is not None and hasattr(tokenizer, "parse_response"):
+        try:
+            parsed_dict = tokenizer.parse_response(raw_text)
             return {
-                "role":     "assistant",
-                "thinking": trace,
-                "content":  parts[1].strip(),
+                "prompt_intent": parsed_dict.get("prompt_intent", "").strip() or None,
+                "prompt_harm": _normalize_harm_label(parsed_dict.get("prompt_harm", "")),
+                "reasoning": parsed_dict.get("reasoning", "").strip(),
+                "thinking_trace": parsed_dict.get("thinking", "").strip(),
             }
+        except Exception as e:
+            # Fall back to manual parsing if schema parsing fails
+            print(f"  Warning: schema-based parsing failed ({e}), falling back to regex")
+            return _parse_content_fields(raw_text)
 
-    return {"role": "assistant", "thinking": "", "content": raw_text.strip()}
+    # Fallback: manual regex-based parsing
+    return _parse_content_fields(raw_text)
 
 
-def _extract_fields(parsed: dict) -> dict:
+def _parse_content_fields(text: str) -> dict:
     """
-    Extract ``prompt_intent``, ``prompt_harm``, and ``reasoning`` from the content
-    field of a ``parse_response`` result.
+    Extract structured fields (intent, harm, reasoning) from content using regex.
 
-    Args:
-        parsed: Dict returned by :func:`parse_response` with keys role/thinking/content.
-
-    Returns:
-        dict with keys ``prompt_intent``, ``prompt_harm``, ``reasoning``,
-        ``thinking_trace`` (alias for ``parsed["thinking"]``).
+    Fallback parser for when tokenizer.parse_response is unavailable.
     """
-    text = parsed["content"]
-
     # Extract Reasoning field — stops before Intent:, Prompt intent:, or Prompt harm:
     reasoning = ""
     reasoning_match = re.search(
@@ -281,33 +244,26 @@ def _extract_fields(parsed: dict) -> dict:
     prompt_harm = None
     ph_match = re.search(r'Prompt harm:\s*([^\n]+)', text, re.IGNORECASE)
     if ph_match:
-        label = ph_match.group(1).strip().lower()
-        if 'unharmful' in label or 'safe' in label:
-            prompt_harm = 'unharmful'
-        elif 'harmful' in label:
-            prompt_harm = 'harmful'
+        prompt_harm = _normalize_harm_label(ph_match.group(1))
 
     return {
         "prompt_intent":  prompt_intent,
         "prompt_harm":    prompt_harm,
         "reasoning":      reasoning,
-        "thinking_trace": parsed["thinking"],
+        "thinking_trace": "",
     }
 
 
-def parse_model_output(
-    raw_text: str,
-    thinking_start: str = "",
-    thinking_end: str = "",
-    pre_extracted_thinking: str | None = None,
-) -> dict:
-    """
-    Parse model output into structured fields (intent, harm, reasoning).
-
-    Thin wrapper that calls :func:`parse_response` then :func:`_extract_fields`.
-    Signature is unchanged for backward compatibility with existing call sites.
-    """
-    return _extract_fields(parse_response(raw_text, thinking_start, thinking_end, pre_extracted_thinking))
+def _normalize_harm_label(label: str) -> str | None:
+    """Normalize harm label to binary: 'harmful', 'unharmful', or None."""
+    if not label:
+        return None
+    label = label.strip().lower()
+    if 'unharmful' in label or 'safe' in label:
+        return 'unharmful'
+    elif 'harmful' in label:
+        return 'harmful'
+    return None
 
 
 # ── Dataset loading ────────────────────────────────────────────────────────────
@@ -516,14 +472,11 @@ def _generate_with_vllm(
         llm_kwargs["attention_config"] = {"flash_attn_version": flash_attn_version}
     llm = LLM(**llm_kwargs)
 
-    # Load tokenizer and auto-detect thinking block delimiters
+    # Load tokenizer and set up response schema for structured parsing
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    thinking_start, thinking_end = detect_thinking_tokens(tokenizer) if thinking_mode else ("", "")
+    setup_response_schema(tokenizer)
     if thinking_mode:
-        if thinking_end:
-            print(f"Thinking mode: delimiters detected from tokenizer (start='{thinking_start}', end='{thinking_end}')")
-        else:
-            print("Thinking mode: no known thinking delimiter found — vLLM reasoning_content only")
+        print(f"Thinking mode: enabled. Using schema-based parsing for structured output")
 
     sampling_params = SamplingParams(
         max_tokens=gen_cfg.get("max_new_tokens", 4096),
@@ -589,9 +542,9 @@ def _generate_with_vllm(
         completion = output.outputs[0]
         raw_text = completion.text.strip()
         # Use vLLM's built-in reasoning extraction when available (requires
-        # reasoning_backend set on the LLM), otherwise fall back to delimiter splitting.
+        # reasoning_backend set on the LLM), otherwise use schema-based parsing.
         pre_extracted = getattr(completion, "reasoning_content", None)
-        parsed = parse_model_output(raw_text, thinking_start, thinking_end, pre_extracted)
+        parsed = parse_model_output(raw_text, tokenizer=tokenizer, pre_extracted_thinking=pre_extracted)
 
         raw_outputs.append(_make_raw_entry(sample, condition, raw_text, parsed))
         parsed_results.append(_make_parsed_entry(sample, condition, parsed))
@@ -674,19 +627,13 @@ def _generate_with_openrouter(
                 content = msg.content or ""
 
                 # Try OpenRouter's extended reasoning field before falling back to
-                # text-based delimiter detection.
+                # schema-based parsing.
                 reasoning = getattr(msg, "reasoning", None)
                 if reasoning is None and hasattr(msg, "model_extra"):
                     reasoning = (msg.model_extra or {}).get("reasoning")
 
-                if reasoning is not None:
-                    thinking_start, thinking_end = "", ""
-                else:
-                    thinking_start, thinking_end = _detect_thinking_from_text(content)
-
                 parsed = parse_model_output(
-                    content, thinking_start, thinking_end,
-                    pre_extracted_thinking=reasoning,
+                    content, tokenizer=None, pre_extracted_thinking=reasoning,
                 )
                 return task_idx, condition, sample, content, parsed
 
