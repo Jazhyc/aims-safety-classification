@@ -71,5 +71,6 @@ VALID_CONDITIONS = [
     "zeroshot_cot_generation",                 # CoT: prompt -> reasoning + intent + harm
     "zeroshot_cot_classification_with_intent", # CoT: prompt + human intent -> reasoning + harm
     "finetuned_reasoning_classification",      # Distilled (MODE D): prompt -> reasoning + harm
-    "finetuned_reasoning_generation",          # Distilled (MODE E): prompt -> reasoning + intent + harm
+    "finetuned_reasoning_human_intent",        # Distilled (MODE E): prompt -> reasoning + human-annotated intent + harm
+    "finetuned_reasoning_synthetic_intent",    # Distilled (MODE F): prompt -> reasoning + model-generated intent + harm
 ]

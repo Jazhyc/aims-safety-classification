@@ -308,7 +308,8 @@ def _validate_finetuned_adapters(conditions: List[str], finetuned_cfg: dict) -> 
         "finetuned_generation": ("generation_adapter", "finetuned.generation_adapter"),
         "finetuned_classification": ("classification_adapter", "finetuned.classification_adapter"),
         "finetuned_reasoning_classification": ("reasoning_classification_adapter", "finetuned.reasoning_classification_adapter"),
-        "finetuned_reasoning_generation": ("reasoning_generation_adapter", "finetuned.reasoning_generation_adapter"),
+        "finetuned_reasoning_human_intent": ("reasoning_human_intent_adapter", "finetuned.reasoning_human_intent_adapter"),
+        "finetuned_reasoning_synthetic_intent": ("reasoning_synthetic_adapter", "finetuned.reasoning_synthetic_adapter"),
     }
     for cond, (key, cfg_path) in checks.items():
         if cond in conditions:
@@ -319,7 +320,7 @@ def _validate_finetuned_adapters(conditions: List[str], finetuned_cfg: dict) -> 
 
 def _setup_lora_requests(
     finetuned_cfg: dict,
-) -> Tuple[Optional[LoRARequest], Optional[LoRARequest], Optional[LoRARequest], Optional[LoRARequest]]:
+) -> Tuple[Optional[LoRARequest], Optional[LoRARequest], Optional[LoRARequest], Optional[LoRARequest], Optional[LoRARequest]]:
     """Create LoRARequest objects for each configured fine-tuned adapter."""
     def _make(key: str, name: str, uid: int) -> Optional[LoRARequest]:
         path = finetuned_cfg.get(key)
@@ -332,7 +333,8 @@ def _setup_lora_requests(
         _make("generation_adapter", "generation", 1),
         _make("classification_adapter", "classification", 2),
         _make("reasoning_classification_adapter", "reasoning_classification", 3),
-        _make("reasoning_generation_adapter", "reasoning_generation", 4),
+        _make("reasoning_human_intent_adapter", "reasoning_human_intent", 4),
+        _make("reasoning_synthetic_adapter", "reasoning_synthetic", 5),
     )
 
 
@@ -372,6 +374,7 @@ def main(cfg: DictConfig):
     finetuned_conditions = {
         "finetuned_generation", "finetuned_classification",
         "finetuned_reasoning_classification", "finetuned_reasoning_generation",
+        "finetuned_reasoning_synthetic_intent",
     }
     needs_finetuned = bool(set(conditions) & finetuned_conditions)
     needs_finetuned_lora = needs_finetuned and not use_merged
@@ -391,7 +394,8 @@ def main(cfg: DictConfig):
             "finetuned_generation": finetuned_cfg.get("generation_adapter"),
             "finetuned_classification": finetuned_cfg.get("classification_adapter"),
             "finetuned_reasoning_classification": finetuned_cfg.get("reasoning_classification_adapter"),
-            "finetuned_reasoning_generation": finetuned_cfg.get("reasoning_generation_adapter"),
+            "finetuned_reasoning_human_intent": finetuned_cfg.get("reasoning_human_intent_adapter"),
+            "finetuned_reasoning_synthetic_intent": finetuned_cfg.get("reasoning_synthetic_adapter"),
         }
         for cond in conditions:
             adapter_path = adapter_keys.get(cond)
@@ -456,8 +460,9 @@ def main(cfg: DictConfig):
         generation_lora_request,
         classification_lora_request,
         reasoning_classification_lora_request,
-        reasoning_generation_lora_request,
-    ) = _setup_lora_requests(finetuned_cfg) if not use_merged else (None, None, None, None)
+        reasoning_human_intent_lora_request,
+        reasoning_synthetic_lora_request,
+    ) = _setup_lora_requests(finetuned_cfg) if not use_merged else (None, None, None, None, None)
 
     if use_merged:
         tokenizer_path = model_cfg["name"]
@@ -507,8 +512,11 @@ def main(cfg: DictConfig):
             if condition == "finetuned_reasoning_classification" and reasoning_classification_lora_request is None and not use_merged:
                 print(f"  Skipping {condition} (no reasoning classification adapter)")
                 continue
-            if condition == "finetuned_reasoning_generation" and reasoning_generation_lora_request is None and not use_merged:
-                print(f"  Skipping {condition} (no reasoning generation adapter)")
+            if condition == "finetuned_reasoning_human_intent" and reasoning_human_intent_lora_request is None and not use_merged:
+                print(f"  Skipping {condition} (no reasoning human intent adapter)")
+                continue
+            if condition == "finetuned_reasoning_synthetic_intent" and reasoning_synthetic_lora_request is None and not use_merged:
+                print(f"  Skipping {condition} (no reasoning synthetic adapter)")
                 continue
             if condition in ("vanilla_with_human_intent", "zeroshot_cot_classification_with_intent") and not has_intent:
                 print(f"  Skipping {condition} (no intent column)")
@@ -530,7 +538,8 @@ def main(cfg: DictConfig):
                 generation_lora_request=generation_lora_request,
                 classification_lora_request=classification_lora_request,
                 reasoning_classification_lora_request=reasoning_classification_lora_request,
-                reasoning_generation_lora_request=reasoning_generation_lora_request,
+                reasoning_human_intent_lora_request=reasoning_human_intent_lora_request,
+                reasoning_synthetic_lora_request=reasoning_synthetic_lora_request,
             )
             elapsed_s = time.monotonic() - t0
 

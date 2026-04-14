@@ -60,12 +60,12 @@ LEARNING_RATES = [
     2e-4,
 ]
 
-CONDITIONS = ["without_intent", "with_intent"]
+CONDITIONS = ["no_intent", "synthetic_intent", "human_intent"]
 
 # Version tag appended to all run names and W&B run names for traceability.
-TRACES_VERSION = "v6"
+TRACES_VERSION = "v7"
 
-# Base directory where v5 reasoning traces are stored.
+# Base directory where v7 reasoning traces are stored.
 TRACES_BASE_DIR = f"data/reasoning_traces_{TRACES_VERSION}"
 
 TEMPLATE_PATH = "scripts/hpc/distillation_sweep_template.sh"

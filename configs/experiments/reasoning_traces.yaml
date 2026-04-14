@@ -16,19 +16,22 @@ model:
 
 # Conditions control which prompt template is used for each sample.
 # Each condition produces one output per sample in the batch:
-#   - without_intent:  Baseline from Traian's paper. Ground-truth harm label is provided
+#   - no_intent:       No mention of intent. Ground-truth harm label is provided
 #                      in the prompt so the model explains *why* the label holds, but the
 #                      label itself must not appear in the output.
-#   - with_intent:     Same as without_intent but also includes the human-written intent
-#                      from the annotated_intents dataset. Useful for studying whether
-#                      explicit intent information improves reasoning quality.
+#   - synthetic_intent: The preamble asks to produce intent, but only the harm label is
+#                      provided as ground truth. The model must generate the intent itself.
+#                      Useful for studying model-generated intents in reasoning.
+#   - human_intent:    Same as synthetic_intent but also includes the human-written intent
+#                      from the annotated_intents dataset. Ground-truth intent is provided.
 #   - zeroshot_cot:    No ground-truth label or intent is supplied. The model must reason
 #                      from scratch (zero-shot chain-of-thought). This mirrors the
 #                      inference-time setting where labels are unknown.
 # All enabled conditions are batched into a single vLLM call.
 conditions:
-  - "without_intent"
-  - "with_intent"
+  - "no_intent"
+  - "synthetic_intent"
+  - "human_intent"
   # - "zeroshot_cot"
 
 # Dataset configuration

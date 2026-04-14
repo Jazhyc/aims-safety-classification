@@ -59,9 +59,13 @@ TAXONOMY: str = _t["taxonomy"].strip()
 
 # PREAMBLE has {taxonomy} substituted so callers don't need to do it.
 PREAMBLE: str = _t["preamble"].format(taxonomy=TAXONOMY).strip()
+PREAMBLE_NO_INTENT: str = _t["preamble_no_intent"].format(taxonomy=TAXONOMY).strip()
 
-OUTPUT_FORMAT_WITHOUT_INTENT: str = _t["output_format_without_intent"].strip()
+OUTPUT_FORMAT_NO_INTENT: str = _t["output_format_no_intent"].strip()
 OUTPUT_FORMAT_WITH_INTENT: str = _t["output_format_with_intent"].strip()
+
+# Keep old names as aliases for backward compatibility
+OUTPUT_FORMAT_WITHOUT_INTENT = OUTPUT_FORMAT_NO_INTENT
 
 # Teacher-facing ground-truth instructions (used by generate_reasoning_traces.py).
 # Keys: 'without_intent', 'with_intent'.  Each value is a format string with
@@ -84,7 +88,7 @@ SAFEGUARD_SYSTEM_PROMPT: str = _sc["safeguard_system_prompt"].strip()
 
 # ── Public helpers ────────────────────────────────────────────────────────────
 
-def build_student_prompt(user_prompt: str, with_intent: bool = False) -> str:
+def build_student_prompt(user_prompt: str, condition: str | None = None, with_intent: bool | None = None) -> str:
     """
     Build the full input prompt for the student model.
 
@@ -92,15 +96,31 @@ def build_student_prompt(user_prompt: str, with_intent: bool = False) -> str:
     time.  The model is expected to produce the completion:
 
         Reasoning: <step-by-step analysis>
-        [Prompt intent: <intent>]   <- only when with_intent=True
+        [Intent: <intent>]        <- only when condition is "synthetic_intent" or "human_intent"
         Prompt harm: <harmful/unharmful>
 
     Args:
         user_prompt:  The raw human request to classify.
-        with_intent:  If True, the output format includes a Prompt intent field.
+        condition:    The trace condition: "no_intent", "synthetic_intent", or "human_intent".
+                     If None, falls back to with_intent parameter for backward compatibility.
+        with_intent:  (Deprecated) If True, same as condition="human_intent"; if False, same as "no_intent".
 
     Returns:
         The complete formatted input string (no trailing newline).
     """
-    output_format = OUTPUT_FORMAT_WITH_INTENT if with_intent else OUTPUT_FORMAT_WITHOUT_INTENT
-    return f"{PREAMBLE}\n\nHuman user:\n{user_prompt}\n\n{output_format}"
+    # Handle backward compatibility: with_intent parameter takes precedence if condition is not set
+    if condition is None:
+        if with_intent is None:
+            with_intent = False
+        condition = "human_intent" if with_intent else "no_intent"
+
+    if condition == "no_intent":
+        preamble = PREAMBLE_NO_INTENT
+        output_format = OUTPUT_FORMAT_NO_INTENT
+    elif condition in ("synthetic_intent", "human_intent"):
+        preamble = PREAMBLE
+        output_format = OUTPUT_FORMAT_WITH_INTENT
+    else:
+        raise ValueError(f"Unknown condition: {condition!r}. Valid: 'no_intent', 'synthetic_intent', 'human_intent'")
+
+    return f"{preamble}\n\nHuman user:\n{user_prompt}\n\n{output_format}"

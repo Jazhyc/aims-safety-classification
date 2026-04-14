@@ -7,11 +7,11 @@ was missed in v4), re-extracts intent and harm fields, then writes raw_outputs.j
 and parsed_results.json to the destination version directory.
 
 Usage:
-    # Re-parse all models from v4 into v5
+    # Re-parse all models from v6 into v7
     python scripts/distillation/reparse_traces.py
 
     # Choose a different source / destination version
-    python scripts/distillation/reparse_traces.py --src v3 --dst v4
+    python scripts/distillation/reparse_traces.py --src v5 --dst v6
 
     # Process only specific models (substring match against directory name)
     python scripts/distillation/reparse_traces.py --models gpt kimi
@@ -127,8 +127,8 @@ def reparse_model(src_model_dir: Path, dst_model_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--src",    default="v4",  help="Source version tag (default: v4)")
-    parser.add_argument("--dst",    default="v5",  help="Destination version tag (default: v5)")
+    parser.add_argument("--src",    default="v6",  help="Source version tag (default: v6)")
+    parser.add_argument("--dst",    default="v7",  help="Destination version tag (default: v7)")
     parser.add_argument("--models", nargs="*",     help="Filter models by substring (default: all)")
     parser.add_argument(
         "--data-dir", default="data",

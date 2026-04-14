@@ -272,10 +272,16 @@ def load_reasoning_traces_dataset(data_cfg):
                 n_dropped_harm += 1
                 continue
 
+        # For synthetic_intent, use the model's predicted intent; for others use ground truth
+        if condition == "synthetic_intent":
+            intent = rec.get("predicted", {}).get("prompt_intent", "") or ""
+        else:
+            intent = rec.get("ground_truth", {}).get("intent", "")
+
         filtered.append({
             "id": str(rec.get("annotation_id") or rec.get("wildguard_id", "")),
             "prompt": rec.get("prompt", ""),
-            "intent": rec.get("ground_truth", {}).get("intent", ""),
+            "intent": intent,
             "harm_label": harm_binary,   # "harmful" or "safe"
             "reasoning": reasoning,
         })
@@ -663,12 +669,13 @@ def run_causal_flow(config):
     binary_harm_mapping = data_cfg.get("binary_harm_mapping", True)
     classification_only = data_cfg.get("classification_only", False)
     use_reasoning_traces = data_cfg.get("use_reasoning_traces", False)
-    # with_intent is derived from the trace condition name: "with_intent" -> generation mode
-    with_intent = data_cfg.get("reasoning_traces_condition", "without_intent") == "with_intent"
+    # rt_condition is the reasoning traces condition name
+    rt_condition = data_cfg.get("reasoning_traces_condition", "no_intent")
+    # with_intent is True for conditions that ask the student to generate intent
+    with_intent = rt_condition in ("synthetic_intent", "human_intent")
 
     # Log the training mode
     if use_reasoning_traces:
-        rt_condition = data_cfg.get("reasoning_traces_condition", "without_intent")
         print("=" * 60)
         if with_intent:
             print("REASONING TRACES MODE (generation: reasoning + intent + harm)")
@@ -704,7 +711,7 @@ def run_causal_flow(config):
             # Use the shared student prompt template: preamble + taxonomy + output format
             # so that training and inference see the same input structure.
             prompts = [
-                build_student_prompt(p, with_intent=with_intent) + "\n"
+                build_student_prompt(p, condition=rt_condition) + "\n"
                 for p in examples["prompt"]
             ]
             intents = examples["intent"] if with_intent else [None] * len(examples["prompt"])

@@ -17,7 +17,7 @@ Usage:
     python scripts/run_distillation_pipeline.py
     python scripts/run_distillation_pipeline.py wandb.enabled=true
     python scripts/run_distillation_pipeline.py "teacher_models=[model/a,model/b]"
-    python scripts/run_distillation_pipeline.py conditions=[without_intent]
+    python scripts/run_distillation_pipeline.py conditions=[no_intent]
     python scripts/run_distillation_pipeline.py cuda_visible_devices=MIG-<uuid>
 """
 
@@ -33,13 +33,17 @@ from omegaconf import DictConfig, OmegaConf
 
 # Maps distillation condition name → safety experiment fields
 CONDITION_MAP = {
-    "without_intent": {
+    "no_intent": {
         "safety_condition": "finetuned_reasoning_classification",
         "adapter_config_key": "finetuned.reasoning_classification_adapter",
     },
-    "with_intent": {
-        "safety_condition": "finetuned_reasoning_generation",
-        "adapter_config_key": "finetuned.reasoning_generation_adapter",
+    "synthetic_intent": {
+        "safety_condition": "finetuned_reasoning_synthetic_intent",
+        "adapter_config_key": "finetuned.reasoning_synthetic_adapter",
+    },
+    "human_intent": {
+        "safety_condition": "finetuned_reasoning_human_intent",
+        "adapter_config_key": "finetuned.reasoning_human_intent_adapter",
     },
 }
 
@@ -314,7 +318,7 @@ def main(cfg: DictConfig) -> None:
     project_root = Path(__file__).parent.parent.parent.resolve()
 
     teacher_models: list[str] = config.get("teacher_models", [])
-    conditions: list[str] = config.get("conditions", ["without_intent", "with_intent"])
+    conditions: list[str] = config.get("conditions", ["no_intent", "human_intent"])
     num_samples = config.get("num_samples")
     cuda_device = config.get("cuda_visible_devices")
     run_suffix: str | None = config.get("run_suffix") or None

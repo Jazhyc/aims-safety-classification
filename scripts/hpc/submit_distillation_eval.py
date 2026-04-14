@@ -58,13 +58,14 @@ STUDENT_MODELS = [
 ]
 
 LEARNING_RATES = [1e-5, 2e-5, 5e-5, 1e-4, 2e-4]
-CONDITIONS = ["without_intent", "with_intent"]
-DEFAULT_TRACES_VERSION = "v6"
+CONDITIONS = ["no_intent", "synthetic_intent", "human_intent"]
+DEFAULT_TRACES_VERSION = "v7"
 
 # Maps training condition → eval condition name used by eval_safety_classifier.py
 CONDITION_TO_EVAL = {
-    "without_intent": "finetuned_reasoning_classification",
-    "with_intent":    "finetuned_reasoning_generation",
+    "no_intent":        "finetuned_reasoning_classification",
+    "synthetic_intent": "finetuned_reasoning_synthetic_intent",
+    "human_intent":     "finetuned_reasoning_human_intent",
 }
 
 # Dataset output subdirectory names — must match eval_distillation.yaml

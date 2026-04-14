@@ -52,7 +52,8 @@ except ImportError:
 
 from intention_jailbreak.model_generation.prompt_templates import (
     PREAMBLE,
-    OUTPUT_FORMAT_WITHOUT_INTENT,
+    PREAMBLE_NO_INTENT,
+    OUTPUT_FORMAT_NO_INTENT,
     OUTPUT_FORMAT_WITH_INTENT,
     TEACHER_GROUND_TRUTH,
     build_student_prompt,
@@ -76,48 +77,61 @@ def _build_teacher_prompt(user_prompt: str, condition: str, **labels) -> str:
 
     Args:
         user_prompt: The raw human request.
-        condition:   'without_intent' or 'with_intent'.
-        **labels:    annotator_harmful_label (both conditions), intent (with_intent only).
+        condition:   'no_intent', 'synthetic_intent', or 'human_intent'.
+        **labels:    annotator_harmful_label (all conditions), intent (human_intent only).
 
     Returns:
         Formatted prompt string.
     """
-    if condition == "without_intent":
-        output_fmt = OUTPUT_FORMAT_WITHOUT_INTENT
-        gt_block = TEACHER_GROUND_TRUTH["without_intent"].format(
+    if condition == "no_intent":
+        preamble = PREAMBLE_NO_INTENT
+        output_fmt = OUTPUT_FORMAT_NO_INTENT
+        gt_block = TEACHER_GROUND_TRUTH["no_intent"].format(
             annotator_harmful_label=labels["annotator_harmful_label"]
         )
-    elif condition == "with_intent":
+    elif condition == "synthetic_intent":
+        preamble = PREAMBLE
         output_fmt = OUTPUT_FORMAT_WITH_INTENT
-        gt_block = TEACHER_GROUND_TRUTH["with_intent"].format(
+        gt_block = TEACHER_GROUND_TRUTH["synthetic_intent"].format(
+            annotator_harmful_label=labels["annotator_harmful_label"]
+        )
+    elif condition == "human_intent":
+        preamble = PREAMBLE
+        output_fmt = OUTPUT_FORMAT_WITH_INTENT
+        gt_block = TEACHER_GROUND_TRUTH["human_intent"].format(
             intent=labels.get("intent", ""),
             annotator_harmful_label=labels["annotator_harmful_label"],
         )
     else:
         raise ValueError(f"Unknown teacher condition: {condition!r}")
 
-    return f"{PREAMBLE}\n\nHuman user:\n{user_prompt}\n\n{gt_block}\n{output_fmt}"
+    return f"{preamble}\n\nHuman user:\n{user_prompt}\n\n{gt_block}\n{output_fmt}"
 
 
-def _build_zeroshot_cot_prompt(user_prompt: str, with_intent: bool = True) -> str:
-    return build_student_prompt(user_prompt, with_intent=with_intent)
+def _build_zeroshot_cot_prompt(user_prompt: str, condition: str = "human_intent") -> str:
+    return build_student_prompt(user_prompt, condition=condition)
 
 
 def _user_content_for_condition(condition: str, sample: dict) -> str:
     """Return the user-facing prompt string for a given condition and sample."""
-    if condition == "without_intent":
+    if condition == "no_intent":
         return _build_teacher_prompt(
-            sample["prompt"], "without_intent",
+            sample["prompt"], "no_intent",
             annotator_harmful_label=sample["prompt_harm_label"],
         )
-    if condition == "with_intent":
+    if condition == "synthetic_intent":
         return _build_teacher_prompt(
-            sample["prompt"], "with_intent",
+            sample["prompt"], "synthetic_intent",
+            annotator_harmful_label=sample["prompt_harm_label"],
+        )
+    if condition == "human_intent":
+        return _build_teacher_prompt(
+            sample["prompt"], "human_intent",
             intent=sample["intent"],
             annotator_harmful_label=sample["prompt_harm_label"],
         )
     if condition == "zeroshot_cot":
-        return _build_zeroshot_cot_prompt(sample["prompt"], with_intent=True)
+        return _build_zeroshot_cot_prompt(sample["prompt"], condition="human_intent")
     raise ValueError(f"Unknown condition: {condition!r}")
 
 
@@ -720,7 +734,7 @@ def main(cfg: DictConfig):
     dataset_cfg = config.get("dataset", {})
     paths_cfg   = config.get("paths", {})
     wandb_cfg   = config.get("wandb", {})
-    conditions  = config.get("conditions", ["without_intent"])
+    conditions  = config.get("conditions", ["no_intent"])
     if isinstance(conditions, str):
         conditions = [conditions]
 

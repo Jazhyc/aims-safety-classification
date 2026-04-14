@@ -46,8 +46,6 @@ intention-jailbreak/
 
 ## Script Categories
 
-**Do not touch DPO/contrastive scripts** — those are owned by another team member.
-
 | Subdirectory | Purpose | Scripts |
 |---|---|---|
 | `scripts/baselines/` | Intent classification & generation baselines | `eval_sft_baseline.py`, `eval_intent_generation.py`, `compare_models.py`, `train_generator.py` |
@@ -115,6 +113,30 @@ data/reasoning_traces/<model-slug>/
 
 `scripts/distillation/run_distillation_pipeline.py` passes both `train/parsed_results.json` and `validation/parsed_results.json` to `scripts/baselines/train_generator.py` → `causal.py` for clean train/val separation.
 
+### Reasoning Trace Conditions
+
+Three conditions control how reasoning traces are generated and how students are trained on them:
+
+| Condition | Preamble | Teacher Prompt | Student Output | Training Intent Source |
+|---|---|---|---|---|
+| `no_intent` | No mention of intent | Harm label only | Reasoning + Harm | N/A |
+| `synthetic_intent` | Asks to produce intent | Harm label only | Reasoning + Intent + Harm | **Model-generated** intent from `predicted.prompt_intent` |
+| `human_intent` | Asks to produce intent | Intent + harm label | Reasoning + Intent + Harm | **Human-annotated** intent from `ground_truth.intent` |
+
+- **no_intent**: Baseline classification task. Preamble does not mention intent; model reasons about harm only. Teacher provides harm label as ground truth.
+- **synthetic_intent**: Teacher generates intent itself (no ground truth intent provided). Student learns to mimic the teacher's reasoning process including the generated intent. Useful for studying model behavior on intent inference.
+- **human_intent**: Teacher has access to human-annotated intent. Student learns on the ground truth intent. Strongest signal for distillation.
+
+Trace files contain a `condition` field that filters which records are used during training (`causal.py:load_reasoning_traces_dataset`). Each trace record includes:
+- `ground_truth.intent`: Human-annotated intent (used by `human_intent`, ignored by others)
+- `predicted.prompt_intent`: Model-generated intent from teacher (used by `synthetic_intent`, ignored by others)
+- `predicted.prompt_harm`: Teacher's predicted harm (used for optional `filter_teacher_disagreements`)
+
+For eval, conditions map to:
+- `no_intent` → `finetuned_reasoning_classification`
+- `synthetic_intent` → `finetuned_reasoning_synthetic_intent`
+- `human_intent` → `finetuned_reasoning_human_intent`
+
 ## Secondary Dataset: WildGuardMix
 
 Used for ModernBERT classifier training. Loaded via `src/intention_jailbreak/dataset/wildguardmix.py`.
@@ -129,7 +151,7 @@ Three functions:
 - `upload_adapter(adapter_path, registry_project)` — uploads root-level adapter files only (skips `checkpoint-N/` subdirs); called automatically after `trainer.save_model()` in `causal.py` when enabled.
 - `download_adapter(name, registry_project, target_dir)` — downloads to `target_dir/name`; skips if directory already has files.
 
-Artifact name = adapter directory name (e.g. `reasoning-distillation-gemma-3-27b-without-intent_adapter`), which is unique across pipelines. Enable per-config via `artifacts.enabled: true` in `llm_sweep.yaml` / `reasoning_distillation.yaml`.
+Artifact name = adapter directory name (e.g. `reasoning-distillation-gemma-3-27b-no-intent_adapter`), which is unique across pipelines. Enable per-config via `artifacts.enabled: true` in `llm_sweep.yaml` / `reasoning_distillation.yaml`.
 
 ## Experiment Status
 
@@ -141,6 +163,25 @@ Artifact name = adapter directory name (e.g. `reasoning-distillation-gemma-3-27b
 | Distillation student SFT | ⬜ Pending | |
 
 **Sweep model selection policy:** rank sweep runs by **validation harm F1** (computed via `compare_models.py`), not cosine similarity. Cosine similarity measures annotation similarity, not task performance.
+
+## Experimental Version: v7
+
+Current distillation and trace generation experiments use version **v7**. The version tag is used throughout the codebase to avoid collision between experimental runs.
+
+**Where v7 is referenced:**
+- `scripts/hpc/submit_trace_generation.py`: `TRACES_VERSION = "v7"` → creates traces in `data/reasoning_traces_v7/`
+- `scripts/hpc/submit_distillation_sweep.py`: `TRACES_VERSION = "v7"`
+- `scripts/hpc/submit_distillation_eval.py`: `DEFAULT_TRACES_VERSION = "v7"`
+- `scripts/distillation/score_tom_reasoning.py`: `DEFAULT_VERSION = "v7"`
+- `scripts/distillation/reparse_traces.py`: default src/dst args `v6`/`v7`
+- `configs/experiments/distillation_pipeline.yaml`: `run_suffix: "v7"`, W&B projects, cache dir
+
+**v7 Teacher Models (no thinking mode):**
+- `cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit`
+- `cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit`
+- `cyankiwi/gemma-4-31B-it-AWQ-4bit`
+
+To bump to v8, update the version constant in all submission scripts and the pipeline config above. The version is appended to output directories and W&B projects for traceability and to prevent collisions.
 
 ## Key Conventions
 

@@ -13,7 +13,7 @@ source .venv/bin/activate
 
 # Environment variables (set via --export by submit_trace_generation.py):
 #   MODEL_NAME     — HuggingFace model ID for the teacher
-#   OUTPUT_DIR     — base directory for saving traces (e.g. data/reasoning_traces_v6)
+#   OUTPUT_DIR     — base directory for saving traces (e.g. data/reasoning_traces_v7)
 #   THINKING_MODE  — "true" or "false"; set true for models with native thinking tokens
 
 mkdir -p "logs/slurm"

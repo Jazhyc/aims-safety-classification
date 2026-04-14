@@ -648,7 +648,7 @@ def run_finetuned_reasoning_classification(
     return results
 
 
-def run_finetuned_reasoning_generation(
+def run_finetuned_reasoning_human_intent(
     llm: LLM,
     lora_request: Optional[LoRARequest],
     tokenizer: AutoTokenizer,
@@ -656,8 +656,10 @@ def run_finetuned_reasoning_generation(
     sampling_params: SamplingParams,
     harm_column: str,
 ) -> List[dict]:
-    """Distilled model (MODE E): prompt -> Reasoning: ... / Intent: ... / Prompt harm: harmful|safe."""
-    print("\n=== Running: Fine-tuned Reasoning Generation (reasoning + intent + harm) ===")
+    """Distilled model (MODE E): prompt -> Reasoning: ... / Intent: ... / Prompt harm: harmful|safe.
+
+    Intent is from human-annotated ground truth."""
+    print("\n=== Running: Fine-tuned Reasoning Human Intent (reasoning + human intent + harm) ===")
     examples = list(test_dataset)
     prompts = [build_student_prompt(ex["prompt"], with_intent=True) + "\n" for ex in examples]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
@@ -678,7 +680,45 @@ def run_finetuned_reasoning_generation(
             "reasoning": reasoning,
             "raw_generation": generated_text,
             "num_tokens": len(output.outputs[0].token_ids),
-            "condition": "finetuned_reasoning_generation",
+            "condition": "finetuned_reasoning_human_intent",
+        })
+    return results
+
+
+def run_finetuned_reasoning_synthetic_intent(
+    llm: LLM,
+    lora_request: Optional[LoRARequest],
+    tokenizer: AutoTokenizer,
+    test_dataset,
+    sampling_params: SamplingParams,
+    harm_column: str,
+) -> List[dict]:
+    """Distilled model (MODE F): prompt -> Reasoning: ... / Intent: ... / Prompt harm: harmful|safe
+
+    Same as finetuned_reasoning_generation but trained on model-generated (synthetic) intents
+    rather than ground-truth intents.
+    """
+    print("\n=== Running: Fine-tuned Reasoning Synthetic Intent (reasoning + synthetic intent + harm) ===")
+    examples = list(test_dataset)
+    prompts = [build_student_prompt(ex["prompt"], condition="synthetic_intent") + "\n" for ex in examples]
+    outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
+
+    results = []
+    for ex, output in zip(examples, outputs):
+        generated_text = output.outputs[0].text.strip()
+        reasoning, generated_intent, predicted_harm = _parse_reasoning_output(generated_text, with_intent=True)
+        true_harm = ex.get(harm_column)
+        results.append({
+            "id": ex.get("id", ""),
+            "prompt": ex["prompt"],
+            "true_harm": true_harm,
+            "true_harm_binary": map_harm_to_binary(true_harm),
+            "generated_intent": generated_intent,
+            "predicted_harm": predicted_harm,
+            "reasoning": reasoning,
+            "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
+            "condition": "finetuned_reasoning_synthetic_intent",
         })
     return results
 
@@ -907,6 +947,7 @@ def run_condition_on_dataset(
     classification_lora_request: Optional[LoRARequest] = None,
     reasoning_classification_lora_request: Optional[LoRARequest] = None,
     reasoning_generation_lora_request: Optional[LoRARequest] = None,
+    reasoning_synthetic_lora_request: Optional[LoRARequest] = None,
 ) -> List[dict]:
     """Dispatch a condition name to its corresponding run_* function."""
     if condition == "finetuned_generation":
@@ -953,9 +994,13 @@ def run_condition_on_dataset(
         return run_finetuned_reasoning_classification(
             llm, reasoning_classification_lora_request, tokenizer, test_dataset, sampling_params, harm_column
         )
-    elif condition == "finetuned_reasoning_generation":
-        return run_finetuned_reasoning_generation(
-            llm, reasoning_generation_lora_request, tokenizer, test_dataset, sampling_params, harm_column
+    elif condition == "finetuned_reasoning_human_intent":
+        return run_finetuned_reasoning_human_intent(
+            llm, reasoning_human_intent_lora_request, tokenizer, test_dataset, sampling_params, harm_column
+        )
+    elif condition == "finetuned_reasoning_synthetic_intent":
+        return run_finetuned_reasoning_synthetic_intent(
+            llm, reasoning_synthetic_lora_request, tokenizer, test_dataset, sampling_params, harm_column
         )
     else:
         raise ValueError(f"Unknown condition: {condition}")

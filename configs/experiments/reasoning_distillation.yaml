@@ -45,9 +45,10 @@ data:
   reasoning_traces_path: "data/reasoning_traces/RedHatAI-gemma-3-27b-it-quantized.w4a16/train/parsed_results.json"
   reasoning_traces_val_path: "data/reasoning_traces/RedHatAI-gemma-3-27b-it-quantized.w4a16/validation/parsed_results.json"
 
-  # "without_intent": trains a classifier (Reasoning + Prompt harm)
-  # "with_intent":    trains a generator  (Reasoning + Intent + Prompt harm)
-  reasoning_traces_condition: "without_intent"
+  # "no_intent":       trains a classifier (Reasoning + Prompt harm)
+  # "synthetic_intent": trains a generator on model-generated intents (Reasoning + Intent + Prompt harm)
+  # "human_intent":    trains a generator on human-annotated intents (Reasoning + Intent + Prompt harm)
+  reasoning_traces_condition: "no_intent"
 
   # Drop examples where the teacher's predicted harm label disagrees with the
   # ground truth — keeps reasoning-to-label chains consistent.

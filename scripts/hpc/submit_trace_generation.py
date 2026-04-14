@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 """
-SLURM Orchestrator for v6 Reasoning Trace Generation
+SLURM Orchestrator for v7 Reasoning Trace Generation
 
 Submits one SLURM job per teacher model listed in TEACHER_MODELS.
 Each job runs generate_reasoning_traces.py with the vLLM backend and
-saves outputs to data/reasoning_traces_v6/<model-slug>/.
-
-Kimi K2.5 is intentionally omitted here — its v6 traces are produced by
-the top-up script (scripts/distillation/generate_kimi_v6_topup.py) which
-merges existing v5 traces with new API-generated entries for the 175
-secondary annotations in the train split.
+saves outputs to data/reasoning_traces_v7/<model-slug>/.
 
 Usage:
     cd /scratch/s4626451/intention-jailbreak
@@ -30,16 +25,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_summary
 
 
-# ── Teacher models to generate v6 traces for ─────────────────────────────────
+# ── Teacher models to generate v7 traces for ─────────────────────────────────
 # Each tuple: (HuggingFace model ID, thinking_mode)
 # thinking_mode=false for non-native-thinking models.
 TEACHER_MODELS = [
-    ("cyankiwi/gemma-4-31B-it-AWQ-4bit",            "false"),
-    # ("openai/gpt-oss-120b",                         "false"),
-    # ("RedHatAI/gemma-3-27b-it-quantized.w4a16",     "false"),
+    # ("cyankiwi/gemma-4-31B-it-AWQ-4bit",             "false"),
+    ("cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit",  "false"),
+    ("cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit",          "false"),
+    ("openai/gpt-oss-120b",                         "false"),
+    ("RedHatAI/gemma-3-27b-it-quantized.w4a16",     "false"),
 ]
 
-TRACES_VERSION = "v6"
+TRACES_VERSION = "v7"
 OUTPUT_DIR = f"data/reasoning_traces_{TRACES_VERSION}"
 TEMPLATE_PATH = "scripts/hpc/trace_generation_template.sh"
 
@@ -74,8 +71,8 @@ def main():
     )
 
     print(f"\nOutput directory: {OUTPUT_DIR}/")
-    print(f"Note: Kimi K2.5 v6 traces are generated separately via")
-    print(f"      scripts/distillation/generate_kimi_v6_topup.py\n")
+    print(f"Note: Kimi K2.5 v7 traces are generated separately via")
+    print(f"      scripts/distillation/generate_kimi_v7_topup.py\n")
 
     if not args.dry_run:
         create_logs_dir()
