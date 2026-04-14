@@ -192,8 +192,12 @@ def parse_model_output(
     """
     # Handle pre-extracted thinking (e.g., from vLLM's reasoning_content field)
     if pre_extracted_thinking is not None:
-        # If we have pre-extracted thinking, parse the remaining content for fields
-        parsed = _parse_content_fields(raw_text)
+        # Remove the thinking block from raw_text before parsing to avoid matching
+        # placeholder text or echoed template instructions from the thinking phase.
+        # (Models with native thinking often emit "Reasoning: ..." templates during
+        # reasoning that get mixed into the output; removing thinking gives us clean output.)
+        remaining_text = raw_text.replace(pre_extracted_thinking, "", 1).strip()
+        parsed = _parse_content_fields(remaining_text)
         parsed["thinking_trace"] = pre_extracted_thinking.strip()
         return parsed
 
@@ -221,30 +225,36 @@ def _parse_content_fields(text: str) -> dict:
     Extract structured fields (intent, harm, reasoning) from content using regex.
 
     Fallback parser for when tokenizer.parse_response is unavailable.
+
+    If multiple instances exist (e.g., template placeholder + actual output),
+    prefers the LAST match to avoid capturing unfilled template values.
     """
     # Extract Reasoning field — stops before Intent:, Prompt intent:, or Prompt harm:
+    # Use LAST match to skip template placeholders if multiple "Reasoning:" exist.
     reasoning = ""
-    reasoning_match = re.search(
+    reasoning_matches = list(re.finditer(
         r'Reasoning:\s*(.+?)(?=(?:Prompt )?intent:|Prompt harm:|$)',
         text, re.IGNORECASE | re.DOTALL,
-    )
-    if reasoning_match:
-        reasoning = reasoning_match.group(1).strip()
+    ))
+    if reasoning_matches:
+        reasoning = reasoning_matches[-1].group(1).strip()
 
     # Extract Intent field (ends when Prompt harm: begins)
+    # Use LAST match to avoid template placeholders.
     prompt_intent = None
-    intent_match = re.search(
+    intent_matches = list(re.finditer(
         r'(?:Prompt intent|Intent):\s*(.+?)(?=Prompt harm:|$)',
         text, re.IGNORECASE | re.DOTALL,
-    )
-    if intent_match:
-        prompt_intent = intent_match.group(1).strip()
+    ))
+    if intent_matches:
+        prompt_intent = intent_matches[-1].group(1).strip()
 
     # Extract Prompt harm field with binary normalisation
+    # Use LAST match to avoid template placeholders.
     prompt_harm = None
-    ph_match = re.search(r'Prompt harm:\s*([^\n]+)', text, re.IGNORECASE)
-    if ph_match:
-        prompt_harm = _normalize_harm_label(ph_match.group(1))
+    ph_matches = list(re.finditer(r'Prompt harm:\s*([^\n]+)', text, re.IGNORECASE))
+    if ph_matches:
+        prompt_harm = _normalize_harm_label(ph_matches[-1].group(1))
 
     return {
         "prompt_intent":  prompt_intent,
