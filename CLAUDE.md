@@ -194,3 +194,19 @@ To bump to v8, update the version constant in all submission scripts and the pip
 - **Attention**: `flash_attention_2` throughout (`flash-attn 2.8.3`, cu128/torch2.10/cp312 wheel). Sequence packing (`padding_free: true`) enabled in all training configs.
 - **Early stopping**: Applied in all training runs via `EarlyStoppingCallback(patience=1)` in `causal.py`. All configs use `epochs: 5` as the ceiling; early stopping finds the actual stopping point.
 - **Reproducibility**: Seeds set via `training/utils.py:set_all_seeds()`.
+
+## Known Pitfalls
+
+### vLLM LoRA key mismatch for multimodal students (Gemma3, Mistral3, Qwen3.5)
+
+`_load_causal_lm` in `causal.py` extracts the language tower from `*ForConditionalGeneration` into a `CausalLM` wrapper for training. PEFT then saves adapter keys relative to that wrapper:
+```
+base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight
+```
+But vLLM serves the full `*ForConditionalGeneration` model, where the same module is at `language_model.model.layers.0...`. After stripping `base_model.model.`, vLLM looks for `model.layers.0...`, finds nothing, and **silently runs the base model** — no error is raised, but all adapter weights are ignored and outputs are identical across different adapters.
+
+**Fix**: `_load_causal_lm` sets `model._vllm_lora_prefix = "language_model."` on affected models, and `_fix_lora_keys_for_vllm()` (called automatically after `trainer.save_model()`) renames the keys so vLLM finds them. For existing adapters, run `scripts/distillation/fix_adapter_keys.py`.
+
+**Do NOT** set `enable_tower_connector_lora=True` in vLLM as a workaround — that flag is for applying LoRA to vision tower weights (which our text-only adapters don't have) and it crashes when combined with `limit_mm_per_prompt={"image": 0}`.
+
+**Affected students**: `google/gemma-3-12b-it`, `mistralai/Ministral-3-14B-Reasoning-2512`, `Qwen/Qwen3.5-9B`. Llama 3.1 8B is a pure CausalLM and is unaffected.

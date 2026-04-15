@@ -47,6 +47,12 @@ def _load_causal_lm(model_name: str, **kwargs):
         causal_lm.generation_config = getattr(full, "generation_config", causal_lm.generation_config)
         causal_lm.model = full.model.language_model
         causal_lm.lm_head = full.lm_head
+        # Signal that vLLM serves this model as *ForConditionalGeneration where
+        # the language model lives under a `language_model.` prefix.  The LoRA
+        # adapter keys saved by PEFT will use `model.layers.*`, but vLLM needs
+        # `language_model.model.layers.*`.  The save path checks this flag and
+        # renames the safetensors keys accordingly.
+        causal_lm._vllm_lora_prefix = "language_model."
 
         # Free vision components — they're never used during text-only SFT.
         del full.model.vision_tower
@@ -68,6 +74,7 @@ def _load_causal_lm(model_name: str, **kwargs):
         causal_lm.generation_config = getattr(full, "generation_config", causal_lm.generation_config)
         causal_lm.model = full.model.language_model
         causal_lm.lm_head = full.lm_head
+        causal_lm._vllm_lora_prefix = "language_model."
 
         del full.model.vision_tower
         del full.model.multi_modal_projector
@@ -95,6 +102,7 @@ def _load_causal_lm(model_name: str, **kwargs):
         causal_lm.generation_config = getattr(full, "generation_config", causal_lm.generation_config)
         causal_lm.model = full.model.language_model
         causal_lm.lm_head = full.lm_head
+        causal_lm._vllm_lora_prefix = "language_model."
 
         # Free vision/audio components — never used during text-only SFT.
         for attr in ("vision_tower", "embed_vision", "audio_tower", "embed_audio"):
@@ -107,7 +115,59 @@ def _load_causal_lm(model_name: str, **kwargs):
 
         return causal_lm
 
-    return AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+    model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+    # Qwen3.5 (and potentially other future VLMs loaded via AutoModelForCausalLM)
+    # may still be resolved as *ForConditionalGeneration with a language_model sub-module.
+    if hasattr(model, "language_model") and not hasattr(model, "model"):
+        model._vllm_lora_prefix = "language_model."
+    return model
+
+
+def _fix_lora_keys_for_vllm(adapter_dir: str, model) -> None:
+    """Rename LoRA safetensors keys so they match vLLM's module paths.
+
+    When training on a VLM (Gemma3, Mistral3, Qwen3.5, ...) we extract the
+    language model tower into a CausalLM wrapper so PEFT can train on it.
+    PEFT saves keys relative to that wrapper, e.g.:
+        base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight
+
+    But vLLM serves the full *ForConditionalGeneration model, where the same
+    module is at:
+        language_model.model.layers.0.self_attn.q_proj
+
+    After stripping the `base_model.model.` prefix, vLLM would look for
+    `model.layers.0...` and find nothing — silently running the base model.
+
+    This function rewrites the adapter safetensors to add the missing prefix
+    (`language_model.` by default) so vLLM finds the correct modules.
+    """
+    prefix = getattr(model, "_vllm_lora_prefix", None)
+    if prefix is None:
+        return  # Pure CausalLM (e.g. Llama) — no fix needed.
+
+    sf_path = Path(adapter_dir) / "adapter_model.safetensors"
+    if not sf_path.exists():
+        return
+
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    tensors = {}
+    with safe_open(str(sf_path), framework="pt") as f:
+        for key in f.keys():
+            # base_model.model.<rest>  →  base_model.model.<prefix><rest>
+            if key.startswith("base_model.model."):
+                rest = key[len("base_model.model."):]
+                new_key = f"base_model.model.{prefix}{rest}"
+            else:
+                new_key = key
+            tensors[new_key] = f.get_tensor(key)
+
+    save_file(tensors, str(sf_path))
+    print(f"  [lora-fix] Renamed {len(tensors)} adapter keys: "
+          f"base_model.model.<x> → base_model.model.{prefix}<x>")
+
+
 from transformers.integrations import WandbCallback
 
 
@@ -894,6 +954,7 @@ def run_causal_flow(config):
             adapter_dir = model_save_dir + "_adapter"
             os.makedirs(adapter_dir, exist_ok=True)
             trainer.save_model(adapter_dir)
+            _fix_lora_keys_for_vllm(adapter_dir, model)
             print(f"LoRA adapter saved to {adapter_dir}")
             tokenizer.save_pretrained(adapter_dir)
             try:
