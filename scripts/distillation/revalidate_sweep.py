@@ -16,7 +16,7 @@ Runs are grouped by student model so vLLM is loaded once per student.
 Usage:
     python scripts/distillation/revalidate_sweep.py --dry-run
     python scripts/distillation/revalidate_sweep.py
-    python scripts/distillation/revalidate_sweep.py --condition synthetic_intent human_intent
+    python scripts/distillation/revalidate_sweep.py --condition no_intent synthetic_intent human_intent
     python scripts/distillation/revalidate_sweep.py --traces-version v7
 """
 
@@ -51,13 +51,13 @@ TEACHER_MODELS = [
 ]
 
 STUDENT_MODELS = [
-    ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
+    # ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
     ("google/gemma-3-12b-it",                          "gemma-3-12b"),
     ("mistralai/Ministral-3-14B-Reasoning-2512",       "ministral-3-14b-reasoning"),
     ("Qwen/Qwen3.5-9B",                                "qwen3.5-9b"),
 ]
 
-DEFAULT_CONDITIONS = ["synthetic_intent", "human_intent"]
+DEFAULT_CONDITIONS = ["no_intent", "synthetic_intent", "human_intent"]
 DEFAULT_TRACES_VERSION = "v7"
 
 # Intent-producing conditions that require the generation eval prompt
@@ -284,6 +284,10 @@ def main():
             max_model_len=2048,
             dtype="bfloat16",
             enforce_eager=True,
+            # Required for multimodal model classes (Gemma3ForConditionalGeneration,
+            # PixtralForConditionalGeneration, Qwen3_5ForConditionalGeneration, etc.)
+            # so that LoRA is applied to the language model layers, not just tower modules.
+            enable_tower_connector_lora=True,
         )
 
         for r in runs:

@@ -56,7 +56,7 @@ TEACHER_MODELS = [
 ]
 
 STUDENT_MODELS = [
-    ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
+    # ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
     ("google/gemma-3-12b-it",                          "gemma-3-12b"),
     ("mistralai/Ministral-3-14B-Reasoning-2512",       "ministral-3-14b-reasoning"),
     ("Qwen/Qwen3.5-9B",                                "qwen3.5-9b"),
