@@ -2,10 +2,9 @@
 # (teacher × student × condition) combination.
 #
 # Conditions:
-#   - finetuned_reasoning_classification: student distilled on without_intent traces
-#                                         (prompt -> Reasoning + Harm)
-#   - finetuned_reasoning_generation:     student distilled on with_intent traces
-#                                         (prompt -> Reasoning + Intent + Harm)
+#   - finetuned_reasoning_classification:    no_intent traces (prompt -> Reasoning + Harm)
+#   - finetuned_reasoning_synthetic_intent:  synthetic_intent traces (prompt -> Reasoning + Intent + Harm)
+#   - finetuned_reasoning_human_intent:      human_intent traces (prompt -> Reasoning + Intent + Harm)
 #
 # model.name, finetuned.reasoning_*_adapter, paths.output_dir, and wandb.run_name
 # are overridden per job by submit_distillation_eval.py.
@@ -31,10 +30,11 @@ finetuned:
   use_merged: false
   generation_adapter: null
   classification_adapter: null
-  # Both reasoning adapters are overridden to the selected adapter path per job.
-  # Only one condition runs per SLURM job so only the relevant key is used.
+  # All three reasoning adapters are overridden to the selected adapter path per job.
+  # Only one condition runs per SLURM job so only the relevant key is validated.
   reasoning_classification_adapter: "PLACEHOLDER"
-  reasoning_generation_adapter: "PLACEHOLDER"
+  reasoning_human_intent_adapter: "PLACEHOLDER"
+  reasoning_synthetic_adapter: "PLACEHOLDER"
 
 lora:
   rank: 32
@@ -93,6 +93,14 @@ datasets:
     harm_column: "prompt_label"
     use_manual_split: false
     output_dir: "${paths.output_dir}/aegis"
+
+  - name: "openai-moderation"
+    dataset_name: "AllanK24/openai-moderation-binary"
+    subset: null
+    split: "test"
+    harm_column: "prompt_label"
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/openai_moderation"
 
 generation:
   max_new_tokens: 2048

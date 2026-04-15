@@ -20,6 +20,11 @@ Usage:
     python scripts/hpc/submit_distillation_eval.py --traces-version v7
     python scripts/hpc/submit_distillation_eval.py --cleanup --dry-run
     python scripts/hpc/submit_distillation_eval.py --cleanup
+
+    # Top up already-evaluated combinations with a new dataset only:
+    python scripts/hpc/submit_distillation_eval.py \\
+        --eval-config eval_distillation_openai_mod \\
+        --check-datasets openai_moderation
 """
 
 import argparse
@@ -75,20 +80,21 @@ EVAL_DATASET_DIRS = [
     "xstest",
     "toxic_chat",
     "aegis",
+    "openai_moderation",
 ]
 
 
 # ── Completion check ──────────────────────────────────────────────────────────
 
-def _is_done(output_dir: str) -> bool:
+def _is_done(output_dir: str, check_datasets: list[str]) -> bool:
     """
-    Return True if all eval dataset subdirectories contain at least one .jsonl
-    file, indicating this combination has already been fully evaluated.
+    Return True if all specified eval dataset subdirectories contain at least
+    one .jsonl file, indicating this combination has already been fully evaluated.
     """
     base = PROJECT_ROOT / output_dir
     return all(
         any((base / ds_dir).glob("*.jsonl"))
-        for ds_dir in EVAL_DATASET_DIRS
+        for ds_dir in check_datasets
     )
 
 
@@ -211,9 +217,21 @@ def main():
         "--traces-version", default=DEFAULT_TRACES_VERSION, metavar="VERSION",
         help=f"Reasoning traces version to select adapters for (default: {DEFAULT_TRACES_VERSION}).",
     )
+    parser.add_argument(
+        "--eval-config", default="eval_distillation", metavar="CONFIG",
+        help="Hydra config name passed to eval_safety_classifier.py (default: eval_distillation).",
+    )
+    parser.add_argument(
+        "--check-datasets", default=None, metavar="DS1,DS2,...",
+        help="Comma-separated dataset output dir names used for the completion check. "
+             "Defaults to all EVAL_DATASET_DIRS. Use e.g. 'openai_moderation' to top up "
+             "a single dataset without re-running others.",
+    )
     args = parser.parse_args()
 
     traces_version = args.traces_version
+    eval_config = args.eval_config
+    check_datasets = args.check_datasets.split(",") if args.check_datasets else EVAL_DATASET_DIRS
 
     n_combos = len(TEACHER_MODELS) * len(STUDENT_MODELS) * len(CONDITIONS)
     print_header(
@@ -262,7 +280,7 @@ def main():
                 print(f"    condition: {eval_condition}")
 
                 # Skip already-completed combinations
-                if not args.force and _is_done(output_dir):
+                if not args.force and _is_done(output_dir, check_datasets):
                     print(f"    [done] Output files already present — skipping (use --force to re-run)")
                     skipped.append(label)
                     continue
@@ -275,6 +293,7 @@ def main():
                     "STUDENT_MODEL":  student_hf,
                     "ADAPTER_PATH":   str(best_adapter),
                     "EVAL_CONDITION": eval_condition,
+                    "EVAL_CONFIG":    eval_config,
                     "OUTPUT_DIR":     output_dir,
                     "WANDB_RUN_NAME": run_label,
                 }

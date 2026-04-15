@@ -946,7 +946,7 @@ def run_condition_on_dataset(
     generation_lora_request: Optional[LoRARequest] = None,
     classification_lora_request: Optional[LoRARequest] = None,
     reasoning_classification_lora_request: Optional[LoRARequest] = None,
-    reasoning_generation_lora_request: Optional[LoRARequest] = None,
+    reasoning_human_intent_lora_request: Optional[LoRARequest] = None,
     reasoning_synthetic_lora_request: Optional[LoRARequest] = None,
 ) -> List[dict]:
     """Dispatch a condition name to its corresponding run_* function."""

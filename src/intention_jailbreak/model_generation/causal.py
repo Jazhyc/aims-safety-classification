@@ -393,8 +393,8 @@ def save_preds_causal(model_name, llm, lora_request, tokenizer, eval_dataset, sp
     predict_harm = data_cfg.get("predict_harm", False)
     classification_only = data_cfg.get("classification_only", False)
     use_reasoning_traces = data_cfg.get("use_reasoning_traces", False)
-    # with_intent is derived from the trace condition: "with_intent" condition -> generation mode
-    with_intent = data_cfg.get("reasoning_traces_condition", "without_intent") == "with_intent"
+    # with_intent is derived from the trace condition: generation mode when condition produces intent
+    with_intent = data_cfg.get("reasoning_traces_condition", "no_intent") in ("with_intent", "synthetic_intent", "human_intent")
 
     # Use different directory based on mode
     if use_reasoning_traces:

@@ -152,6 +152,14 @@ datasets:
     use_manual_split: false
     output_dir: "data/safety_experiment/aegis"
 
+  - name: "openai-moderation"
+    dataset_name: "AllanK24/openai-moderation-binary"
+    subset: null
+    split: "test"
+    harm_column: "prompt_label"
+    use_manual_split: false
+    output_dir: "data/safety_experiment/openai_moderation"
+
   # - name: "strongreject"
   #   dataset_name: "walledai/StrongREJECT"
   #   subset: null
@@ -178,7 +186,7 @@ paths:
 # VLLM configuration
 vllm:
   gpu_memory_utilization: 0.90
-  max_model_len: 2048
+  max_model_len: 8192
   dtype: "bfloat16"
   enforce_eager: false
   flash_attn_version: null  # FA4 only works on SM100 (B100/B200), not SM120 (RTX Pro 6000); null = auto-detect (FA2)
