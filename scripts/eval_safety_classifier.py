@@ -374,7 +374,7 @@ def main(cfg: DictConfig):
     finetuned_conditions = {
         "finetuned_generation", "finetuned_classification",
         "finetuned_reasoning_classification", "finetuned_reasoning_generation",
-        "finetuned_reasoning_synthetic_intent",
+        "finetuned_reasoning_human_intent", "finetuned_reasoning_synthetic_intent",
     }
     needs_finetuned = bool(set(conditions) & finetuned_conditions)
     needs_finetuned_lora = needs_finetuned and not use_merged
