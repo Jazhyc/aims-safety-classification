@@ -453,6 +453,10 @@ def main(cfg: DictConfig):
         llm_extra["enable_lora"] = True
         llm_extra["max_lora_rank"] = lora_cfg.get("rank", 16)
         llm_extra["max_loras"] = 4
+        # Required for multimodal model classes (Gemma3ForConditionalGeneration,
+        # PixtralForConditionalGeneration, Qwen3_5ForConditionalGeneration, etc.)
+        # so that LoRA is applied to the language model layers, not just tower modules.
+        llm_extra["enable_tower_connector_lora"] = True
         print("LoRA enabled for fine-tuned conditions")
     llm = _load_vllm(model_cfg["name"], vllm_cfg, **llm_extra)
 

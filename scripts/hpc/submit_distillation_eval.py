@@ -75,12 +75,12 @@ CONDITION_TO_EVAL = {
 
 # Dataset output subdirectory names — must match eval_distillation.yaml
 EVAL_DATASET_DIRS = [
-    "annotated_intents",
+    "annotated-intents",
     "wildguardmix",
     "xstest",
-    "toxic_chat",
+    "toxic-chat",
     "aegis",
-    "openai_moderation",
+    "openai-moderation",
 ]
 
 
@@ -100,73 +100,69 @@ def _is_done(output_dir: str, check_datasets: list[str]) -> bool:
 
 # ── W&B query ─────────────────────────────────────────────────────────────────
 
-def fetch_best_adapter(
-    teacher_slug: str,
-    student_slug: str,
-    condition: str,
+def fetch_all_best_adapters(
     traces_version: str,
-) -> tuple[Path | None, float | None]:
+) -> dict[tuple[str, str, str], tuple[Path, float]]:
     """
-    Query the W&B project for this (teacher × student) pair and return the
-    adapter with the highest val_harm_f1 for the given condition.
+    Fetch all finished runs across every (teacher × student) W&B project in a
+    single pass and return a mapping of
+        (teacher_slug, student_slug, condition) -> (best_adapter_path, val_harm_f1).
 
-    Falls back to deriving the adapter path from run config when adapter_path
-    is absent from the W&B summary (older runs logged it only to the filesystem).
-
-    Returns (adapter_path, val_harm_f1) or (None, None) if nothing qualifies.
+    Doing one api.runs() call per project (16 calls total) instead of one per
+    (teacher × student × condition) triple (48 calls) eliminates most of the
+    startup latency.
     """
-    project = f"distillation-sweep-{student_slug}--{teacher_slug}"
     api = wandb.Api()
-    try:
-        runs = api.runs(path=project, filters={"state": "finished"})
-    except Exception as e:
-        print(f"    [warn] Could not query W&B project '{project}': {e}")
-        return None, None
+    best: dict[tuple[str, str, str], tuple[Path, float]] = {}
 
-    best_f1 = -1.0
-    best_adapter = None
-
-    for run in runs:
-        # Filter by condition (summary flag, then run config)
-        run_condition = (
-            run.summary.get("reasoning_traces_condition")
-            or run.config.get("data", {}).get("reasoning_traces_condition")
-        )
-        if run_condition != condition:
-            continue
-
-        # Filter by traces version if present in run name or config
-        run_version = run.config.get("data", {}).get("traces_version")
-        if run_version is not None and run_version != traces_version:
-            continue
-
-        f1 = run.summary.get("val_harm_f1")
-        if f1 is None:
-            continue
-
-        # Resolve adapter path (summary preferred; fall back to config derivation)
-        adapter_path_str = run.summary.get("adapter_path")
-        if not adapter_path_str:
-            model_save_dir = run.config.get("paths", {}).get("model_save_dir")
-            if not model_save_dir:
+    for _, teacher_slug in TEACHER_MODELS:
+        for _, student_slug in STUDENT_MODELS:
+            project = f"distillation-sweep-{student_slug}--{teacher_slug}"
+            print(f"  Querying W&B: {project} ...", end=" ", flush=True)
+            try:
+                runs = api.runs(path=project, filters={"state": "finished"})
+            except Exception as e:
+                print(f"[warn] {e}")
                 continue
-            adapter_path_str = model_save_dir + "_adapter"
 
-        adapter_path = Path(adapter_path_str)
-        if not adapter_path.is_absolute():
-            adapter_path = PROJECT_ROOT / adapter_path
+            n = 0
+            for run in runs:
+                run_condition = (
+                    run.summary.get("reasoning_traces_condition")
+                    or run.config.get("data", {}).get("reasoning_traces_condition")
+                )
+                if run_condition not in CONDITIONS:
+                    continue
 
-        if not adapter_path.exists():
-            continue
+                run_version = run.config.get("data", {}).get("traces_version")
+                if run_version is not None and run_version != traces_version:
+                    continue
 
-        if f1 > best_f1:
-            best_f1 = f1
-            best_adapter = adapter_path
+                f1 = run.summary.get("val_harm_f1")
+                if f1 is None:
+                    continue
 
-    if best_adapter is None:
-        return None, None
+                adapter_path_str = run.summary.get("adapter_path")
+                if not adapter_path_str:
+                    model_save_dir = run.config.get("paths", {}).get("model_save_dir")
+                    if not model_save_dir:
+                        continue
+                    adapter_path_str = model_save_dir + "_adapter"
 
-    return best_adapter, best_f1
+                adapter_path = Path(adapter_path_str)
+                if not adapter_path.is_absolute():
+                    adapter_path = PROJECT_ROOT / adapter_path
+                if not adapter_path.exists():
+                    continue
+
+                key = (teacher_slug, student_slug, run_condition)
+                if key not in best or f1 > best[key][1]:
+                    best[key] = (adapter_path, float(f1))
+                n += 1
+
+            print(f"{n} qualifying runs")
+
+    return best
 
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
@@ -243,8 +239,24 @@ def main():
         + (" [FORCE]" if args.force else ""),
     )
 
+    n_done = sum(
+        1
+        for _, teacher_slug in TEACHER_MODELS
+        for _, student_slug in STUDENT_MODELS
+        for condition in CONDITIONS
+        if _is_done(
+            f"data/safety_experiment/distillation/{teacher_slug}/{student_slug}/{condition}",
+            check_datasets,
+        )
+    )
+    print(f"Already complete: {n_done}/{n_combos} combinations ({check_datasets})\n")
+
     if not args.dry_run:
         create_logs_dir()
+
+    print("\nFetching best adapters from W&B ...")
+    adapter_index = fetch_all_best_adapters(traces_version)
+    print(f"Found {len(adapter_index)} qualifying (teacher, student, condition) entries.\n")
 
     submitted = []
     not_found = []
@@ -258,9 +270,8 @@ def main():
                 label = f"{student_slug} / {condition}"
                 print(f"\n  [{label}]")
 
-                best_adapter, best_f1 = fetch_best_adapter(
-                    teacher_slug, student_slug, condition, traces_version,
-                )
+                result = adapter_index.get((teacher_slug, student_slug, condition))
+                best_adapter, best_f1 = result if result else (None, None)
 
                 if best_adapter is None:
                     print(f"    [skip] No qualifying run found in W&B")
