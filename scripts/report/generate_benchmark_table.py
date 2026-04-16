@@ -146,7 +146,7 @@ def get_hardcoded_results() -> Dict[str, Dict[str, float]]:
     """
     return {
         # Baselines (from baselines_results.ipynb plot)
-        "GPT-OSS-Safeguard": {
+        "GPT-OSS-Safeguard 120B": {
             "wildguardmix": 0.871,
             "xstest": 0.944,
             "aegis": 0.797,
@@ -171,7 +171,7 @@ def get_hardcoded_results() -> Dict[str, Dict[str, float]]:
             "wildguardmix": 0.8881,
             "xstest": 0.9187,
             "aegis": 0.8296,
-            "toxic_chat": 0.9187,
+            "toxic_chat": 0.6813,
             "openai_moderation": 0.7040,
         },
         # SFT Generation (from baselines_results.ipynb plot)
