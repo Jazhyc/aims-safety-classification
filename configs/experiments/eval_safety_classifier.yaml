@@ -50,17 +50,18 @@ experiment:
   #   - "finetuned_reasoning_classification"  # MODE D: reasoning + harm
   #   - "finetuned_reasoning_generation"      # MODE E: reasoning + intent + harm
   conditions:
-    # Prompting baselines
-    - "vanilla_classification"
-    - "vanilla_generation"
-    - "vanilla_with_human_intent"
-    - "zeroshot_cot_classification"
-    - "zeroshot_cot_generation"
-    - "zeroshot_cot_classification_with_intent"
-    # Prior-work baselines (separate model instances)
-    - "llamaguard_classification"
-    - "wildguard_classification"
-    - "safeguard_classification"
+    # # Prompting baselines
+    # - "vanilla_classification"
+    # - "vanilla_generation"
+    # - "vanilla_with_human_intent"
+    # - "zeroshot_cot_classification"
+    # - "zeroshot_cot_generation"
+    # - "zeroshot_cot_classification_with_intent"
+    # # Prior-work baselines (separate model instances)
+    # - "llamaguard_classification"
+    # - "wildguard_classification"
+    # - "safeguard_classification"
+    - "guardreasoner_classification"
 
 # Model configuration
 model:
@@ -106,6 +107,10 @@ wildguard:
 # GPT-OSS-Safeguard baseline configuration
 safeguard:
   name: "openai/gpt-oss-safeguard-120b"
+
+# GuardReasoner baseline configuration
+guardreasoner:
+  name: "yueliu1999/GuardReasoner-8B"
 
 # Dataset configurations - cycles through all datasets
 datasets:

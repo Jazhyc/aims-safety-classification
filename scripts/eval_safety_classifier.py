@@ -66,6 +66,7 @@ from intention_jailbreak.model_generation.safety_classifier import (
     run_llamaguard_classification,
     run_wildguard_classification,
     run_safeguard_classification,
+    run_guardreasoner_classification,
     run_condition_on_dataset,
 )
 
@@ -359,6 +360,7 @@ def main(cfg: DictConfig):
     llamaguard_cfg = config.get("llamaguard", {})
     wildguard_cfg = config.get("wildguard", {})
     safeguard_cfg = config.get("safeguard", {})
+    guardreasoner_cfg = config.get("guardreasoner", {})
     artifacts_cfg = config.get("artifacts", {})
 
     conditions = experiment_cfg.get("conditions", ["vanilla_classification"])
@@ -381,10 +383,12 @@ def main(cfg: DictConfig):
     needs_llamaguard = "llamaguard_classification" in conditions
     needs_wildguard = "wildguard_classification" in conditions
     needs_safeguard = "safeguard_classification" in conditions
+    needs_guardreasoner = "guardreasoner_classification" in conditions
 
     llamaguard_model = llamaguard_cfg.get("name", "meta-llama/Llama-Guard-4-12B")
     wildguard_model = wildguard_cfg.get("name", "allenai/wildguard")
     safeguard_model = safeguard_cfg.get("name", "openai/gpt-oss-safeguard-120b")
+    guardreasoner_model = guardreasoner_cfg.get("name", "yueliu1999/GuardReasoner-8B")
 
     # Download missing fine-tuned adapters from W&B registry
     if artifacts_cfg.get("enabled", False) and needs_finetuned_lora:
@@ -429,6 +433,8 @@ def main(cfg: DictConfig):
         print(f"WildGuard model: {wildguard_model}")
     if needs_safeguard:
         print(f"Safeguard model: {safeguard_model}")
+    if needs_guardreasoner:
+        print(f"GuardReasoner model: {guardreasoner_model}")
     print(f"{'='*60}")
 
     # Initialize wandb
@@ -550,7 +556,7 @@ def main(cfg: DictConfig):
             )
 
     # Free the main model before loading any prior-work baseline
-    if needs_llamaguard or needs_wildguard or needs_safeguard:
+    if needs_llamaguard or needs_wildguard or needs_safeguard or needs_guardreasoner:
         print(f"\n{'='*60}")
         print("Cleaning up main model before loading baseline models...")
         print(f"{'='*60}")
@@ -609,6 +615,23 @@ def main(cfg: DictConfig):
             result_files_written=result_files_written,
         )
         del safeguard_llm
+        _free_vllm()
+
+    if needs_guardreasoner:
+        print(f"\n=== Loading GuardReasoner: {guardreasoner_model} ===")
+        guardreasoner_llm = _load_vllm(guardreasoner_model, vllm_cfg)
+        _run_baseline_on_datasets(
+            run_fn=lambda ds, sp, hc: run_guardreasoner_classification(guardreasoner_llm, ds, sp, hc),
+            condition="guardreasoner_classification",
+            model_slug=guardreasoner_model.replace("/", "_"),
+            datasets_cfg=datasets_cfg,
+            sampling_params=sampling_params,
+            paths_cfg=paths_cfg,
+            wandb_run=wandb_run,
+            all_metrics=all_metrics,
+            result_files_written=result_files_written,
+        )
+        del guardreasoner_llm
         _free_vllm()
 
     # Upload results artifact if configured

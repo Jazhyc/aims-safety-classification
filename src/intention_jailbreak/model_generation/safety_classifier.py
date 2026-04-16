@@ -28,6 +28,7 @@ from .safety_prompts import (
     COT_GENERATION_SCHEMA,
     _WILDGUARD_TEMPLATE,
     _SAFEGUARD_SYSTEM_PROMPT,
+    _GUARDREASONER_INSTRUCT,
 )
 
 # ---------------------------------------------------------------------------
@@ -908,6 +909,73 @@ def run_safeguard_classification(
     return results
 
 
+def run_guardreasoner_classification(
+    llm: LLM,
+    test_dataset,
+    sampling_params: SamplingParams,
+    harm_column: str,
+) -> List[dict]:
+    """
+    GuardReasoner-8B baseline: prompt-only safety classification.
+
+    Uses the model's native instruction format (plain string, no chat template).
+    Passes response="None" since we evaluate prompt harm only (Task 1).
+    Parses Task 1 answer: "unharmful" -> safe, "harmful" -> harmful.
+    """
+    print("\n=== Running: GuardReasoner Classification ===")
+    examples = list(test_dataset)
+
+    guardreasoner_params = SamplingParams(
+        max_tokens=sampling_params.max_tokens,
+        temperature=sampling_params.temperature,
+        top_p=sampling_params.top_p,
+        top_k=sampling_params.top_k,
+        skip_special_tokens=True,
+    )
+    formatted_prompts = [
+        _GUARDREASONER_INSTRUCT + f"Human user:\n{ex['prompt']}\n\nAI assistant:\nNone\n\n"
+        for ex in examples
+    ]
+    outputs = llm.generate(formatted_prompts, guardreasoner_params)
+
+    results = []
+    for ex, output in zip(examples, outputs):
+        generated_text = output.outputs[0].text.strip()
+
+        # Extract Task 1 answer from the reasoning output.
+        # Search within the Task 1 section (before Task 2, if present).
+        predicted_harm = None
+        task1_section = re.split(r"(?i)task\s*2", generated_text)[0]
+        # Check for explicit answer lines first (e.g. "Answer: unharmful")
+        m = re.search(r"(?i)answer[:\s]+(\w+)", task1_section)
+        if m:
+            answer = m.group(1).lower()
+            if "unharmful" in answer:
+                predicted_harm = "safe"
+            elif "harmful" in answer:
+                predicted_harm = "harmful"
+        # Fall back to searching the Task 1 section for the label words
+        if predicted_harm is None:
+            section_lower = task1_section.lower()
+            if "unharmful" in section_lower:
+                predicted_harm = "safe"
+            elif "harmful" in section_lower:
+                predicted_harm = "harmful"
+
+        true_harm = ex.get(harm_column)
+        results.append({
+            "id": ex.get("id", ""),
+            "prompt": ex["prompt"],
+            "true_harm": true_harm,
+            "true_harm_binary": map_harm_to_binary(true_harm),
+            "predicted_harm": predicted_harm,
+            "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
+            "condition": "guardreasoner_classification",
+        })
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
@@ -977,7 +1045,10 @@ def run_condition_on_dataset(
             llm, tokenizer, test_dataset, sampling_params, harm_column,
             intent_source="model", model_intents=model_intents,
         )
-    elif condition in ("llamaguard_classification", "wildguard_classification", "safeguard_classification"):
+    elif condition in (
+        "llamaguard_classification", "wildguard_classification",
+        "safeguard_classification", "guardreasoner_classification",
+    ):
         return []  # handled separately in main with dedicated models
     elif condition == "zeroshot_cot_classification":
         return run_zeroshot_cot_classification(llm, tokenizer, test_dataset, sampling_params, harm_column)
