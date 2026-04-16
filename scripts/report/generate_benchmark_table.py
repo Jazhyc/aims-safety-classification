@@ -365,7 +365,7 @@ def main():
 
     # Parse dataset names
     datasets = [d.strip() for d in args.datasets.split(",")]
-    baseline_names = ["GPT-OSS-Safeguard", "WildGuard", "LlamaGuard 4", "GuardReasoner 8B"]
+    baseline_names = ["GPT-OSS-Safeguard 120B", "WildGuard", "LlamaGuard 4", "GuardReasoner 8B"]
 
     # Build model list
     models = []
