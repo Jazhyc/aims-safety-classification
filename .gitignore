@@ -229,5 +229,6 @@ scripts/cache
 scripts/outputs
 .vscode
 notebooks/clustering_analysis_copy.ipynb
+!scripts/report/
 
 logs/
