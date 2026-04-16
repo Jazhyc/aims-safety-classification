@@ -1,0 +1,15 @@
+# Minimal eval config for running openai-moderation dataset only.
+# Used with: python scripts/hpc/submit_sft_eval.py --config-name eval_sft_openai_mod
+
+defaults:
+  - eval_sft_baselines
+  - _self_
+
+datasets:
+  - name: "openai-moderation"
+    dataset_name: "AllanK24/openai-moderation-binary"
+    subset: null
+    split: "test"
+    harm_column: "prompt_label"
+    use_manual_split: false
+    output_dir: "data/safety_experiment/sft/openai_moderation"

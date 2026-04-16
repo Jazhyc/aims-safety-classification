@@ -89,6 +89,14 @@ datasets:
     use_manual_split: false
     output_dir: "data/safety_experiment/sft/aegis"
 
+  - name: "openai-moderation"
+    dataset_name: "AllanK24/openai-moderation-binary"
+    subset: null
+    split: "test"
+    harm_column: "prompt_label"
+    use_manual_split: false
+    output_dir: "data/safety_experiment/sft/openai_moderation"
+
 generation:
   max_new_tokens: 64   # sufficient for "Intent: <text>; Harm: safe/harmful"
   temperature: 0.0

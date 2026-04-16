@@ -1,7 +1,7 @@
 """
 Fix LoRA adapter safetensors keys for vLLM compatibility.
 
-When training on VLMs (Gemma3, Mistral3, Qwen3.5) via the _load_causal_lm
+When training on VLMs (Gemma3, Mistral3) via the _load_causal_lm
 extraction path, PEFT saves keys relative to the CausalLM wrapper:
     base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight
 
@@ -25,7 +25,7 @@ SWEEP_DIR = PROJECT_ROOT / "models" / "distillation-sweep"
 
 # These students were trained via the CausalLM extraction path and need fixing.
 # Llama 3.1 8B is a pure CausalLM and is already correct.
-NEEDS_FIX = {"gemma-3-12b", "ministral-3-14b-reasoning", "qwen3.5-9b"}
+NEEDS_FIX = {"gemma-3-12b", "ministral-3-14b-reasoning"}
 
 
 def needs_renaming(sf_path: Path) -> bool:

@@ -28,6 +28,7 @@ from slurm_utils import create_logs_dir, submit_sbatch, print_header
 
 WANDB_PROJECT = "sft-hyperparam-sweep"
 BASE_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+DEFAULT_CONFIG_NAME = "eval_sft_baselines"
 
 # Project root — resolve relative adapter paths saved by older training runs
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -84,7 +85,12 @@ def fetch_best_adapter(project: str, classification_only: bool) -> tuple[str, fl
         if not adapter_path.is_absolute():
             adapter_path = PROJECT_ROOT / adapter_path
         adapter_path_str = str(adapter_path)
-        if not adapter_path.exists():
+        try:
+            adapter_exists = adapter_path.exists()
+        except OSError as e:
+            print(f"  [skip] {run.name}: cannot access adapter path ({e})")
+            continue
+        if not adapter_exists:
             print(f"  [skip] {run.name}: adapter not found locally at {adapter_path_str}")
             continue
 
@@ -125,6 +131,13 @@ def main():
         help=f"W&B project to query (default: {WANDB_PROJECT})."
     )
     parser.add_argument(
+        "--config-name", type=str, default=DEFAULT_CONFIG_NAME,
+        help=(
+            f"Hydra config name to use (default: {DEFAULT_CONFIG_NAME}). "
+            "Pass 'eval_sft_openai_mod' to run only the OpenAI Moderation dataset."
+        ),
+    )
+    parser.add_argument(
         "--use-merged", action="store_true",
         help=(
             "Evaluate using pre-merged models instead of LoRA adapters. "
@@ -138,6 +151,7 @@ def main():
     print_header(
         "SFT Eval — Best Adapter Selection",
         f"Querying W&B project: {args.project}"
+        + f"  config: {args.config_name}"
         + (" [merged-model mode]" if args.use_merged else ""),
     )
 
@@ -221,6 +235,7 @@ def main():
         export_vars = {
             "GENERATION_ADAPTER":     gen_adapter or "MISSING",
             "CLASSIFICATION_ADAPTER": clf_adapter or "MISSING",
+            "CONFIG_NAME":            args.config_name,
         }
         try:
             job_id = submit_sbatch("scripts/hpc/sft_eval_template.sh", export_vars)
