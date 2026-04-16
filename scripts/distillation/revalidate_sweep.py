@@ -44,17 +44,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # ── Sweep dimensions (must match submit_distillation_sweep.py) ────────────────
 
 TEACHER_MODELS = [
-    #("cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit",  "cyankiwi-Mistral-Small-4-119B-2603-AWQ-4bit"),
-    #("cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit",          "cyankiwi-Qwen3.5-122B-A10B-AWQ-4bit"),
+    ("cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit",  "cyankiwi-Mistral-Small-4-119B-2603-AWQ-4bit"),
+    ("cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit",          "cyankiwi-Qwen3.5-122B-A10B-AWQ-4bit"),
     ("openai/gpt-oss-120b",                           "openai-gpt-oss-120b"),
-    #("RedHatAI/gemma-3-27b-it-quantized.w4a16",       "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
+    ("RedHatAI/gemma-3-27b-it-quantized.w4a16",       "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
 ]
 
 STUDENT_MODELS = [
     # ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
-    ("google/gemma-3-12b-it",                          "gemma-3-12b"),
+    # ("google/gemma-3-12b-it",                          "gemma-3-12b"),
     #("mistralai/Ministral-3-14B-Reasoning-2512",       "ministral-3-14b-reasoning"),
-    #("Qwen/Qwen3.5-9B",                                "qwen3.5-9b"),
+    ("Qwen/Qwen3.5-9B",                                "qwen3.5-9b"),
 ]
 
 DEFAULT_CONDITIONS = ["no_intent", "synthetic_intent", "human_intent"]

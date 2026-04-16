@@ -125,7 +125,13 @@ def fetch_all_best_adapters(
                 print(f"[warn] {e}")
                 continue
 
-            n = 0
+            # Collect all qualifying runs first, then deduplicate by adapter path.
+            # If the same experiment was run twice the second run overwrites the
+            # adapter files on disk, so stale W&B runs from the first attempt would
+            # report F1 scores that no longer correspond to the weights at that path.
+            # Keeping only the most recent run per adapter path ensures the F1 we
+            # select on matches the weights actually present on disk.
+            candidates: dict[Path, tuple] = {}  # adapter_path -> (run_condition, f1, created_at)
             for run in runs:
                 run_condition = (
                     run.summary.get("reasoning_traces_condition")
@@ -134,8 +140,12 @@ def fetch_all_best_adapters(
                 if run_condition not in CONDITIONS:
                     continue
 
+                # Filter by traces version: prefer config key, fall back to run name suffix
                 run_version = run.config.get("data", {}).get("traces_version")
-                if run_version is not None and run_version != traces_version:
+                if run_version is not None:
+                    if run_version != traces_version:
+                        continue
+                elif not run.name.endswith(f"--{traces_version}"):
                     continue
 
                 f1 = run.summary.get("val_harm_f1")
@@ -155,10 +165,16 @@ def fetch_all_best_adapters(
                 if not adapter_path.exists():
                     continue
 
+                created_at = getattr(run, "created_at", "")
+                existing = candidates.get(adapter_path)
+                if existing is None or created_at > existing[2]:
+                    candidates[adapter_path] = (run_condition, float(f1), created_at)
+
+            n = len(candidates)
+            for adapter_path, (run_condition, f1, _) in candidates.items():
                 key = (teacher_slug, student_slug, run_condition)
                 if key not in best or f1 > best[key][1]:
-                    best[key] = (adapter_path, float(f1))
-                n += 1
+                    best[key] = (adapter_path, f1)
 
             print(f"{n} qualifying runs")
 
