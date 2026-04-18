@@ -27,7 +27,8 @@ except ImportError:
     HAS_WANDB = False
 
 
-CACHE_DIR = Path(".cache/benchmark_results")
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+CACHE_DIR = _PROJECT_ROOT / ".cache/benchmark_results"
 CACHE_EXPIRY = 3600  # 1 hour in seconds
 
 
@@ -343,7 +344,7 @@ def generate_latex_table(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=Path("report/latex/benchmark_table.tex"),
+    parser.add_argument("--output", type=Path, default=_PROJECT_ROOT / "report/latex/benchmark_table.tex",
                        help="Output LaTeX file (default: print to stdout)")
     parser.add_argument("--results-file", type=Path, default=None,
                        help="Optional JSON file with results to use instead of hardcoded values")
@@ -379,7 +380,7 @@ def main():
 
     # Parse dataset names
     datasets = [d.strip() for d in args.datasets.split(",")]
-    baseline_names = ["GPT-OSS-Safeguard 120B", "WildGuard", "LlamaGuard 4", "GuardReasoner 8B"]
+    baseline_names = ["GPT-OSS-Safeguard 120B", "WildGuard", "LlamaGuard 4", "GuardReasoner 8B", "ShieldGemma 27B", "Nemotron Safety 4B"]
 
     # Build model list
     models = []
