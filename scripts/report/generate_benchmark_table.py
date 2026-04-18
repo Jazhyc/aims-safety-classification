@@ -343,7 +343,7 @@ def generate_latex_table(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=None,
+    parser.add_argument("--output", type=Path, default=Path("report/latex/benchmark_table.tex"),
                        help="Output LaTeX file (default: print to stdout)")
     parser.add_argument("--results-file", type=Path, default=None,
                        help="Optional JSON file with results to use instead of hardcoded values")
@@ -379,7 +379,7 @@ def main():
 
     # Parse dataset names
     datasets = [d.strip() for d in args.datasets.split(",")]
-    baseline_names = ["GPT-OSS-Safeguard 120B", "WildGuard", "LlamaGuard 4", "GuardReasoner 8B", "ShieldGemma 27B", "Nemotron Safety 4B"]
+    baseline_names = ["GPT-OSS-Safeguard 120B", "WildGuard", "LlamaGuard 4", "GuardReasoner 8B"]
 
     # Build model list
     models = []
