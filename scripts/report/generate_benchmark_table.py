@@ -174,6 +174,20 @@ def get_hardcoded_results() -> Dict[str, Dict[str, float]]:
             "toxic_chat": 0.6813,
             "openai_moderation": 0.7040,
         },
+        "ShieldGemma 27B": {
+            "wildguardmix": 0.5123,
+            "xstest": 0.8226,
+            "aegis": 0.6943,
+            "toxic_chat": 0.7032,
+            "openai_moderation": 0.8136,
+        },
+        "Nemotron Safety 4B": {
+            "wildguardmix": 0.8515,
+            "xstest": 0.8510,
+            "aegis": 0.8597,
+            "toxic_chat": 0.7333,
+            "openai_moderation": 0.7472,
+        },
         # SFT Generation (from baselines_results.ipynb plot)
         "SFT Generation": {
             "wildguardmix": 0.863,
@@ -365,7 +379,7 @@ def main():
 
     # Parse dataset names
     datasets = [d.strip() for d in args.datasets.split(",")]
-    baseline_names = ["GPT-OSS-Safeguard 120B", "WildGuard", "LlamaGuard 4", "GuardReasoner 8B"]
+    baseline_names = ["GPT-OSS-Safeguard 120B", "WildGuard", "LlamaGuard 4", "GuardReasoner 8B", "ShieldGemma 27B", "Nemotron Safety 4B"]
 
     # Build model list
     models = []

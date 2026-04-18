@@ -67,6 +67,8 @@ from intention_jailbreak.model_generation.safety_classifier import (
     run_wildguard_classification,
     run_safeguard_classification,
     run_guardreasoner_classification,
+    run_shieldgemma_classification,
+    run_nemotron_classification,
     run_condition_on_dataset,
 )
 
@@ -361,6 +363,8 @@ def main(cfg: DictConfig):
     wildguard_cfg = config.get("wildguard", {})
     safeguard_cfg = config.get("safeguard", {})
     guardreasoner_cfg = config.get("guardreasoner", {})
+    shieldgemma_cfg = config.get("shieldgemma", {})
+    nemotron_cfg = config.get("nemotron", {})
     artifacts_cfg = config.get("artifacts", {})
 
     conditions = experiment_cfg.get("conditions", ["vanilla_classification"])
@@ -384,11 +388,15 @@ def main(cfg: DictConfig):
     needs_wildguard = "wildguard_classification" in conditions
     needs_safeguard = "safeguard_classification" in conditions
     needs_guardreasoner = "guardreasoner_classification" in conditions
+    needs_shieldgemma = "shieldgemma_classification" in conditions
+    needs_nemotron = "nemotron_classification" in conditions
 
     llamaguard_model = llamaguard_cfg.get("name", "meta-llama/Llama-Guard-4-12B")
     wildguard_model = wildguard_cfg.get("name", "allenai/wildguard")
     safeguard_model = safeguard_cfg.get("name", "openai/gpt-oss-safeguard-120b")
     guardreasoner_model = guardreasoner_cfg.get("name", "yueliu1999/GuardReasoner-8B")
+    shieldgemma_model = shieldgemma_cfg.get("name", "google/shieldgemma-27b")
+    nemotron_model = nemotron_cfg.get("name", "nvidia/Nemotron-Content-Safety-Reasoning-4B")
 
     # Download missing fine-tuned adapters from W&B registry
     if artifacts_cfg.get("enabled", False) and needs_finetuned_lora:
@@ -435,6 +443,10 @@ def main(cfg: DictConfig):
         print(f"Safeguard model: {safeguard_model}")
     if needs_guardreasoner:
         print(f"GuardReasoner model: {guardreasoner_model}")
+    if needs_shieldgemma:
+        print(f"ShieldGemma model: {shieldgemma_model}")
+    if needs_nemotron:
+        print(f"Nemotron model: {nemotron_model} (thinking={nemotron_cfg.get('thinking', True)})")
     print(f"{'='*60}")
 
     # Initialize wandb
@@ -556,7 +568,7 @@ def main(cfg: DictConfig):
             )
 
     # Free the main model before loading any prior-work baseline
-    if needs_llamaguard or needs_wildguard or needs_safeguard or needs_guardreasoner:
+    if needs_llamaguard or needs_wildguard or needs_safeguard or needs_guardreasoner or needs_shieldgemma or needs_nemotron:
         print(f"\n{'='*60}")
         print("Cleaning up main model before loading baseline models...")
         print(f"{'='*60}")
@@ -632,6 +644,42 @@ def main(cfg: DictConfig):
             result_files_written=result_files_written,
         )
         del guardreasoner_llm
+        _free_vllm()
+
+    if needs_shieldgemma:
+        print(f"\n=== Loading ShieldGemma: {shieldgemma_model} ===")
+        shieldgemma_llm = _load_vllm(shieldgemma_model, vllm_cfg, limit_mm_per_prompt={"image": 0})
+        _run_baseline_on_datasets(
+            run_fn=lambda ds, sp, hc: run_shieldgemma_classification(shieldgemma_llm, ds, sp, hc),
+            condition="shieldgemma_classification",
+            model_slug=shieldgemma_model.replace("/", "_"),
+            datasets_cfg=datasets_cfg,
+            sampling_params=sampling_params,
+            paths_cfg=paths_cfg,
+            wandb_run=wandb_run,
+            all_metrics=all_metrics,
+            result_files_written=result_files_written,
+        )
+        del shieldgemma_llm
+        _free_vllm()
+
+    if needs_nemotron:
+        nemotron_thinking = nemotron_cfg.get("thinking", True)
+        print(f"\n=== Loading Nemotron: {nemotron_model} ===")
+        nemotron_llm = _load_vllm(nemotron_model, vllm_cfg, limit_mm_per_prompt={"image": 0})
+        nemotron_tokenizer = AutoTokenizer.from_pretrained(nemotron_model)
+        _run_baseline_on_datasets(
+            run_fn=lambda ds, sp, hc: run_nemotron_classification(nemotron_llm, nemotron_tokenizer, ds, sp, hc, thinking=nemotron_thinking),
+            condition="nemotron_classification",
+            model_slug=nemotron_model.replace("/", "_"),
+            datasets_cfg=datasets_cfg,
+            sampling_params=sampling_params,
+            paths_cfg=paths_cfg,
+            wandb_run=wandb_run,
+            all_metrics=all_metrics,
+            result_files_written=result_files_written,
+        )
+        del nemotron_llm
         _free_vllm()
 
     # Upload results artifact if configured

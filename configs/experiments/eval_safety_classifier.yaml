@@ -61,7 +61,10 @@ experiment:
     # - "llamaguard_classification"
     # - "wildguard_classification"
     # - "safeguard_classification"
-    - "guardreasoner_classification"
+    # - "guardreasoner_classification"
+    # - "shieldgemma_classification"
+     - "nemotron_classification"
+    # - "guardreasoner_classification"
 
 # Model configuration
 model:
@@ -111,6 +114,15 @@ safeguard:
 # GuardReasoner baseline configuration
 guardreasoner:
   name: "yueliu1999/GuardReasoner-8B"
+
+# ShieldGemma baseline configuration
+shieldgemma:
+  name: "google/shieldgemma-27b"
+
+# Nemotron-Content-Safety-Reasoning baseline configuration
+nemotron:
+  name: "nvidia/Nemotron-Content-Safety-Reasoning-4B"
+  thinking: true  # /think mode; set false for /no_think (faster, no reasoning trace)
 
 # Dataset configurations - cycles through all datasets
 datasets:

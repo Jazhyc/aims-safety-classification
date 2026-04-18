@@ -16,6 +16,8 @@ from .prompt_templates import (
     WILDGUARD_TEMPLATE as _WILDGUARD_TEMPLATE,
     SAFEGUARD_SYSTEM_PROMPT as _SAFEGUARD_SYSTEM_PROMPT,
     GUARDREASONER_INSTRUCT as _GUARDREASONER_INSTRUCT,
+    SHIELDGEMMA_PROMPT as _SHIELDGEMMA_PROMPT,
+    NEMOTRON_SAFETY_PROMPT as _NEMOTRON_SAFETY_PROMPT,
 )
 
 HARM_CATEGORIES = [
@@ -69,6 +71,8 @@ VALID_CONDITIONS = [
     "wildguard_classification",                # WildGuard baseline: prompt -> harm
     "safeguard_classification",                # GPT-OSS-Safeguard baseline: prompt -> harm
     "guardreasoner_classification",            # GuardReasoner-8B baseline: prompt -> reasoning + harm
+    "shieldgemma_classification",              # ShieldGemma-27B baseline: prompt -> Yes/No
+    "nemotron_classification",                 # Nemotron-Content-Safety-Reasoning-4B: prompt -> Prompt harm: harmful/unharmful
     "zeroshot_cot_classification",             # CoT: prompt -> reasoning + harm
     "zeroshot_cot_generation",                 # CoT: prompt -> reasoning + intent + harm
     "zeroshot_cot_classification_with_intent", # CoT: prompt + human intent -> reasoning + harm

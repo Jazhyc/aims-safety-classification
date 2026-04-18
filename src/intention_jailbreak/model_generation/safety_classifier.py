@@ -29,6 +29,8 @@ from .safety_prompts import (
     _WILDGUARD_TEMPLATE,
     _SAFEGUARD_SYSTEM_PROMPT,
     _GUARDREASONER_INSTRUCT,
+    _SHIELDGEMMA_PROMPT,
+    _NEMOTRON_SAFETY_PROMPT,
 )
 
 # ---------------------------------------------------------------------------
@@ -976,6 +978,124 @@ def run_guardreasoner_classification(
     return results
 
 
+def run_shieldgemma_classification(
+    llm: LLM,
+    test_dataset,
+    sampling_params: SamplingParams,
+    harm_column: str,
+) -> List[dict]:
+    """
+    ShieldGemma-27B baseline: prompt-only safety classification.
+
+    Uses the model's native prompt format (preamble + user turn + policy + epilogue).
+    Generates 1 token; "Yes" = policy violation (harmful), "No" = not violating (safe).
+    """
+    print("\n=== Running: ShieldGemma Classification ===")
+    examples = list(test_dataset)
+
+    shieldgemma_params = SamplingParams(
+        max_tokens=1,
+        temperature=sampling_params.temperature,
+        top_p=sampling_params.top_p,
+        top_k=sampling_params.top_k,
+        skip_special_tokens=True,
+    )
+    formatted_prompts = [
+        _SHIELDGEMMA_PROMPT.format(prompt=ex["prompt"])
+        for ex in examples
+    ]
+    outputs = llm.generate(formatted_prompts, shieldgemma_params)
+
+    results = []
+    for ex, output in zip(examples, outputs):
+        generated_text = output.outputs[0].text.strip()
+        first_token = generated_text.split()[0].lower() if generated_text.split() else ""
+        if first_token == "yes":
+            predicted_harm = "harmful"
+        elif first_token == "no":
+            predicted_harm = "safe"
+        else:
+            predicted_harm = extract_harm_label(generated_text)
+
+        true_harm = ex.get(harm_column)
+        results.append({
+            "id": ex.get("id", ""),
+            "prompt": ex["prompt"],
+            "true_harm": true_harm,
+            "true_harm_binary": map_harm_to_binary(true_harm),
+            "predicted_harm": predicted_harm,
+            "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
+            "condition": "shieldgemma_classification",
+        })
+    return results
+
+
+def run_nemotron_classification(
+    llm: LLM,
+    tokenizer: AutoTokenizer,
+    test_dataset,
+    sampling_params: SamplingParams,
+    harm_column: str,
+    thinking: bool = True,
+) -> List[dict]:
+    """
+    Nemotron-Content-Safety-Reasoning-4B baseline: prompt-only safety classification.
+
+    Appends /think or /no_think to toggle reasoning mode. Applies the model's chat
+    template with multimodal-style content (required by the Gemma-3 base architecture).
+    Parses "Prompt harm: harmful/unharmful" from the output.
+    """
+    think_token = "/think" if thinking else "/no_think"
+    print(f"\n=== Running: Nemotron Classification (thinking={thinking}) ===")
+    examples = list(test_dataset)
+
+    formatted_prompts = [
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": [{"type": "text", "text": _NEMOTRON_SAFETY_PROMPT.format(prompt=ex["prompt"], think_token=think_token)}]}],
+            add_generation_prompt=True,
+            tokenize=False,
+        )
+        for ex in examples
+    ]
+    outputs = llm.generate(formatted_prompts, sampling_params)
+
+    results = []
+    for ex, output in zip(examples, outputs):
+        generated_text = output.outputs[0].text.strip()
+
+        # Strip reasoning block if present
+        text = generated_text
+        if "<think>" in text and "</think>" in text:
+            text = text.split("</think>")[-1].strip()
+
+        predicted_harm = None
+        for line in text.splitlines():
+            line_lower = line.lower().strip()
+            if line_lower.startswith("prompt harm:"):
+                label = line_lower.split(":", 1)[1].strip()
+                if "unharmful" in label:
+                    predicted_harm = "safe"
+                elif "harmful" in label:
+                    predicted_harm = "harmful"
+                break
+        if predicted_harm is None:
+            predicted_harm = extract_harm_label(generated_text)
+
+        true_harm = ex.get(harm_column)
+        results.append({
+            "id": ex.get("id", ""),
+            "prompt": ex["prompt"],
+            "true_harm": true_harm,
+            "true_harm_binary": map_harm_to_binary(true_harm),
+            "predicted_harm": predicted_harm,
+            "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
+            "condition": "nemotron_classification",
+        })
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
@@ -1048,6 +1168,7 @@ def run_condition_on_dataset(
     elif condition in (
         "llamaguard_classification", "wildguard_classification",
         "safeguard_classification", "guardreasoner_classification",
+        "shieldgemma_classification", "nemotron_classification",
     ):
         return []  # handled separately in main with dedicated models
     elif condition == "zeroshot_cot_classification":

@@ -86,6 +86,8 @@ COT_CLASSIFICATION_WITH_INTENT_SYSTEM_PROMPT: str = _sc["cot_classification_with
 WILDGUARD_TEMPLATE: str = _sc["wildguard_template"].strip()
 SAFEGUARD_SYSTEM_PROMPT: str = _sc["safeguard_system_prompt"].strip()
 GUARDREASONER_INSTRUCT: str = _sc["guardreasoner_instruct"].strip()
+SHIELDGEMMA_PROMPT: str = _sc["shieldgemma_prompt"].strip()
+NEMOTRON_SAFETY_PROMPT: str = _sc["nemotron_safety_prompt"].strip()
 
 
 # ── Public helpers ────────────────────────────────────────────────────────────
