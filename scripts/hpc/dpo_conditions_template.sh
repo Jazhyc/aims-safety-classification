@@ -27,7 +27,7 @@ export HF_HUB_CACHE="${HF_HUB_CACHE:-/scratch/${USER}/huggingface_cache}"
 STAGE="${STAGE:-}"
 if [ -z "${STAGE}" ]; then
   echo "ERROR: STAGE is required."
-  echo "Valid STAGE values: hard_dpo | judge_dpo | judge_standalone_dpo | judge_decent_dpo | union_decent_dpo | judge_union_dpo | augment_prep | sft_aug | dpo_aug"
+  echo "Valid STAGE values: canonical | hard_dpo | judge_dpo | judge_gptoss | judge_standalone_dpo | judge_decent_dpo | union_decent_dpo | judge_union_dpo | augment_prep | sft_aug | dpo_aug"
   exit 1
 fi
 
@@ -45,11 +45,11 @@ SEED="${SEED:-22}"
 TEMPERATURE="${TEMPERATURE:-0.8}"
 K_SAMPLES="${K_SAMPLES:-5}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
-EPOCHS="${EPOCHS:-3}"
+EPOCHS="${EPOCHS:-2}"
 LEARNING_RATE="${LEARNING_RATE:-5e-5}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
 GRAD_ACCUM="${GRAD_ACCUM:-8}"
-DPO_BETA="${DPO_BETA:-0.1}"
+DPO_BETA="${DPO_BETA:-0.5}"
 HARMFUL_WEIGHT="${HARMFUL_WEIGHT:-1.0}"
 UNBALANCED="${UNBALANCED:-0}"
 AUG_EPOCHS="${AUG_EPOCHS:-1}"
@@ -150,6 +150,23 @@ if [ "${FORCE_AUGMENT}" = "1" ]; then
 fi
 
 case "${STAGE}" in
+  canonical)
+    # Generate shared T=0.8 samples once. Every other condition uses
+    # --from-samples pointing here so they never re-run the SFT model.
+    if [ -f "${CANONICAL_SAMPLES}" ]; then
+      echo "[SKIP] Canonical samples already exist at ${CANONICAL_SAMPLES}"
+      exit 0
+    fi
+    python scripts/generate_dpo_pairs.py \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model "${BASE_MODEL}" \
+      --output-dir "data/dpo_pairs/train_t0.8" \
+      --num-samples "${K_SAMPLES}" \
+      --temperature "${TEMPERATURE}" \
+      --max-model-len "${MAX_MODEL_LEN}" \
+      --seed "${SEED}"
+    ;;
+
   hard_dpo)
     HARD_SKIP_STEPS="6"
     HARD_EXTRA_ARGS=()
@@ -210,6 +227,41 @@ case "${STAGE}" in
       --balanced-pairs-dir "${JUDGE_BALANCED_DIR}" \
       --dpo-output-dir "${JUDGE_DPO_OUTPUT}" \
       --sft-pred-dir "${SFT_PRED_DIR_JUDGE}" \
+      --epochs "${JUDGE_EPOCHS}" \
+      --learning-rate "${LEARNING_RATE}" \
+      --batch-size "${BATCH_SIZE}" \
+      --grad-accum "${GRAD_ACCUM}" \
+      --dpo-beta "${JUDGE_BETA}" \
+      --seed "${SEED}" \
+      --wandb-project "${WANDB_PROJECT}" \
+      "${PIPELINE_RESTART_ARGS[@]}" \
+      --skip-steps 1,6
+    ;;
+
+  judge_gptoss)
+    # Same flow as judge_dpo but using GPT-OSS as the judge model.
+    # Outputs to JUDGE_GPTOSS_PAIRS_DIR so judge_union_dpo can merge verdicts.
+    # GPT-OSS 120B needs the RTX Pro 6000 (96 GB) — override GPU at submit time if needed.
+    GPTOSS_JUDGE_MODEL="${GPTOSS_JUDGE_MODEL:-openai/gpt-oss-120b}"
+    GPTOSS_JUDGE_TP="${GPTOSS_JUDGE_TP:-1}"
+
+    python scripts/generate_dpo_pairs.py \
+      --from-samples "${CANONICAL_SAMPLES}" \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model "${BASE_MODEL}" \
+      --output-dir "${JUDGE_GPTOSS_PAIRS_DIR}" \
+      --intent-filter \
+      --judge-model "${GPTOSS_JUDGE_MODEL}" \
+      --judge-tensor-parallel "${GPTOSS_JUDGE_TP}" \
+      --max-model-len "${MAX_MODEL_LEN}"
+
+    python scripts/run_preference_pipeline.py \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model "${BASE_MODEL}" \
+      --pairs-dir "${JUDGE_GPTOSS_PAIRS_DIR}" \
+      --balanced-pairs-dir "${JUDGE_UNION_BALANCED_DIR/_balanced/_gptoss_balanced}" \
+      --dpo-output-dir "trained_models/causal/dpo-judge-gptoss" \
+      --sft-pred-dir "data/predictions/sft_judge_gptoss" \
       --epochs "${JUDGE_EPOCHS}" \
       --learning-rate "${LEARNING_RATE}" \
       --batch-size "${BATCH_SIZE}" \
