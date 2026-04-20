@@ -1,5 +1,5 @@
 """
-Generate DPO and contrastive training pairs from the annotated training split.
+Generate DPO training pairs from the annotated training split.
 
 Pipeline per training prompt:
   1. chosen  = "Intent: {gold_intent}; Harm: {gold_harm}"
@@ -12,7 +12,7 @@ Pipeline per training prompt:
 Outputs (all in --output-dir):
   parsed_samples.jsonl      — raw k samples per prompt (for debugging / re-use)
   dpo_pairs.jsonl           — one (chosen, rejected) pair per prompt
-  contrastive_pairs.jsonl   — one chosen + ALL rejected per prompt (InfoNCE)
+  dpo_pairs_decent.jsonl    — same but decent_match also counts as rejected (--intent-filter only)
   summary.json              — run statistics
   intent_filter_examples.jsonl — per-sample judge verdicts (only with --intent-filter)
 
@@ -165,6 +165,24 @@ def _all_have_t0(parsed: list) -> bool:
         for s in d.get("samples", []):
             if s.get("intent") and "harm_t0" not in s:
                 return False
+    return True
+
+
+def _all_have_judge_verdict(parsed: list) -> bool:
+    """Return True if judge verdicts are already saved in the parsed samples.
+
+    Only checks samples that would be judged: those with intent and harm_t0
+    matching gold_harm. If all such samples already have 'judge_verdict', the
+    judge inference step can be skipped entirely.
+    """
+    for d in parsed:
+        gold_harm = d.get("gold_harm")
+        if not gold_harm or not d.get("gold_intent"):
+            continue
+        for s in d.get("samples", []):
+            if s.get("intent") and s.get("harm_t0") == gold_harm:
+                if "judge_verdict" not in s:
+                    return False
     return True
 
 
@@ -342,10 +360,16 @@ def run(args):
     # Skip both when resuming from a file that already has harm_t0 on every sample.
     need_sft = (all_parsed is None) or (not _all_have_t0(all_parsed))
 
-    # Judge model needed when --intent-filter is active.
+    # Judge model needed when --intent-filter is active AND verdicts aren't cached.
+    # Verdicts are cached when parsed_samples.jsonl was saved after a previous judge
+    # run (judge_verdict field present on all qualifying samples).
+    need_judge = args.intent_filter and (
+        all_parsed is None or not _all_have_judge_verdict(all_parsed)
+    )
+
     # Use a separate instance when judge differs from base model — they can't
     # share GPU memory (e.g. 70B judge alongside 8B SFT).
-    use_separate_judge = args.intent_filter and (judge_model_id != args.base_model)
+    use_separate_judge = need_judge and (judge_model_id != args.base_model)
 
     # Resolve model IDs to local snapshot paths so vLLM skips HF API calls.
     # Compute nodes have no reliable internet; passing a local path avoids
@@ -379,7 +403,7 @@ def run(args):
         lora_request = LoRARequest("sft_lora", 1, args.adapter_path)
 
     judge_llm = judge_tokenizer = None
-    if args.intent_filter:
+    if need_judge:
         if use_separate_judge:
             local_judge = _local(judge_model_id)
             print(f"\n=== Loading judge model ===")
@@ -512,7 +536,15 @@ def run(args):
     # ------------------------------------------------------------------
     filter_examples = []   # for intent_filter_examples.jsonl
 
-    if args.intent_filter:
+    if args.intent_filter and not need_judge:
+        print("\n=== Skipping judge inference (verdicts already cached in parsed_samples) ===")
+        # Restore same_intent from cached judge_verdict
+        for d in all_parsed:
+            for s in d.get("samples", []):
+                if "judge_verdict" in s:
+                    s["same_intent"] = (s["judge_verdict"] != "bad_match")
+
+    if need_judge:
         # Collect all samples where harm_t0 == gold_harm
         filter_triples = []   # (prompt, gold_intent, generated_intent)
         filter_idx     = []   # (prompt_idx, sample_idx)
@@ -545,6 +577,10 @@ def run(args):
             s = all_parsed[i]["samples"][j]
             s["same_intent"] = (s.get("judge_verdict") != "bad_match")
 
+        # Persist judge_verdict in parsed_samples.jsonl so --union-judge-dir
+        # can load it without re-running the judge.
+        save_jsonl(all_parsed, output_dir / "parsed_samples.jsonl")
+
         # Build inspection examples
         for (i, j), (prompt, gold_intent, gen_intent) in zip(filter_idx, filter_triples):
             s = all_parsed[i]["samples"][j]
@@ -561,17 +597,50 @@ def run(args):
             })
 
     # ------------------------------------------------------------------
-    # 5. Build DPO and contrastive pairs
+    # 4c. Union judge: merge bad_match verdicts from a second judge run.
+    #     A sample becomes same_intent=False if EITHER judge said bad_match.
+    #     Requires both runs to share the same canonical parsed_samples
+    #     (same IDs in same order — guaranteed when both use --from-samples).
+    # ------------------------------------------------------------------
+    if args.union_judge_dir and args.intent_filter:
+        union_path = Path(args.union_judge_dir) / "parsed_samples.jsonl"
+        print(f"\n=== Merging judge verdicts from {union_path} ===")
+        union_parsed = load_jsonl(str(union_path))
+
+        # Verify alignment
+        if len(union_parsed) != len(all_parsed):
+            raise ValueError(
+                f"union-judge-dir has {len(union_parsed)} records but current run has "
+                f"{len(all_parsed)} — files must share the same canonical samples."
+            )
+        mismatched_ids = sum(1 for a, b in zip(all_parsed, union_parsed) if a["id"] != b["id"])
+        if mismatched_ids:
+            raise ValueError(f"{mismatched_ids} record IDs differ — files are not aligned.")
+
+        n_union_added = 0
+        for i, (main, other) in enumerate(zip(all_parsed, union_parsed)):
+            for j, (sm, so) in enumerate(zip(main["samples"], other["samples"])):
+                other_verdict = so.get("judge_verdict")
+                if other_verdict == "bad_match" and sm.get("same_intent") is not False:
+                    sm["same_intent"] = False
+                    n_union_added += 1
+
+        print(f"  Extra bad_match from second judge: {n_union_added}")
+
+    # ------------------------------------------------------------------
+    # 5. Build DPO pairs
     # ------------------------------------------------------------------
     print("\n=== Building pairs ===")
 
-    dpo_pairs         = []   # one chosen / one rejected per prompt
-    contrastive_pairs = []   # one chosen / ALL rejecteds per prompt
+    dpo_pairs       = []   # one chosen / one rejected per prompt
+    # Decent variant (only populated when --intent-filter): bad_match + decent_match
+    dpo_pairs_decent = []
 
     n_no_gold      = 0   # prompts with missing gold harm
     n_no_negative  = 0   # prompts where all samples agree with gold
     n_no_valid     = 0   # prompts where no sample parsed correctly
-    n_intent_rejecteds = 0  # new rejecteds found via intent filter
+    n_intent_rejecteds       = 0
+    n_intent_rejecteds_decent = 0
 
     for d in all_parsed:
         gold_intent = d["gold_intent"]
@@ -608,10 +677,17 @@ def run(args):
             chosen_intent_str = best["intent"]
             chosen_text = f"Intent: {chosen_intent_str}; Harm: {gold_harm}"
 
-        # Priority 1: generated samples whose T=0 label disagrees with gold
-        rejecteds = [s for s in valid if s["harm_t0"] != gold_harm]
+        # Hard rejecteds: generated samples whose T=0 label disagrees with gold.
+        # Skipped in --judge-only mode (signal is intent mismatch, not label error).
+        if args.judge_only:
+            rejecteds = []
+        else:
+            rejecteds = [s for s in valid if s["harm_t0"] != gold_harm]
 
-        # Priority 2 (intent filter): correct-label samples judged as different intent
+        # Intent filter: correct-label samples judged as different intent.
+        # Two variants are always built when --intent-filter is active:
+        #   main (bad only)  : same_intent=False  ↔  judge_verdict == "bad_match"
+        #   decent variant   : judge_verdict in {"bad_match", "decent_match"}
         if args.intent_filter:
             intent_rejecteds = [
                 s for s in valid
@@ -621,82 +697,73 @@ def run(args):
                 n_intent_rejecteds += len(intent_rejecteds)
                 rejecteds = rejecteds + intent_rejecteds
 
+            intent_rejecteds_decent = [
+                s for s in valid
+                if s["harm_t0"] == gold_harm
+                and s.get("judge_verdict") in {"bad_match", "decent_match"}
+            ]
+            if intent_rejecteds_decent:
+                n_intent_rejecteds_decent += len(intent_rejecteds_decent)
 
         if not rejecteds:
             n_no_negative += 1
             continue
 
-        # ── DPO pair: one rejected (pick the one most confidently wrong,
-        #    i.e. longest intent — proxy for well-formed output)
-        rejected_dpo = max(rejecteds, key=lambda s: len(s["intent"]))
-        dpo_pairs.append({
-            "id":              ex_id,
-            "prompt":          prompt,
-            "gold_intent":     chosen_intent_str,
-            "gold_harm":       gold_harm,
-            "chosen":          chosen_text,
-            "rejected":        f"Intent: {rejected_dpo['intent']}; Harm: {rejected_dpo['harm_t0']}",
-            "rejected_intent": rejected_dpo["intent"],
-            "rejected_harm":   rejected_dpo["harm_t0"],
-            "n_rejecteds":     len(rejecteds),
-        })
+        def _make_dpo_pair(chosen_t, chosen_i, rej_list):
+            rejected = max(rej_list, key=lambda s: len(s["intent"]))
+            return {
+                "id":              ex_id,
+                "prompt":          prompt,
+                "gold_intent":     chosen_i,
+                "gold_harm":       gold_harm,
+                "chosen":          chosen_t,
+                "rejected":        f"Intent: {rejected['intent']}; Harm: {rejected['harm_t0']}",
+                "rejected_intent": rejected["intent"],
+                "rejected_harm":   rejected["harm_t0"],
+                "n_rejecteds":     len(rej_list),
+            }
 
-        # ── Contrastive pair: all rejecteds
-        contrastive_pairs.append({
-            "id":          ex_id,
-            "prompt":      prompt,
-            "gold_intent": chosen_intent_str,
-            "gold_harm":   gold_harm,
-            "chosen":      chosen_text,
-            "rejecteds": [
-                {
-                    "text":   f"Intent: {s['intent']}; Harm: {s['harm_t0']}",
-                    "intent": s["intent"],
-                    "harm":   s["harm_t0"],
-                }
-                for s in rejecteds
-            ],
-        })
+        # ── Main condition pairs
+        dpo_pairs.append(_make_dpo_pair(chosen_text, chosen_intent_str, rejecteds))
+
+        # ── Decent variant pairs (only when --intent-filter)
+        if args.intent_filter:
+            hard = [] if args.judge_only else [s for s in valid if s["harm_t0"] != gold_harm]
+            rejecteds_decent = hard + intent_rejecteds_decent
+            if rejecteds_decent:
+                dpo_pairs_decent.append(_make_dpo_pair(chosen_text, chosen_intent_str, rejecteds_decent))
 
     # ------------------------------------------------------------------
     # 6. Save outputs
     # ------------------------------------------------------------------
     print("\n=== Saving outputs ===")
-    save_jsonl(dpo_pairs,         output_dir / "dpo_pairs.jsonl")
-    save_jsonl(contrastive_pairs, output_dir / "contrastive_pairs.jsonl")
-    if args.intent_filter and filter_examples:
-        save_jsonl(filter_examples, output_dir / "intent_filter_examples.jsonl")
+    save_jsonl(dpo_pairs, output_dir / "dpo_pairs.jsonl")
+    if args.intent_filter:
+        save_jsonl(dpo_pairs_decent, output_dir / "dpo_pairs_decent.jsonl")
+        if filter_examples:
+            save_jsonl(filter_examples, output_dir / "intent_filter_examples.jsonl")
 
     # ------------------------------------------------------------------
     # 7. Summary
     # ------------------------------------------------------------------
     n_total = len(all_parsed)
     n_dpo   = len(dpo_pairs)
-    neg_counts = [len(p["rejecteds"]) for p in contrastive_pairs]
 
     summary = {
-        "adapter_path":          args.adapter_path,
-        "base_model":            args.base_model,
-        "temperature":           args.temperature,
-        "num_samples":           args.num_samples,
-        "intent_filter":         args.intent_filter,
-        "from_jsonl":            args.from_jsonl,
-        "split":                 "train" if not args.from_jsonl else "custom_jsonl",
-        "n_prompts_total":       n_total,
+        "adapter_path":    args.adapter_path,
+        "base_model":      args.base_model,
+        "temperature":     args.temperature,
+        "num_samples":     args.num_samples,
+        "intent_filter":   args.intent_filter,
+        "judge_only":      args.judge_only,
+        "from_jsonl":      args.from_jsonl,
+        "split":           "train" if not args.from_jsonl else "custom_jsonl",
+        "n_prompts_total": n_total,
         "n_skipped_no_gold":  n_no_gold,
         "n_skipped_no_valid": n_no_valid,
         "n_skipped_no_neg":   n_no_negative,
         "n_dpo_pairs":        n_dpo,
-        "n_contrastive_pairs": len(contrastive_pairs),
-        "negatives_per_prompt": {
-            "mean":   float(np.mean(neg_counts))   if neg_counts else 0.0,
-            "median": float(np.median(neg_counts)) if neg_counts else 0.0,
-            "max":    int(np.max(neg_counts))      if neg_counts else 0,
-            "dist":   {
-                str(k): int(sum(1 for c in neg_counts if c == k))
-                for k in sorted(set(neg_counts))
-            },
-        },
+        "n_dpo_pairs_decent": len(dpo_pairs_decent),
     }
 
     summary_path = output_dir / "summary.json"
@@ -713,13 +780,11 @@ def run(args):
     print(f"Skipped (no valid) : {n_no_valid}")
     print(f"Skipped (no neg)   : {n_no_negative}")
     if args.intent_filter:
-        print(f"Intent rejecteds   : {n_intent_rejecteds}  (correct-label, wrong-intent)")
+        print(f"Intent rejecteds   : {n_intent_rejecteds}  (bad_match only)")
+        print(f"Intent rejecteds   : {n_intent_rejecteds_decent}  (bad+decent match)")
     print(f"DPO pairs          : {n_dpo}  ({100*n_dpo/max(n_total,1):.1f}%)")
-    print(f"Contrastive pairs  : {len(contrastive_pairs)}")
-    if neg_counts:
-        print(f"Negatives/prompt   : mean={np.mean(neg_counts):.2f}  "
-              f"median={np.median(neg_counts):.1f}  max={np.max(neg_counts)}")
-        print(f"Distribution       : {summary['negatives_per_prompt']['dist']}")
+    if args.intent_filter:
+        print(f"DPO pairs (decent) : {len(dpo_pairs_decent)}  ({100*len(dpo_pairs_decent)/max(n_total,1):.1f}%)")
     print("=" * 65)
     print(f"\nDone. All outputs in {output_dir}/")
 
@@ -780,6 +845,18 @@ def parse_args():
         "--intent-filter", action="store_true", default=False,
         help="Enable intent validity filter. Correct-label samples judged as bad_match "
              "by the LLM judge are added as extra rejected pairs.",
+    )
+    p.add_argument(
+        "--judge-only", action="store_true", default=False,
+        help="Use only judge-based rejecteds (requires --intent-filter). Hard mislabels "
+             "(harm_t0 != gold_harm) are excluded; rejected set contains only samples "
+             "that got the harm label right but whose intent was judged as bad_match.",
+    )
+    p.add_argument(
+        "--union-judge-dir", type=str, default=None,
+        help="Path to a second judge run's output directory (requires --intent-filter). "
+             "Merges bad_match verdicts: a sample is rejected if EITHER judge said bad_match. "
+             "Both runs must share the same canonical parsed_samples (same IDs, same order).",
     )
     p.add_argument(
         "--judge-model", type=str, default=None,

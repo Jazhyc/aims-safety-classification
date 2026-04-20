@@ -77,7 +77,7 @@ def run(cmd: list[str], step_name: str) -> bool:
 
 
 def step1_generate_pairs(args) -> bool:
-    pairs_path = Path(args.pairs_dir) / "dpo_pairs.jsonl"
+    pairs_path = Path(args.pairs_dir) / args.pairs_filename
     if _cached(pairs_path):
         print(f"\n[SKIP] Step 1 – pairs already exist at {args.pairs_dir}")
         return True
@@ -106,7 +106,7 @@ def step2_balance_pairs(args) -> bool:
         return True
     cmd = [
         sys.executable, "scripts/balance_dpo_pairs.py",
-        "--input",  str(Path(input_dir) / "dpo_pairs.jsonl"),
+        "--input",  str(Path(input_dir) / args.pairs_filename),
         "--output", str(balanced_path),
         "--seed",   str(args.seed),
     ]
@@ -360,6 +360,9 @@ def parse_args():
     p.add_argument("--adapter-path",       default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
     p.add_argument("--base-model",         default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--pairs-dir",          default="data/dpo_pairs/train_t0.8")
+    p.add_argument("--pairs-filename",     default="dpo_pairs.jsonl",
+                   help="Filename within --pairs-dir to use as training pairs. "
+                        "Use 'dpo_pairs_decent.jsonl' for bad+decent match conditions.")
     p.add_argument("--balanced-pairs-dir", default="data/dpo_pairs/train_t0.8_balanced")
     p.add_argument("--dpo-output-dir",     default="trained_models/causal/llama-dpo")
     p.add_argument("--sft-pred-dir",       default="data/predictions/sft_baseline")

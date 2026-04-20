@@ -1,5 +1,5 @@
 """
-Compare SFT, DPO, and Contrastive models on harm classification and intent quality.
+Compare SFT and DPO models on harm classification and intent quality.
 
 Loads prediction files from each model and prints per-dataset metrics + summary tables.
 
@@ -11,8 +11,8 @@ Datasets evaluated (if prediction files exist):
 Usage (from project root):
     python scripts/compare_models.py \\
         --sft         data/predictions/sft_baseline \\
-        --dpo         trained_models/causal/llama-dpo/predictions \\
-        --contrastive trained_models/causal/llama-contrastive/predictions \\
+        --dpo-hard    trained_models/causal/dpo-hard/predictions \\
+        --dpo-judge   trained_models/causal/dpo-judge/predictions \\
         --output-dir  data/comparison
 """
 
@@ -210,15 +210,21 @@ def print_summary_table(results: dict[str, dict], intent_results: dict[str, dict
 # ---------------------------------------------------------------------------
 
 DATASETS = [
-    ("annotated_intents", "test_predictions.jsonl"),
-    ("wildguardtest",     "wildguardtest_predictions.jsonl"),
-    ("xstest",            "xstest_predictions.jsonl"),
+    ("annotated_intents",   "test_predictions.jsonl"),
+    ("wildguardtest",       "wildguardtest_predictions.jsonl"),
+    ("xstest",              "xstest_predictions.jsonl"),
+    ("toxic_chat",          "toxic_chat_predictions.jsonl"),
+    ("aegis",               "aegis_predictions.jsonl"),
+    ("openai_moderation",   "openai_moderation_predictions.jsonl"),
 ]
 
 DATASET_LABELS = {
     "annotated_intents": "Annotated Intents",
     "wildguardtest":     "WildGuardTest",
     "xstest":            "XSTest",
+    "toxic_chat":        "ToxicChat",
+    "aegis":             "AEGIS 2",
+    "openai_moderation": "OpenAI Moderation",
 }
 
 

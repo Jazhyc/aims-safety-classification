@@ -1,12 +1,15 @@
 """
-Evaluate a LoRA adapter on the held-out test set + WildGuardTest + XSTest benchmarks.
+Evaluate a LoRA adapter on the held-out test set + external benchmarks.
 
 Saves predictions so compare_models.py can load all models side-by-side.
 
 Outputs:
-  <output-dir>/test_predictions.jsonl            <- annotated intents test split
-  <output-dir>/wildguardtest_predictions.jsonl   <- WildGuardTest benchmark
-  <output-dir>/xstest_predictions.jsonl          <- XSTest benchmark
+  <output-dir>/test_predictions.jsonl               <- annotated intents test split
+  <output-dir>/wildguardtest_predictions.jsonl      <- WildGuardTest
+  <output-dir>/xstest_predictions.jsonl             <- XSTest
+  <output-dir>/toxic_chat_predictions.jsonl         <- ToxicChat
+  <output-dir>/aegis_predictions.jsonl              <- AEGIS 2
+  <output-dir>/openai_moderation_predictions.jsonl  <- OpenAI Moderation
 
 Usage (from project root):
     python scripts/eval_sft_baseline.py \\
@@ -25,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from datasets import load_dataset
 from intention_jailbreak.model_generation.preprocessing import preprocess_data
 from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
+from intention_jailbreak.model_generation.safety_classifier import map_harm_to_binary
 from sklearn.metrics import classification_report, f1_score, accuracy_score
 
 import re
@@ -90,24 +94,49 @@ def extract_intent_and_harm(raw_text: str):
 
 
 def load_benchmark(name: str):
-    """Load WildGuardTest or XSTest and return (examples, harm_column)."""
+    """Load an external benchmark and return (examples, harm_column)."""
     if name == "wildguardtest":
         ds = load_dataset("allenai/wildguardmix", "wildguardtest", split="test")
         ds = ds.filter(lambda x: x["prompt_harm_label"] is not None)
-        # map "unharmful" -> "safe"
         def _map(ex):
-            ex["true_harm"] = _norm_harm(ex["prompt_harm_label"])
+            ex["true_harm"] = map_harm_to_binary(ex["prompt_harm_label"])
             return ex
         ds = ds.map(_map)
         return list(ds), "true_harm"
     elif name == "xstest":
         ds = load_dataset("walledai/XSTest", split="test")
         ds = ds.filter(lambda x: x["label"] is not None)
-        # map "unsafe" -> "harmful", "safe" -> "safe"
         def _map(ex):
-            ex["true_harm"] = _norm_harm(ex["label"])
+            ex["true_harm"] = map_harm_to_binary(ex["label"])
             return ex
         ds = ds.map(_map)
+        return list(ds), "true_harm"
+    elif name == "toxic-chat":
+        ds = load_dataset("lmsys/toxic-chat", "toxicchat0124", split="test")
+        ds = ds.filter(lambda x: x["toxicity"] is not None)
+        ds = ds.rename_column("user_input", "prompt")
+        def _map(ex):
+            ex["true_harm"] = "harmful" if int(ex["toxicity"]) == 1 else "safe"
+            return ex
+        ds = ds.map(_map)
+        return list(ds), "true_harm"
+    elif name == "aegis":
+        ds = load_dataset("nvidia/Aegis-AI-Content-Safety-Dataset-2.0", split="test")
+        ds = ds.filter(lambda x: x["prompt_label"] is not None)
+        def _map(ex):
+            ex["true_harm"] = map_harm_to_binary(ex["prompt_label"])
+            return ex
+        ds = ds.map(_map)
+        ds = ds.filter(lambda x: x["true_harm"] is not None)
+        return list(ds), "true_harm"
+    elif name == "openai-moderation":
+        ds = load_dataset("AllanK24/openai-moderation-binary", split="test")
+        ds = ds.filter(lambda x: x["prompt_label"] is not None)
+        def _map(ex):
+            ex["true_harm"] = map_harm_to_binary(ex["prompt_label"])
+            return ex
+        ds = ds.map(_map)
+        ds = ds.filter(lambda x: x["true_harm"] is not None)
         return list(ds), "true_harm"
     else:
         raise ValueError(f"Unknown benchmark: {name}")
@@ -227,6 +256,33 @@ def main():
              xst_examples, xst_harm_col,
              output_dir / "xstest_predictions.jsonl",
              "XSTest")
+
+    # ── 4. ToxicChat ─────────────────────────────────────────────────────
+    print("\n=== Loading ToxicChat ===")
+    tc_examples, tc_harm_col = load_benchmark("toxic-chat")
+    print(f"ToxicChat: {len(tc_examples)} examples")
+    run_eval(llm, lora_request, sampling_params,
+             tc_examples, tc_harm_col,
+             output_dir / "toxic_chat_predictions.jsonl",
+             "ToxicChat")
+
+    # ── 5. AEGIS 2 ───────────────────────────────────────────────────────
+    print("\n=== Loading AEGIS 2 ===")
+    aegis_examples, aegis_harm_col = load_benchmark("aegis")
+    print(f"AEGIS 2: {len(aegis_examples)} examples")
+    run_eval(llm, lora_request, sampling_params,
+             aegis_examples, aegis_harm_col,
+             output_dir / "aegis_predictions.jsonl",
+             "AEGIS 2")
+
+    # ── 6. OpenAI Moderation ─────────────────────────────────────────────
+    print("\n=== Loading OpenAI Moderation ===")
+    oai_examples, oai_harm_col = load_benchmark("openai-moderation")
+    print(f"OpenAI Moderation: {len(oai_examples)} examples")
+    run_eval(llm, lora_request, sampling_params,
+             oai_examples, oai_harm_col,
+             output_dir / "openai_moderation_predictions.jsonl",
+             "OpenAI Moderation")
 
     del llm
 
