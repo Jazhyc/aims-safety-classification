@@ -91,6 +91,8 @@ def step1_generate_pairs(args) -> bool:
         "--max-model-len",  str(args.max_model_len),
         "--seed",           str(args.seed),
     ]
+    if args.from_samples:
+        cmd += ["--from-samples", args.from_samples]
     if args.intent_filter:
         cmd += ["--intent-filter", "--judge-model", args.judge_model]
     return run(cmd, "Step 1 – Generate DPO pairs")
@@ -379,6 +381,10 @@ def parse_args():
     p.add_argument("--k-samples",    type=int,   default=5)
     p.add_argument("--max-model-len", type=int,  default=4096,
                    help="vLLM max context length used in pair generation.")
+    p.add_argument("--from-samples", default=None,
+                   help="Path to a pre-generated parsed_samples.jsonl to reuse instead of "
+                        "running a fresh T=0.8 generation pass. Ensures all conditions "
+                        "start from the same base samples for fair comparison.")
     p.add_argument("--intent-filter", action="store_true",
                    help="Run LLM judge on correct-label samples and add bad_match "
                         "outputs as extra DPO rejected pairs (condition 3).")

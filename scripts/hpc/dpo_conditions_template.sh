@@ -67,6 +67,10 @@ HARD_BALANCED_DIR="${HARD_BALANCED_DIR:-data/dpo_pairs/hard_balanced}"
 HARD_DPO_OUTPUT="${HARD_DPO_OUTPUT:-trained_models/causal/dpo-hard}"
 SFT_PRED_DIR_HARD="${SFT_PRED_DIR_HARD:-data/predictions/sft_hard}"
 
+# Canonical T=0.8 samples shared across all conditions for fair comparison.
+# All conditions reuse these samples so only the filtering logic differs.
+CANONICAL_SAMPLES="${CANONICAL_SAMPLES:-data/dpo_pairs/train_t0.8/parsed_samples.jsonl}"
+
 JUDGE_PAIRS_DIR="${JUDGE_PAIRS_DIR:-data/dpo_pairs/judge}"
 JUDGE_BALANCED_DIR="${JUDGE_BALANCED_DIR:-data/dpo_pairs/judge_balanced}"
 JUDGE_DPO_OUTPUT="${JUDGE_DPO_OUTPUT:-trained_models/causal/dpo-judge}"
@@ -133,6 +137,7 @@ case "${STAGE}" in
       --balanced-pairs-dir "${HARD_BALANCED_DIR}" \
       --dpo-output-dir "${HARD_DPO_OUTPUT}" \
       --sft-pred-dir "${SFT_PRED_DIR_HARD}" \
+      --from-samples "${CANONICAL_SAMPLES}" \
       --temperature "${TEMPERATURE}" \
       --k-samples "${K_SAMPLES}" \
       --max-model-len "${MAX_MODEL_LEN}" \
@@ -149,22 +154,19 @@ case "${STAGE}" in
     ;;
 
   judge_dpo)
-    # Two-pass judge flow. Pass 1 (sample generation) is skipped when
-    # JUDGE_FROM_SAMPLES is set — reuses cached parsed_samples.jsonl.
+    # Two-pass judge flow.
+    # Pass 1: always reuse canonical T=0.8 samples (generated once by hard_dpo or
+    # train_t0.8 stage) so all conditions start from identical base samples.
+    # JUDGE_FROM_SAMPLES is kept for backwards compatibility but is now redundant
+    # since we always point at CANONICAL_SAMPLES.
     if [ -z "${JUDGE_FROM_SAMPLES}" ]; then
-      python scripts/generate_dpo_pairs.py \
-        --adapter-path "${BASE_SFT_ADAPTER}" \
-        --base-model "${BASE_MODEL}" \
-        --output-dir "${JUDGE_PAIRS_DIR}" \
-        --temperature "${TEMPERATURE}" \
-        --num-samples "${K_SAMPLES}" \
-        --max-model-len "${MAX_MODEL_LEN}"
+      echo "[judge_dpo] Reusing canonical samples from ${CANONICAL_SAMPLES}"
     else
-      echo "[judge_dpo] Skipping sample generation — reusing ${JUDGE_PAIRS_DIR}/parsed_samples.jsonl"
+      echo "[judge_dpo] JUDGE_FROM_SAMPLES set — reusing ${JUDGE_PAIRS_DIR}/parsed_samples.jsonl"
     fi
 
     python scripts/generate_dpo_pairs.py \
-      --from-samples "${JUDGE_PAIRS_DIR}/parsed_samples.jsonl" \
+      --from-samples "${CANONICAL_SAMPLES}" \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --output-dir "${JUDGE_PAIRS_DIR}" \
