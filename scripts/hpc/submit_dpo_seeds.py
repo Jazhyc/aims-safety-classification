@@ -23,8 +23,8 @@ TEMPLATE = "scripts/hpc/dpo_conditions_template.sh"
 JUDGE_MODEL = "google/gemma-3-27b-it"
 GPTOSS_JOB_ID = "28565108"  # already completed, used for union dependency
 
-PARTITION_A    = "gpu"           # A100 for training (faster, cheaper quota)
-GPU_A          = "a100:1"
+PARTITION_A    = "gpumedium"    # RTX Pro 6000 — A100s have incompatible CUDA driver
+GPU_A          = "rtx_pro_6000:1"
 PARTITION_J    = "gpumedium"    # RTX Pro 6000 for gemma 27B judge (96 GB VRAM)
 GPU_J          = "rtx_pro_6000:1"
 
