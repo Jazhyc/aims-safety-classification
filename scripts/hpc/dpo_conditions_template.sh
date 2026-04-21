@@ -375,13 +375,14 @@ case "${STAGE}" in
     python3 -c "
 import json, sys
 for path in ['${JUDGE_PRIMARY_SAMPLES}', '${JUDGE_GPTOSS_SAMPLES}']:
-    with open(path) as f:
-        rec = json.loads(f.readline())
-    if 'judge_verdict' not in rec['samples'][0]:
+    lines = open(path).readlines()
+    found = sum(1 for l in lines for s in json.loads(l).get('samples', []) if 'judge_verdict' in s)
+    if found == 0:
         print(f'ERROR: judge_verdict missing from {path}')
         print('  Re-run the judge stage with the updated code to cache verdicts.')
         sys.exit(1)
-print('Prerequisite check passed: both parsed_samples have judge_verdict.')
+    print(f'OK: {path} — {found} samples with judge_verdict')
+print('Prerequisite check passed.')
 " || exit 1
 
     # Merge verdicts and build pairs (no model loaded — verdicts already cached)
