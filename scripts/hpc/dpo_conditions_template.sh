@@ -4,6 +4,7 @@
 #SBATCH --mem=64GB
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=a100:1
+#SBATCH --exclude=a100gpu5
 #SBATCH --output=logs/slurm/%x-%j.out
 
 set -euo pipefail
