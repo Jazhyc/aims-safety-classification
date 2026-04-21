@@ -158,10 +158,12 @@ case "${STAGE}" in
       echo "[SKIP] Canonical samples already exist at ${CANONICAL_SAMPLES}"
       exit 0
     fi
+    # Derive output dir from CANONICAL_SAMPLES path
+    CANONICAL_OUT_DIR="$(dirname "${CANONICAL_SAMPLES}")"
     python scripts/generate_dpo_pairs.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
-      --output-dir "data/dpo_pairs/train_t0.8" \
+      --output-dir "${CANONICAL_OUT_DIR}" \
       --num-samples "${K_SAMPLES}" \
       --temperature "${TEMPERATURE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
