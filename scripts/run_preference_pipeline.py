@@ -5,7 +5,7 @@ End-to-end preference-learning pipeline:
   Step 2 – balance_dpo_pairs.py    : undersample to 50/50 harm distribution
   Step 3 – train_dpo.py            : DPO fine-tuning on top of the SFT adapter
   Step 4 – eval_sft_baseline.py    : evaluate SFT adapter on held-out test set
-  Step 5 – eval_sft_baseline.py    : evaluate DPO adapter on held-out test set
+  Step 5 – eval_safety_classifier.py: evaluate DPO adapter on all benchmarks
   Step 6 – compare_models.py       : side-by-side comparison table
 
 Augmentation mode (--augment):
@@ -157,16 +157,19 @@ def step4_eval_sft(args) -> bool:
 
 
 def step5_eval_dpo(args) -> bool:
-    pred_path = Path(args.dpo_output_dir) / "predictions" / "test_predictions.jsonl"
+    pred_dir = Path(args.dpo_output_dir) / "predictions"
+    model_slug = args.base_model.replace("/", "_")
+    pred_path = pred_dir / "annotated_intents" / f"{model_slug}_finetuned_generation.jsonl"
     if _cached(pred_path):
         print(f"\n[SKIP] Step 5 – DPO predictions already exist at {pred_path}")
         return True
     adapter_path = args.dpo_output_dir + "_adapter"
     cmd = [
-        sys.executable, "scripts/baselines/eval_sft_baseline.py",
-        "--adapter-path",   adapter_path,
-        "--base-model",     args.base_model,
-        "--output-dir",     str(Path(args.dpo_output_dir) / "predictions"),
+        sys.executable, "scripts/eval_safety_classifier.py",
+        "--config-name=eval_dpo_condition",
+        f"finetuned.generation_adapter={adapter_path}",
+        f"paths.output_dir={pred_dir}",
+        f"model.name={args.base_model}",
     ]
     return run(cmd, "Step 5 – Evaluate DPO adapter")
 
@@ -327,7 +330,8 @@ def _clear_cache(step_num: int, args) -> None:
         2: [Path(args.balanced_pairs_dir) / "dpo_pairs.jsonl"],
         3: [Path(args.dpo_output_dir + "_adapter") / "adapter_config.json"],
         4: [Path(args.sft_pred_dir) / "test_predictions.jsonl"],
-        5: [Path(args.dpo_output_dir) / "predictions" / "test_predictions.jsonl"],
+        5: [Path(args.dpo_output_dir) / "predictions" / "annotated_intents" /
+            f"{args.base_model.replace('/', '_')}_finetuned_generation.jsonl"],
         6: [Path("data/comparison/comparison_summary.json")],
     }
     for path in sentinels.get(step_num, []):

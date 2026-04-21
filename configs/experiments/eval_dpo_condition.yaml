@@ -1,0 +1,114 @@
+# Evaluate a single DPO generation adapter on all benchmarks.
+# Used by run_preference_pipeline.py (step 5) so DPO results are produced
+# by the same script and metric code as distillation, enabling direct comparison.
+#
+# Override at call time:
+#   finetuned.generation_adapter=<path>   — path to DPO adapter
+#   paths.output_dir=<dir>               — where predictions are saved
+
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
+experiment:
+  conditions:
+    - "finetuned_generation"
+
+model:
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+  max_length: 4096
+
+finetuned:
+  use_merged: false
+  generation_adapter: "PLACEHOLDER"
+  classification_adapter: null
+  reasoning_classification_adapter: null
+  reasoning_human_intent_adapter: null
+  reasoning_synthetic_adapter: null
+
+lora:
+  rank: 16
+
+datasets:
+  - name: "annotated-intents"
+    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    subset: null
+    split: "test"
+    harm_column: "Annotator Harm"
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/annotated_intents"
+
+  - name: "wildguardmix"
+    dataset_name: "allenai/wildguardmix"
+    subset: "wildguardtest"
+    split: "test"
+    harm_column: "prompt_harm_label"
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/wildguardmix"
+
+  - name: "xstest"
+    dataset_name: "walledai/XSTest"
+    subset: null
+    split: "test"
+    harm_column: "label"
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/xstest"
+
+  - name: "toxic-chat"
+    dataset_name: "lmsys/toxic-chat"
+    subset: "toxicchat0124"
+    split: "test"
+    harm_column: "toxicity"
+    use_manual_split: false
+    label_map:
+      0: "safe"
+      1: "harmful"
+    output_dir: "${paths.output_dir}/toxic_chat"
+
+  - name: "aegis"
+    dataset_name: "nvidia/Aegis-AI-Content-Safety-Dataset-2.0"
+    subset: null
+    split: "test"
+    harm_column: "prompt_label"
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/aegis"
+
+  - name: "openai-moderation"
+    dataset_name: "AllanK24/openai-moderation-binary"
+    subset: null
+    split: "test"
+    harm_column: "prompt_label"
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/openai_moderation"
+
+generation:
+  max_new_tokens: 64
+  temperature: 0.0
+  top_p: 1.0
+  top_k: -1
+
+paths:
+  output_dir: "data/predictions/dpo"  # overridden per job
+
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 2048
+  dtype: "bfloat16"
+  enforce_eager: false
+  flash_attn_version: null
+
+artifacts:
+  enabled: false
+  registry_project: "intention-jailbreak-models"
+  entity: null
+  results_name: null
+
+wandb:
+  enabled: false
+  entity: null
+  project: "intention-jailbreak"
+  run_name: null
+  tags: ["dpo", "classification"]
+  dir: "logs/wandb"
+  mode: "online"
