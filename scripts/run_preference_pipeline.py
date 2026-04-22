@@ -8,23 +8,8 @@ End-to-end preference-learning pipeline:
   Step 5 – eval_safety_classifier.py: evaluate DPO adapter on all benchmarks
   Step 6 – compare_models.py       : side-by-side comparison table
 
-Augmentation mode (--augment):
-  Inserts three pre-processing steps before the main pipeline to enrich the
-  training set with easy, high-confidence WildGuardMix examples:
-
-  Pre A – filter_wildguard_easy.py     : score WildGuardMix with ModernBERT,
-                                         keep high-confidence examples
-  Pre B – generate_dpo_pairs.py        : generate DPO pairs for easy examples
-           --from-jsonl <candidates>     (uses T=0 synthetic intent as chosen)
-  Pre C – merge_dpo_pairs.py           : merge annotated + WildGuardMix pairs;
-                                         extract SFT training examples
-
-  Steps 1–6 then run on the merged pairs. Also writes
-  data/wildguard_easy/sft_examples.jsonl for SFT augmentation retraining.
-
 Caching: each step is skipped if its output file already exists.
 Pass --force to re-run all steps, or --force-from=N to re-run from step N onward.
-Use --force-augment to re-run only the augmentation pre-steps A/B/C.
 
 Usage (from project root):
     python scripts/run_preference_pipeline.py
@@ -32,8 +17,6 @@ Usage (from project root):
     python scripts/run_preference_pipeline.py --force-from 4
     python scripts/run_preference_pipeline.py --skip-steps 2,3
     python scripts/run_preference_pipeline.py --wandb-project intention-jailbreak
-    python scripts/run_preference_pipeline.py --augment
-    python scripts/run_preference_pipeline.py --augment --force-augment
 """
 
 import argparse
@@ -99,7 +82,7 @@ def step1_generate_pairs(args) -> bool:
 
 
 def step2_balance_pairs(args) -> bool:
-    input_dir     = args.augmented_pairs_dir if args.augment else args.pairs_dir
+    input_dir     = args.pairs_dir
     balanced_path = Path(args.balanced_pairs_dir) / "dpo_pairs.jsonl"
     if _cached(balanced_path):
         print(f"\n[SKIP] Step 2 – balanced pairs already exist at {balanced_path}")
@@ -187,69 +170,6 @@ def step6_compare(args) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Augmentation pre-steps (A / B / C)
-# ---------------------------------------------------------------------------
-
-def step_a_filter_wildguard(args) -> bool:
-    candidates = Path(args.wildguard_candidates)
-    if _cached(candidates):
-        print(f"\n[SKIP] Pre A – WildGuardMix candidates already exist at {candidates}")
-        return True
-    cmd = [
-        sys.executable, "scripts/dataset_analysis/filter_wildguard_easy.py",
-        "--model-path", args.wildguard_model_path,
-        "--output-dir", str(candidates.parent),
-    ]
-    return run(cmd, "Pre A – Filter WildGuardMix easy examples")
-
-
-def step_b_generate_wildguard_pairs(args) -> bool:
-    pairs_path = Path(args.wildguard_pairs_dir) / "dpo_pairs.jsonl"
-    if _cached(pairs_path):
-        print(f"\n[SKIP] Pre B – WildGuardMix DPO pairs already exist at {args.wildguard_pairs_dir}")
-        return True
-    cmd = [
-        sys.executable, "scripts/generate_dpo_pairs.py",
-        "--from-jsonl",     args.wildguard_candidates,
-        "--adapter-path",   args.adapter_path,
-        "--base-model",     args.base_model,
-        "--output-dir",     args.wildguard_pairs_dir,
-        "--temperature",    str(args.temperature),
-        "--num-samples",    str(args.k_samples),
-        "--max-model-len",  str(args.max_model_len),
-        "--seed",           str(args.seed),
-    ]
-    return run(cmd, "Pre B – Generate DPO pairs for WildGuardMix easy examples")
-
-
-def step_c_merge_pairs(args) -> bool:
-    merged_path = Path(args.augmented_pairs_dir) / "dpo_pairs.jsonl"
-    if _cached(merged_path):
-        print(f"\n[SKIP] Pre C – Merged pairs already exist at {args.augmented_pairs_dir}")
-        return True
-    cmd = [
-        sys.executable, "scripts/merge_dpo_pairs.py",
-        "--annotated-dir", args.pairs_dir,
-        "--wildguard-dir", args.wildguard_pairs_dir,
-        "--output-dir",    args.augmented_pairs_dir,
-        "--sft-output",    args.sft_examples_output,
-    ]
-    return run(cmd, "Pre C – Merge annotated + WildGuardMix DPO pairs")
-
-
-def run_augment_preprocessing(args) -> bool:
-    for name, fn in [
-        ("A – filter wildguard", step_a_filter_wildguard),
-        ("B – generate wildguard pairs", step_b_generate_wildguard_pairs),
-        ("C – merge pairs", step_c_merge_pairs),
-    ]:
-        if not fn(args):
-            print(f"\n[ABORT] Augmentation pre-step {name} failed.")
-            return False
-    return True
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -274,14 +194,6 @@ STEP_NAMES = {
 
 def main():
     args = parse_args()
-
-    # Augmentation pre-processing (runs before main pipeline)
-    if args.augment:
-        print("\n=== Augmentation mode: running pre-processing steps A / B / C ===")
-        if args.force_augment:
-            _clear_augment_cache(args)
-        if not run_augment_preprocessing(args):
-            sys.exit(1)
 
     # Build the set of steps to run
     skip = set(int(s) for s in args.skip_steps.split(",") if s.strip()) if args.skip_steps else set()
@@ -340,19 +252,6 @@ def _clear_cache(step_num: int, args) -> None:
             print(f"  [force] Removed cache: {path}")
 
 
-def _clear_augment_cache(args) -> None:
-    """Remove augmentation pre-step cache sentinels."""
-    sentinels = [
-        Path(args.wildguard_candidates),
-        Path(args.wildguard_pairs_dir) / "dpo_pairs.jsonl",
-        Path(args.augmented_pairs_dir) / "dpo_pairs.jsonl",
-    ]
-    for path in sentinels:
-        if path.exists():
-            path.unlink()
-            print(f"  [force-augment] Removed cache: {path}")
-
-
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -370,18 +269,6 @@ def parse_args():
     p.add_argument("--balanced-pairs-dir", default="data/dpo_pairs/train_t0.8_balanced")
     p.add_argument("--dpo-output-dir",     default="trained_models/causal/llama-dpo")
     p.add_argument("--sft-pred-dir",       default="data/predictions/sft_baseline")
-
-    # Augmentation paths (only used with --augment)
-    p.add_argument("--wildguard-candidates",  default="data/wildguard_easy/candidates.jsonl",
-                   help="Output of filter_wildguard_easy.py.")
-    p.add_argument("--wildguard-model-path",  default="models/modernbert-ensemble/final_model",
-                   help="HF model ID or local path used by filter_wildguard_easy.py.")
-    p.add_argument("--wildguard-pairs-dir",   default="data/wildguard_easy/dpo_pairs",
-                   help="DPO pairs generated from WildGuardMix easy examples.")
-    p.add_argument("--augmented-pairs-dir",   default="data/dpo_pairs/augmented",
-                   help="Merged (annotated + WildGuardMix) pairs directory.")
-    p.add_argument("--sft-examples-output",   default="data/wildguard_easy/sft_examples.jsonl",
-                   help="SFT training examples extracted from WildGuardMix DPO pairs.")
 
     # Pair generation
     p.add_argument("--temperature",  type=float, default=0.8)
@@ -414,10 +301,6 @@ def parse_args():
                         "--harmful-weight to correct imbalance instead.")
 
     # Pipeline control
-    p.add_argument("--augment",       action="store_true",
-                   help="Enable WildGuardMix augmentation pre-steps A/B/C.")
-    p.add_argument("--force-augment", action="store_true",
-                   help="Re-run augmentation pre-steps A/B/C even if cached.")
     p.add_argument("--force",         action="store_true",
                    help="Re-run steps 2–5 (training + eval), ignoring cached outputs. "
                         "Does NOT regenerate pairs (step 1) — use --force-pairs for that.")

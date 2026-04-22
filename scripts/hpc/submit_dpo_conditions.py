@@ -5,13 +5,8 @@ Submit DPO condition stages on SLURM with dependencies.
 Stages:
   hard_dpo      — DPO on hard-only annotated pairs
   judge_dpo     — DPO with LLM-judge intent rejecteds (GPT-OSS 120B on RTX 6000 Pro)
-  augment_prep  — WildGuard easy filtering + DPO pair merge (pre-steps A/B/C)
-  sft_aug       — Retrain SFT with augmented data
-  dpo_aug       — DPO on augmented merged pairs using augmented SFT init
 
-Dependency chain:
-  hard_dpo -> augment_prep -> sft_aug -> dpo_aug
-  judge_dpo runs independently.
+Both stages run independently.
 
 Usage:
   python scripts/hpc/submit_dpo_conditions.py
@@ -36,7 +31,7 @@ from slurm_utils import create_logs_dir, print_header, print_job_summary
 
 TEMPLATE = "scripts/hpc/dpo_conditions_template.sh"
 
-STAGE_ORDER = ["hard_dpo", "judge_dpo", "augment_prep", "sft_aug", "dpo_aug"]
+STAGE_ORDER = ["hard_dpo", "judge_dpo"]
 
 # Judge presets — each entry sets all GPU/model knobs for a known judge.
 # Keys are the short names passed to --judge.
@@ -74,13 +69,10 @@ JUDGE_PRESETS: dict[str, dict] = {
 DEPENDENCIES = {
     "hard_dpo":     None,
     "judge_dpo":    None,
-    "augment_prep": "hard_dpo",
-    "sft_aug":      "augment_prep",
-    "dpo_aug":      "sft_aug",
 }
 
 # Stages that finish quickly (pair gen / data prep, no full DPO training loop)
-SHORT_STAGES = {"hard_dpo", "augment_prep"}
+SHORT_STAGES = {"hard_dpo"}
 
 
 def submit_stage(
@@ -119,9 +111,6 @@ def parse_args() -> argparse.Namespace:
                    help="Re-run all pipeline steps, ignoring cached outputs.")
     p.add_argument("--force-from", type=int, default=None, metavar="N",
                    help="Re-run from pipeline step N onward.")
-    p.add_argument("--force-augment", action="store_true",
-                   help="Re-run augmentation pre-steps A/B/C even if cached.")
-
     # ── Model ──────────────────────────────────────────────────────────────
     p.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--base-sft-adapter",
@@ -140,7 +129,7 @@ def parse_args() -> argparse.Namespace:
                         "Overrides --judge preset.")
     p.add_argument("--seed", type=int, default=22)
     p.add_argument("--dpo-beta", type=float, default=0.1,
-                   help="DPO beta for hard_dpo, augment_prep, and dpo_aug stages.")
+                   help="DPO beta for hard_dpo and judge_dpo stages.")
 
     # ── Judge-specific overrides ────────────────────────────────────────────
     p.add_argument("--judge-from-samples", action="store_true",
@@ -157,15 +146,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--harmful-weight", type=float, default=1.4,
                    help="Loss up-weight for harmful pairs when --unbalanced is set "
                         "(n_safe/n_harmful ≈ 1.4 for annotated intents).")
-
-    # ── Aug DPO overrides ──────────────────────────────────────────────────
-    p.add_argument("--aug-epochs", type=int, default=1,
-                   help="DPO epochs for dpo_aug. Default 1 to avoid over-training "
-                        "on the large augmented pair set (~19K pairs).")
-    p.add_argument("--no-sft-aug", action="store_true",
-                   help="Skip sft_aug and use the original SFT adapter as the init "
-                        "for dpo_aug instead of the augmented SFT. Avoids contamination "
-                        "from imbalanced sft_examples (74%% harmful).")
 
     # ── Output path overrides ─────────────────────────────────────────────
     p.add_argument("--judge-pairs-dir", default=None,
@@ -228,14 +208,11 @@ def main() -> None:
         "DPO_BETA":          str(args.dpo_beta),
         "FORCE":             "1" if args.force else "0",
         "FORCE_FROM":        "" if args.force_from is None else str(args.force_from),
-        "FORCE_AUGMENT":     "1" if args.force_augment else "0",
         "JUDGE_FROM_SAMPLES": "1" if args.judge_from_samples else "",
         "JUDGE_EPOCHS":      "" if args.judge_epochs is None else str(args.judge_epochs),
         "JUDGE_BETA":        "" if args.judge_beta is None else str(args.judge_beta),
         "UNBALANCED":        "1" if args.unbalanced else "0",
         "HARMFUL_WEIGHT":    str(args.harmful_weight),
-        "AUG_EPOCHS":        str(args.aug_epochs),
-        "NO_SFT_AUG":        "1" if args.no_sft_aug else "0",
         **({} if args.judge_pairs_dir    is None else {"JUDGE_PAIRS_DIR":    args.judge_pairs_dir}),
         **({} if args.judge_balanced_dir is None else {"JUDGE_BALANCED_DIR": args.judge_balanced_dir}),
         **({} if args.judge_dpo_output   is None else {"JUDGE_DPO_OUTPUT":   args.judge_dpo_output}),
@@ -264,11 +241,7 @@ def main() -> None:
     stages = STAGE_ORDER[STAGE_ORDER.index(args.start_from):] if args.start_from else STAGE_ORDER
     stages = [s for s in stages if s not in args.skip_stages]
 
-    # --no-sft-aug: skip sft_aug and rewire dpo_aug to depend on augment_prep
     dependencies = dict(DEPENDENCIES)
-    if args.no_sft_aug:
-        stages = [s for s in stages if s != "sft_aug"]
-        dependencies["dpo_aug"] = "augment_prep"
 
     submitted: dict[str, str] = {}
     jobs: list[tuple[str, str]] = []
@@ -276,7 +249,7 @@ def main() -> None:
     for stage in stages:
         dep_stage  = dependencies[stage]
         # If the dependency stage was skipped, look up its predecessor's job ID instead
-        # so the chain still works (e.g. augment_prep after hard_dpo when judge_dpo skipped).
+        # so the chain still works.
         dep_job_id = submitted.get(dep_stage) if dep_stage else None
         job_id = submit_stage(
             stage, export_vars, sbatch_opts(stage),
