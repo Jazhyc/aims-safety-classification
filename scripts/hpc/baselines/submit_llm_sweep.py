@@ -11,6 +11,10 @@ Usage:
 """
 
 import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_summary
 
 
@@ -38,7 +42,7 @@ def submit_job(model_hf_path: str, model_name: str) -> str:
     Returns:
         Job ID as string
     """
-    template_path = "scripts/hpc/generation_template.sh"
+    template_path = "scripts/hpc/baselines/generation_template.sh"
     export_vars = {
         'MODEL_HF_PATH': model_hf_path,
         'MODEL_NAME': model_name,

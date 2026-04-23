@@ -24,7 +24,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_summary
 
 
@@ -63,7 +63,7 @@ TRACES_VERSION = "v7"
 # Base directory where v7 reasoning traces are stored.
 TRACES_BASE_DIR = f"data/reasoning_traces_{TRACES_VERSION}"
 
-TEMPLATE_PATH = "scripts/hpc/distillation_sweep_template.sh"
+TEMPLATE_PATH = "scripts/hpc/distillation/distillation_sweep_template.sh"
 
 
 # ── Validation ────────────────────────────────────────────────────────────────

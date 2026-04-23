@@ -19,7 +19,7 @@ from pathlib import Path
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
-TEMPLATE = "scripts/hpc/dpo_conditions_template.sh"
+TEMPLATE = "scripts/hpc/dpo/dpo_conditions_template.sh"
 JUDGE_MODEL = "google/gemma-3-27b-it"
 GPTOSS_JOB_ID = "28565108"  # already completed, used for union dependency
 

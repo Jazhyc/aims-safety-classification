@@ -11,6 +11,10 @@ Usage:
 """
 
 import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_summary
 
 
@@ -37,7 +41,7 @@ ADAM_BETA2 = 0.98
 
 
 def submit_job(lr: float, epochs: int) -> str:
-    template_path = "scripts/hpc/hyperparam_sweep_clf_template.sh"
+    template_path = "scripts/hpc/sft/hyperparam_sweep_clf_template.sh"
     export_vars = {
         'LEARNING_RATE': lr,
         'EPOCHS': epochs,

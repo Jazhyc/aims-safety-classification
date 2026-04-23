@@ -24,12 +24,14 @@ from __future__ import annotations
 import argparse
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from slurm_utils import create_logs_dir, print_header, print_job_summary
 
 
-TEMPLATE = "scripts/hpc/dpo_conditions_template.sh"
+TEMPLATE = "scripts/hpc/dpo/dpo_conditions_template.sh"
 
 STAGE_ORDER = ["hard_dpo", "judge_dpo"]
 

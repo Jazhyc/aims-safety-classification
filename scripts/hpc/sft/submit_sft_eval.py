@@ -26,6 +26,7 @@ Usage:
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import wandb
@@ -33,15 +34,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from slurm_utils import create_logs_dir, submit_sbatch, print_header
 
 WANDB_PROJECT = "sft-hyperparam-sweep"
 BASE_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
 DEFAULT_TEST_CONFIG = "eval_sft_baselines"
-OOD_VAL_TEMPLATE  = "scripts/hpc/sft_ood_eval_template.sh"
-TEST_EVAL_TEMPLATE = "scripts/hpc/sft_eval_template.sh"
+OOD_VAL_TEMPLATE  = "scripts/hpc/sft/sft_ood_eval_template.sh"
+TEST_EVAL_TEMPLATE = "scripts/hpc/sft/sft_eval_template.sh"
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 OOD_VAL_BASE_DIR = PROJECT_ROOT / "data" / "safety_experiment" / "ood_validation" / "sft"
 OOD_DATASET_DIRS = ["toxic_chat", "aegis"]
 
@@ -286,7 +288,7 @@ def test_mode(project: str, config_name: str, use_merged: bool, dry_run: bool):
             if merged is None:
                 continue
             try:
-                job_id = submit_sbatch("scripts/hpc/sft_eval_merged_template.sh",
+                job_id = submit_sbatch("scripts/hpc/sft/sft_eval_merged_template.sh",
                                        {"MERGED_MODEL_PATH": merged, "CONDITION": condition})
                 print(f"✓ Submitted {label} merged-model eval job: {job_id}")
                 submitted.append(job_id)

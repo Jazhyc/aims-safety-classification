@@ -47,14 +47,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from slurm_utils import create_logs_dir, submit_sbatch, print_header
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DISTILLATION_SWEEP_DIR = PROJECT_ROOT / "models" / "distillation-sweep"
 
-TEST_EVAL_TEMPLATE = "scripts/hpc/distillation_eval_template.sh"
-OOD_VAL_TEMPLATE  = "scripts/hpc/distillation_ood_eval_template.sh"
+TEST_EVAL_TEMPLATE = "scripts/hpc/distillation/distillation_eval_template.sh"
+OOD_VAL_TEMPLATE  = "scripts/hpc/distillation/distillation_ood_eval_template.sh"
 
 OOD_VAL_BASE_DIR  = PROJECT_ROOT / "data" / "safety_experiment" / "ood_validation" / "distillation"
 OOD_DATASET_DIRS  = ["toxic_chat", "aegis"]

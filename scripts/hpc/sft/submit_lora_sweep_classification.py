@@ -112,7 +112,7 @@ def main():
     print(f"✓ Logs directory: {logs_dir}")
     
     # Submit jobs
-    template_path = "scripts/hpc/lora_sweep_template.sh"
+    template_path = "scripts/hpc/sft/lora_sweep_template.sh"
     job_ids = []
     
     for rank, alpha in configs:
@@ -135,7 +135,7 @@ def main():
             print(f"✗ Failed rank={rank}, alpha={alpha}: {e.stderr}")
         except FileNotFoundError:
             print(f"✗ Template not found: {template_path}")
-            print(f"  Make sure to copy lora_sweep_template.sh to scripts/hpc/")
+            print(f"  Make sure to copy lora_sweep_template.sh to scripts/hpc/sft/")
             break
         except Exception as e:
             print(f"✗ Error: {str(e)}")
