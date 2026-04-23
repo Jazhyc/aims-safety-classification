@@ -998,7 +998,8 @@ def run_causal_flow(config):
             print(f"Cleaned up training checkpoints: {checkpoint_dir}")
 
         eval_results = trainer.evaluate()
-        print(f"[Causal LM] Validation loss: {eval_results['eval_loss']}")
+        val_eval_loss = eval_results["eval_loss"]
+        print(f"[Causal LM] Validation loss: {val_eval_loss}")
 
         del model
         del trainer
@@ -1081,4 +1082,17 @@ def run_causal_flow(config):
     del llm
 
     # Compute and log metrics
-    compute_and_log_metrics(val_refs, val_preds, split_name="val")
+    metrics = compute_and_log_metrics(val_refs, val_preds, split_name="val")
+
+    # Save metrics locally alongside the adapter / model weights
+    save_dir = adapter_path or base_model_path
+    if not skip_training:
+        metrics["val_eval_loss"] = val_eval_loss
+    metrics["model"] = model_name
+    if use_reasoning_traces:
+        metrics["condition"] = rt_condition
+    metrics["learning_rate"] = train_cfg.get("learning_rate")
+    metrics_path = os.path.join(save_dir, "val_metrics.json")
+    with open(metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    print(f"Validation metrics saved to {metrics_path}")

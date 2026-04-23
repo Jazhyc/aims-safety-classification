@@ -1,0 +1,96 @@
+# OOD validation configuration — two held-out splits not seen during training or final test eval.
+#
+# Datasets:
+#   - toxic-chat (train split of toxicchat0124) — different distribution than the test split
+#   - aegis       (validation split)             — held-out from test evaluation
+#
+# Default conditions: prompting baselines only.
+# Fine-tuned/distillation conditions are injected via experiment.conditions override
+# by submit_sft_eval.py and submit_distillation_eval.py when running in ood-val mode.
+#
+# Adapter paths and paths.output_dir are overridden per job at submission time.
+
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
+experiment:
+  conditions:
+    - "vanilla_classification"
+    - "vanilla_generation"
+    - "vanilla_with_human_intent"
+    - "zeroshot_cot_classification"
+    - "zeroshot_cot_generation"
+    - "zeroshot_cot_classification_with_intent"
+
+model:
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+  max_length: 4096
+
+distilled_models_dir: "models/distillation"
+sft_models_dir: "models/sft"
+
+finetuned:
+  use_merged: false
+  generation_adapter: "${sft_models_dir}/hyperparam_sweep/lr_5e-05_e_5_adapter"
+  classification_adapter: "${sft_models_dir}/classification-r16-a32_adapter"
+  # Reasoning distillation adapters — all overridden per job for distillation ood-val mode
+  reasoning_classification_adapter: "${distilled_models_dir}/PLACEHOLDER_adapter"
+  reasoning_generation_adapter: "${distilled_models_dir}/PLACEHOLDER_adapter"
+  reasoning_human_intent_adapter: "${distilled_models_dir}/PLACEHOLDER_adapter"
+  reasoning_synthetic_adapter: "${distilled_models_dir}/PLACEHOLDER_adapter"
+
+lora:
+  rank: 16  # SFT default; distillation ood-val jobs override to 32
+
+datasets:
+  - name: "toxic-chat"
+    dataset_name: "lmsys/toxic-chat"
+    subset: "toxicchat0124"
+    split: "train"
+    harm_column: "toxicity"
+    use_manual_split: false
+    label_map:
+      0: "safe"
+      1: "harmful"
+    output_dir: "${paths.output_dir}/toxic_chat"
+
+  - name: "aegis"
+    dataset_name: "nvidia/Aegis-AI-Content-Safety-Dataset-2.0"
+    subset: null
+    split: "validation"
+    harm_column: "prompt_label"
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/aegis"
+
+generation:
+  max_new_tokens: 2048
+  temperature: 0.0
+  top_p: 1.0
+  top_k: -1
+
+paths:
+  output_dir: "data/safety_experiment/ood_validation"
+
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 8192
+  dtype: "bfloat16"
+  enforce_eager: false
+  flash_attn_version: null
+
+artifacts:
+  enabled: true
+  registry_project: "intention-jailbreak-models"
+  entity: null
+  results_name: "safety-experiment-ood-validation"
+
+wandb:
+  enabled: true
+  entity: null
+  project: "OOD Validation"
+  run_name: null
+  tags: ["safety", "classification", "ood-validation"]
+  dir: "logs/wandb"
+  mode: "online"

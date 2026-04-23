@@ -30,40 +30,21 @@ defaults:
 # Experiment configuration
 experiment:
   # Conditions to run. Uncomment the ones you want to evaluate.
-  #
-  # Baselines:
-  #   - "vanilla_classification"
-  #   - "vanilla_generation"
-  #   - "vanilla_with_human_intent"
-  #   - "llamaguard_classification"
-  #
-  # Fine-tuned (intent/harm, no reasoning):
-  #   - "finetuned_generation"
-  #   - "finetuned_classification"
-  #
-  # Zero-shot CoT (no fine-tuning, reasoning at inference time):
-  #   - "zeroshot_cot_classification"
-  #   - "zeroshot_cot_generation"
-  #   - "zeroshot_cot_classification_with_intent"
-  #
-  # Reasoning distillation (fine-tuned on teacher traces):
-  #   - "finetuned_reasoning_classification"  # MODE D: reasoning + harm
-  #   - "finetuned_reasoning_generation"      # MODE E: reasoning + intent + harm
   conditions:
     # # Prompting baselines
-    # - "vanilla_classification"
-    # - "vanilla_generation"
-    # - "vanilla_with_human_intent"
-    # - "zeroshot_cot_classification"
-    # - "zeroshot_cot_generation"
-    # - "zeroshot_cot_classification_with_intent"
-    # # Prior-work baselines (separate model instances)
+    - "vanilla_classification"
+    - "vanilla_generation"
+    - "vanilla_with_human_intent"
+    - "zeroshot_cot_classification"
+    - "zeroshot_cot_generation"
+    - "zeroshot_cot_classification_with_intent"
+    # Prior-work baselines (separate model instances)
     # - "llamaguard_classification"
     # - "wildguard_classification"
     # - "safeguard_classification"
     # - "guardreasoner_classification"
     # - "shieldgemma_classification"
-     - "nemotron_classification"
+    # - "nemotron_classification"
     # - "guardreasoner_classification"
 
 # Model configuration
@@ -129,7 +110,7 @@ datasets:
   - name: "annotated-intents"
     dataset_name: "Jazhyc/wildguard-annotated-intents"
     subset: null
-    split: "test"
+    split: "validation+test"
     harm_column: "Annotator Harm"
     use_manual_split: false
     output_dir: "data/safety_experiment/annotated_intents"

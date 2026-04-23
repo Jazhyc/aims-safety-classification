@@ -153,16 +153,43 @@ Three functions:
 
 Artifact name = adapter directory name (e.g. `reasoning-distillation-gemma-3-27b-no-intent_adapter`), which is unique across pipelines. Enable per-config via `artifacts.enabled: true` in `llm_sweep.yaml` / `reasoning_distillation.yaml`.
 
+## OOD Validation Pipeline
+
+Model selection uses a two-stage eval workflow to avoid leaking test-set signal into adapter selection:
+
+**Stage 1 — OOD validation** (`--mode ood-val`, default): every trained adapter is evaluated on two held-out splits never seen during training:
+- `lmsys/toxic-chat` subset `toxicchat0124`, **train** split
+- `nvidia/Aegis-AI-Content-Safety-Dataset-2.0`, **validation** split
+
+Config: `configs/experiments/eval_ood_validation.yaml`. Output: `data/safety_experiment/ood_validation/{sft|distillation}/...`
+
+**Stage 2 — Test eval** (`--mode test`): reads OOD val JSONL files, picks the adapter with the highest average F1 across both OOD datasets, and submits a full test-set eval job. Falls back to W&B `val_harm_f1` for combinations with no OOD val results.
+
+```bash
+# Run OOD val for all trained adapters
+python scripts/hpc/submit_sft_eval.py
+python scripts/hpc/submit_distillation_eval.py
+
+# After jobs finish — submit best adapter for test set eval
+python scripts/hpc/submit_sft_eval.py --mode test
+python scripts/hpc/submit_distillation_eval.py --mode test
+```
+
+**SFT OOD output layout:** `ood_validation/sft/{generation|classification}/{adapter_name}/{toxic_chat,aegis}/`
+**Distillation OOD output layout:** `ood_validation/distillation/{teacher_slug}/{student_slug}/{condition}/{adapter_name}/{toxic_chat,aegis}/`
+
+**Adapter deduplication:** if the same LR+epochs config was submitted more than once, only the most recently created W&B run per adapter path is kept (its weights are the ones actually on disk).
+
 ## Experiment Status
 
 | Stage | Status | Notes |
 |---|---|---|
 | Prompting baselines (`eval_safety_classifier.py`) | ✅ Complete | W&B project: `Baselines`; results artifact: `safety-experiment-baselines` |
-| SFT hyperparam sweep (`submit_hyperparam_sweep.py`) | 🔄 In progress | Llama 3.1 8B; W&B project: `sft-hyperparam-sweep`; model selected by validation harm F1 (not cosine similarity) |
+| SFT hyperparam sweep (`submit_hyperparam_sweep.py`) | 🔄 In progress | Llama 3.1 8B; W&B project: `sft-hyperparam-sweep`; model selected by OOD val F1 |
 | Distillation teacher traces | ⬜ Pending | |
 | Distillation student SFT | ⬜ Pending | |
 
-**Sweep model selection policy:** rank sweep runs by **validation harm F1** (computed via `compare_models.py`), not cosine similarity. Cosine similarity measures annotation similarity, not task performance.
+**Sweep model selection policy:** rank by **OOD val F1** (average across ToxicChat train + Aegis val) via the two-stage eval pipeline above. W&B `val_harm_f1` (training val) is only a fallback.
 
 ## Experimental Version: v7
 
@@ -194,6 +221,16 @@ To bump to v8, update the version constant in all submission scripts and the pip
 - **Attention**: `flash_attention_2` throughout (`flash-attn 2.8.3`, cu128/torch2.10/cp312 wheel). Sequence packing (`padding_free: true`) enabled in all training configs.
 - **Early stopping**: Applied in all training runs via `EarlyStoppingCallback(patience=1)` in `causal.py`. All configs use `epochs: 5` as the ceiling; early stopping finds the actual stopping point.
 - **Reproducibility**: Seeds set via `training/utils.py:set_all_seeds()`.
+- **Student prompt format**: Uses native chat templates (`tokenizer.apply_chat_template`). Instructions go in the **system** message; the prompt-to-classify goes in the **user** message. `build_student_messages(user_prompt, condition)` in `prompt_templates.py` builds the `[system, user]` list; callers apply `add_generation_prompt=True`. The teacher prompt in `generate_reasoning_traces.py` is intentionally kept as raw text (wraps everything in a user turn).
+- **Validation set**: Training uses **val + test combined** (346 examples) as the early-stopping signal for both SFT and distillation paths. Neither split is held out during training; use external evaluation for unbiased final numbers.
+- **Local metrics**: After every `run_causal_flow` call, `val_metrics.json` is written alongside the adapter (keys: `val_harm_f1`, `val_harm_precision`, `val_harm_recall`, `val_semantic_sim`, `val_eval_loss`, `model`, `condition`, `learning_rate`). Use this to compare runs without W&B.
+- **`max_length_causal`**: Controls total token budget (prompt + completion) for SFT training truncation. The system message alone is ~300–400 tokens; 512 is too small for most examples.
+
+## Tests
+
+Run with: `.venv/bin/python3.12 -m pytest tests/ -v` (activating the venv via `source` does not persist across bash commands — use the full path).
+
+`tests/test_chat_template_prompts.py` covers: `build_student_messages` structure/content for all conditions, mock-tokenizer chat template integration, and round-trip tests for both assistant-turn parsers (`parse_reasoning_output` in `causal.py` and `_parse_reasoning_output` in `safety_classifier.py`).
 
 ## Known Pitfalls
 

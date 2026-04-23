@@ -49,7 +49,7 @@ datasets:
   - name: "annotated-intents"
     dataset_name: "Jazhyc/wildguard-annotated-intents"
     subset: null
-    split: "test"
+    split: "validation+test"
     harm_column: "Annotator Harm"
     use_manual_split: false
     output_dir: "data/safety_experiment/sft/annotated_intents"
