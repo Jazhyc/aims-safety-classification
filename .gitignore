@@ -211,6 +211,8 @@ __marimo__/
 data/*
 !data/.gitkeep
 report/
+trained_models/
+
 
 # Model checkpoints and caches
 *.pt
@@ -230,5 +232,6 @@ scripts/outputs
 .vscode
 notebooks/clustering_analysis_copy.ipynb
 !scripts/report/
-
+.codex
+notebooks/dpo/figures/
 logs/
