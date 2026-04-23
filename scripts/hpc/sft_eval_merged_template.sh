@@ -13,7 +13,7 @@ source .venv/bin/activate
 
 # Evaluate a single pre-merged SFT model on all test datasets.
 # MERGED_MODEL_PATH and CONDITION are set by submit_sft_eval.py --use-merged.
-# Merge adapters first with: python scripts/merge_adapter.py ...
+# Merge adapters first with: python scripts/dpo/merge_adapter.py ...
 python scripts/eval_safety_classifier.py \
     --config-name=eval_sft_baselines \
     "model.name=${MERGED_MODEL_PATH}" \

@@ -30,7 +30,7 @@ sft_models_dir: "models/sft"
 
 # Adapter paths — overridden at launch time by submit_sft_eval.py
 finetuned:
-  # Set to true when model.name points to a pre-merged model (via scripts/merge_adapter.py).
+  # Set to true when model.name points to a pre-merged model (via scripts/dpo/merge_adapter.py).
   # Only needed with --use-merged in submit_sft_eval.py; default LoRA path leaves this false.
   use_merged: false
 

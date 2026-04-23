@@ -80,7 +80,7 @@ sft_models_dir: "models/sft"
 # Fine-tuned model configuration
 # These are separate adapters trained for different tasks
 finetuned:
-  # Set to true when model.name points to a pre-merged model (via scripts/merge_adapter.py).
+  # Set to true when model.name points to a pre-merged model (via scripts/dpo/merge_adapter.py).
   # LoRA is disabled and adapter paths are ignored. The merged weights are baked into the model.
   use_merged: false
 

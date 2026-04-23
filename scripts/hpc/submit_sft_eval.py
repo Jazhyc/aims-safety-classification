@@ -143,7 +143,7 @@ def main():
             "Evaluate using pre-merged models instead of LoRA adapters. "
             "Requires ~16GB disk per model. "
             "Merged models must already exist at the derived path (<adapter>_merged). "
-            "Run scripts/merge_adapter.py first if they don't."
+            "Run scripts/dpo/merge_adapter.py first if they don't."
         ),
     )
     args = parser.parse_args()
@@ -196,7 +196,7 @@ def main():
         if missing:
             print("\nSome merged models are missing. Run the following to create them:")
             for label, adapter, merged in missing:
-                print(f"  python scripts/merge_adapter.py \\")
+                print(f"  python scripts/dpo/merge_adapter.py \\")
                 print(f"      --base-model {BASE_MODEL} \\")
                 print(f"      --adapter {adapter} \\")
                 print(f"      --output {merged}")

@@ -4,12 +4,12 @@ CLI entry point for merging a LoRA adapter into a base model.
 See src/intention_jailbreak/model_generation/merge_adapter.py for the library function.
 
 Usage:
-    python scripts/merge_adapter.py \\
+    python scripts/dpo/merge_adapter.py \\
         --base-model meta-llama/Llama-3.1-8B-Instruct \\
         --adapter models/sft/lr_5e-05_e_5_adapter \\
         --output models/sft/lr_5e-05_e_5_merged
 
-    python scripts/merge_adapter.py \\
+    python scripts/dpo/merge_adapter.py \\
         --base-model meta-llama/Llama-3.1-8B-Instruct \\
         --adapter models/distillation/reasoning-distillation-gemma-3-27b-without-intent_adapter \\
         --output models/distillation/reasoning-distillation-gemma-3-27b-without-intent_merged \\

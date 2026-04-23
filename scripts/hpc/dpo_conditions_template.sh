@@ -133,7 +133,7 @@ case "${STAGE}" in
     fi
     # Derive output dir from CANONICAL_SAMPLES path
     CANONICAL_OUT_DIR="$(dirname "${CANONICAL_SAMPLES}")"
-    python scripts/generate_dpo_pairs.py \
+    python scripts/dpo/generate_dpo_pairs.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --output-dir "${CANONICAL_OUT_DIR}" \
@@ -151,7 +151,7 @@ case "${STAGE}" in
       HARD_SKIP_STEPS="2,6"
       HARD_EXTRA_ARGS+=(--unbalanced --harmful-weight "${HARMFUL_WEIGHT}")
     fi
-    python scripts/run_preference_pipeline.py \
+    python scripts/dpo/run_preference_pipeline.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --pairs-dir "${HARD_PAIRS_DIR}" \
@@ -186,7 +186,7 @@ case "${STAGE}" in
       echo "[judge_dpo] JUDGE_FROM_SAMPLES set — reusing ${JUDGE_PAIRS_DIR}/parsed_samples.jsonl"
     fi
 
-    python scripts/generate_dpo_pairs.py \
+    python scripts/dpo/generate_dpo_pairs.py \
       --from-samples "${CANONICAL_SAMPLES}" \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
@@ -196,7 +196,7 @@ case "${STAGE}" in
       --judge-tensor-parallel "${JUDGE_TENSOR_PARALLEL}" \
       --max-model-len "${MAX_MODEL_LEN}"
 
-    python scripts/run_preference_pipeline.py \
+    python scripts/dpo/run_preference_pipeline.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --pairs-dir "${JUDGE_PAIRS_DIR}" \
@@ -221,7 +221,7 @@ case "${STAGE}" in
     GPTOSS_JUDGE_MODEL="${GPTOSS_JUDGE_MODEL:-openai/gpt-oss-120b}"
     GPTOSS_JUDGE_TP="${GPTOSS_JUDGE_TP:-1}"
 
-    python scripts/generate_dpo_pairs.py \
+    python scripts/dpo/generate_dpo_pairs.py \
       --from-samples "${CANONICAL_SAMPLES}" \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
@@ -231,7 +231,7 @@ case "${STAGE}" in
       --judge-tensor-parallel "${GPTOSS_JUDGE_TP}" \
       --max-model-len "${MAX_MODEL_LEN}"
 
-    python scripts/run_preference_pipeline.py \
+    python scripts/dpo/run_preference_pipeline.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --pairs-dir "${JUDGE_GPTOSS_PAIRS_DIR}" \
@@ -253,7 +253,7 @@ case "${STAGE}" in
     # Judge-only condition: rejecteds = bad_match samples only, no hard mislabels.
     # Generates both dpo_pairs.jsonl (bad only) and dpo_pairs_decent.jsonl (bad+decent)
     # so judge_decent_dpo can reuse these pairs without a second generation pass.
-    python scripts/generate_dpo_pairs.py \
+    python scripts/dpo/generate_dpo_pairs.py \
       --from-samples "${CANONICAL_SAMPLES}" \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
@@ -264,7 +264,7 @@ case "${STAGE}" in
       --judge-tensor-parallel "${JUDGE_TENSOR_PARALLEL}" \
       --max-model-len "${MAX_MODEL_LEN}"
 
-    python scripts/run_preference_pipeline.py \
+    python scripts/dpo/run_preference_pipeline.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --pairs-dir "${JUDGE_STANDALONE_PAIRS_DIR}" \
@@ -285,7 +285,7 @@ case "${STAGE}" in
   judge_decent_dpo)
     # Judge-only condition with bad_match + decent_match rejecteds.
     # Requires judge_standalone_dpo to have run first (reuses its dpo_pairs_decent.jsonl).
-    python scripts/run_preference_pipeline.py \
+    python scripts/dpo/run_preference_pipeline.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --pairs-dir "${JUDGE_STANDALONE_PAIRS_DIR}" \
@@ -307,7 +307,7 @@ case "${STAGE}" in
   union_decent_dpo)
     # Union condition with bad_match + decent_match rejecteds (hard ∪ judge decent).
     # Requires judge_dpo to have run first (reuses its dpo_pairs_decent.jsonl).
-    python scripts/run_preference_pipeline.py \
+    python scripts/dpo/run_preference_pipeline.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --pairs-dir "${JUDGE_PAIRS_DIR}" \
@@ -361,7 +361,7 @@ print('Prerequisite check passed.')
 " || exit 1
 
     # Merge verdicts and build pairs (no model loaded — verdicts already cached)
-    python scripts/generate_dpo_pairs.py \
+    python scripts/dpo/generate_dpo_pairs.py \
       --from-samples "${JUDGE_PRIMARY_SAMPLES}" \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
@@ -370,7 +370,7 @@ print('Prerequisite check passed.')
       --union-judge-dir "${JUDGE_GPTOSS_PAIRS_DIR}" \
       --max-model-len "${MAX_MODEL_LEN}"
 
-    python scripts/run_preference_pipeline.py \
+    python scripts/dpo/run_preference_pipeline.py \
       --adapter-path "${BASE_SFT_ADAPTER}" \
       --base-model "${BASE_MODEL}" \
       --pairs-dir "${JUDGE_UNION_PAIRS_DIR}" \

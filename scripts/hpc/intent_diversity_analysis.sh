@@ -59,7 +59,7 @@ for TEMP in "${TEMPERATURES[@]}"; do
         TOP_P=0.95
     fi
 
-    python scripts/intent_diversity_analysis.py \
+    python scripts/dpo/intent_diversity_analysis.py \
         --adapter-path "${ADAPTER_PATH}" \
         --base-model "${BASE_MODEL}" \
         --output-dir "data/diversity_analysis/t${TEMP}" \
@@ -85,7 +85,7 @@ for TEMP in "${TEMPERATURES[@]}"; do
     echo " [Pass 2] temperature = ${TEMP}"
     echo "=========================================="
 
-    python scripts/intent_diversity_analysis.py \
+    python scripts/dpo/intent_diversity_analysis.py \
         --adapter-path "${ADAPTER_PATH}" \
         --base-model "${BASE_MODEL}" \
         --from-samples "data/diversity_analysis/t${TEMP}/parsed_samples.jsonl" \
@@ -109,7 +109,7 @@ for TEMP in "${TEMPERATURES[@]}"; do
     echo " [Pass 3] temperature = ${TEMP}"
     echo "=========================================="
 
-    python scripts/intent_diversity_analysis.py \
+    python scripts/dpo/intent_diversity_analysis.py \
         --from-samples "data/diversity_analysis/t${TEMP}/parsed_samples.jsonl" \
         --harm-source modernbert \
         --modernbert-path "${MODERNBERT_PATH}" \

@@ -13,7 +13,7 @@ What it does:
 
 Usage:
     # Original mode (harm label from the same generation)
-    python scripts/intent_diversity_analysis.py \
+    python scripts/dpo/intent_diversity_analysis.py \
         --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \
         --base-model meta-llama/Llama-3.1-8B-Instruct \
         --output-dir data/diversity_analysis/t0.8 \
@@ -21,7 +21,7 @@ Usage:
         --temperature 0.8
 
     # LLM-at-t0 reclassification (skips generation, loads parsed_samples.jsonl)
-    python scripts/intent_diversity_analysis.py \
+    python scripts/dpo/intent_diversity_analysis.py \
         --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \
         --base-model meta-llama/Llama-3.1-8B-Instruct \
         --from-samples data/diversity_analysis/t0.8/parsed_samples.jsonl \
@@ -29,7 +29,7 @@ Usage:
         --output-dir data/diversity_analysis_llm_t0/t0.8
 
     # ModernBERT reclassification (skips generation AND vLLM load)
-    python scripts/intent_diversity_analysis.py \
+    python scripts/dpo/intent_diversity_analysis.py \
         --from-samples data/diversity_analysis/t0.8/parsed_samples.jsonl \
         --harm-source modernbert \
         --modernbert-path trained_models/bert_intent/ModernBERT-base \

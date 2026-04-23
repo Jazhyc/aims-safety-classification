@@ -9,7 +9,7 @@ This script undersamples the majority class (safe) to match the minority class
 (harmful), producing a balanced file suitable for DPO training.
 
 Usage:
-    python scripts/balance_dpo_pairs.py \
+    python scripts/dpo/balance_dpo_pairs.py \
         --input  data/dpo_pairs/train_t0.8/dpo_pairs.jsonl \
         --output data/dpo_pairs/train_t0.8_balanced/dpo_pairs.jsonl \
         --seed   42

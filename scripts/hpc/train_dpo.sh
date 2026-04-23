@@ -23,7 +23,7 @@ echo "  SFT init : ${ADAPTER_PATH}"
 echo "  Output   : ${OUTPUT_DIR}"
 echo "======================================================================"
 
-python scripts/train_dpo.py \
+python scripts/dpo/train_dpo.py \
     --pairs-path            "${PAIRS_PATH}" \
     --adapter-path          "${ADAPTER_PATH}" \
     --base-model            "${BASE_MODEL}" \

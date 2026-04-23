@@ -12,11 +12,11 @@ Caching: each step is skipped if its output file already exists.
 Pass --force to re-run all steps, or --force-from=N to re-run from step N onward.
 
 Usage (from project root):
-    python scripts/run_preference_pipeline.py
-    python scripts/run_preference_pipeline.py --force
-    python scripts/run_preference_pipeline.py --force-from 4
-    python scripts/run_preference_pipeline.py --skip-steps 2,3
-    python scripts/run_preference_pipeline.py --wandb-project intention-jailbreak
+    python scripts/dpo/run_preference_pipeline.py
+    python scripts/dpo/run_preference_pipeline.py --force
+    python scripts/dpo/run_preference_pipeline.py --force-from 4
+    python scripts/dpo/run_preference_pipeline.py --skip-steps 2,3
+    python scripts/dpo/run_preference_pipeline.py --wandb-project intention-jailbreak
 """
 
 import argparse
@@ -65,7 +65,7 @@ def step1_generate_pairs(args) -> bool:
         print(f"\n[SKIP] Step 1 – pairs already exist at {args.pairs_dir}")
         return True
     cmd = [
-        sys.executable, "scripts/generate_dpo_pairs.py",
+        sys.executable, "scripts/dpo/generate_dpo_pairs.py",
         "--adapter-path",   args.adapter_path,
         "--base-model",     args.base_model,
         "--output-dir",     args.pairs_dir,
@@ -88,7 +88,7 @@ def step2_balance_pairs(args) -> bool:
         print(f"\n[SKIP] Step 2 – balanced pairs already exist at {balanced_path}")
         return True
     cmd = [
-        sys.executable, "scripts/balance_dpo_pairs.py",
+        sys.executable, "scripts/dpo/balance_dpo_pairs.py",
         "--input",  str(Path(input_dir) / args.pairs_filename),
         "--output", str(balanced_path),
         "--seed",   str(args.seed),
@@ -105,7 +105,7 @@ def step3_train_dpo(args) -> bool:
     # harmful_weight to correct class imbalance in the loss instead.
     pairs_dir = args.pairs_dir if args.unbalanced else args.balanced_pairs_dir
     cmd = [
-        sys.executable, "scripts/train_dpo.py",
+        sys.executable, "scripts/dpo/train_dpo.py",
         "--pairs-path",           str(Path(pairs_dir) / "dpo_pairs.jsonl"),
         "--adapter-path",         args.adapter_path,
         "--base-model",           args.base_model,
@@ -149,7 +149,7 @@ def step5_eval_dpo(args) -> bool:
     adapter_path = args.dpo_output_dir + "_adapter"
     cmd = [
         sys.executable, "scripts/eval_safety_classifier.py",
-        "--config-name=eval_dpo_condition",
+        "--config-name=dpo/eval_dpo_condition",
         f"finetuned.generation_adapter={adapter_path}",
         f"paths.output_dir={pred_dir}",
         f"model.name={args.base_model}",

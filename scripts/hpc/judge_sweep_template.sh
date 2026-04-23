@@ -53,7 +53,7 @@ if [ "${UNBALANCED}" = "1" ]; then
   EXTRA_ARGS+=(--unbalanced --harmful-weight "${HARMFUL_WEIGHT}")
 fi
 
-python scripts/run_preference_pipeline.py \
+python scripts/dpo/run_preference_pipeline.py \
   --adapter-path       "${BASE_SFT_ADAPTER}" \
   --base-model         "${BASE_MODEL}" \
   --pairs-dir          "${PAIRS_DIR}" \

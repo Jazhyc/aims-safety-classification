@@ -13,7 +13,7 @@ Data format (dpo_pairs.jsonl):
    "rejected": "Intent: ...; Harm: ..."}
 
 Usage (from project root):
-    python scripts/train_dpo.py \\
+    python scripts/dpo/train_dpo.py \\
         --pairs-path     data/dpo_pairs/train_t0.8/dpo_pairs.jsonl \\
         --adapter-path   trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
         --base-model     meta-llama/Llama-3.1-8B-Instruct \\

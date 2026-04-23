@@ -22,7 +22,7 @@ echo "  Base model: ${BASE_MODEL}"
 echo "  Output    : ${OUTPUT_DIR}"
 echo "======================================================================"
 
-python scripts/generate_dpo_pairs.py \
+python scripts/dpo/generate_dpo_pairs.py \
     --adapter-path   "${ADAPTER_PATH}" \
     --base-model     "${BASE_MODEL}" \
     --output-dir     "${OUTPUT_DIR}" \

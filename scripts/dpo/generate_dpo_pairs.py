@@ -17,7 +17,7 @@ Outputs (all in --output-dir):
   intent_filter_examples.jsonl — per-sample judge verdicts (only with --intent-filter)
 
 Usage (from project root):
-    python scripts/generate_dpo_pairs.py \\
+    python scripts/dpo/generate_dpo_pairs.py \\
         --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/dpo_pairs/train_t0.8 \\
@@ -25,20 +25,20 @@ Usage (from project root):
         --temperature  0.8
 
     # Step 1 — generate samples + T=0 labels (SFT 8B):
-    python scripts/generate_dpo_pairs.py \\
+    python scripts/dpo/generate_dpo_pairs.py \\
         --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/dpo_pairs/train_t0.8
 
     # Step 2 — judge-only pass with a larger model (SFT not loaded):
-    python scripts/generate_dpo_pairs.py \\
+    python scripts/dpo/generate_dpo_pairs.py \\
         --from-samples data/dpo_pairs/train_t0.8/parsed_samples.jsonl \\
         --intent-filter \\
         --judge-model  meta-llama/Llama-3.1-70B-Instruct \\
         --output-dir   data/dpo_pairs/train_t0.8_filtered
 
     # Single-pass with same model as judge (original behaviour):
-    python scripts/generate_dpo_pairs.py \\
+    python scripts/dpo/generate_dpo_pairs.py \\
         --from-samples data/dpo_pairs/train_t0.8/parsed_samples.jsonl \\
         --intent-filter \\
         --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
