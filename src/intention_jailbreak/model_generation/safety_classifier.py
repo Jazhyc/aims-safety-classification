@@ -15,7 +15,7 @@ from vllm.lora.request import LoRARequest
 from vllm.sampling_params import StructuredOutputsParams as GuidedDecodingParams
 from transformers import AutoTokenizer
 
-from intention_jailbreak.model_generation.prompt_templates import build_student_prompt
+from intention_jailbreak.model_generation.prompt_templates import build_student_prompt, build_student_messages
 from .safety_prompts import (
     BINARY_LABELS,
     CLASSIFICATION_SYSTEM_PROMPT,
@@ -629,7 +629,14 @@ def run_finetuned_reasoning_classification(
     """Distilled model (MODE D): prompt -> Reasoning: ... / Prompt harm: harmful|safe."""
     print("\n=== Running: Fine-tuned Reasoning Classification (reasoning + harm) ===")
     examples = list(test_dataset)
-    prompts = [build_student_prompt(ex["prompt"], with_intent=False) + "\n" for ex in examples]
+    prompts = [
+        tokenizer.apply_chat_template(
+            build_student_messages(ex["prompt"], condition="no_intent"),
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        for ex in examples
+    ]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     results = []
@@ -664,7 +671,14 @@ def run_finetuned_reasoning_human_intent(
     Intent is from human-annotated ground truth."""
     print("\n=== Running: Fine-tuned Reasoning Human Intent (reasoning + human intent + harm) ===")
     examples = list(test_dataset)
-    prompts = [build_student_prompt(ex["prompt"], with_intent=True) + "\n" for ex in examples]
+    prompts = [
+        tokenizer.apply_chat_template(
+            build_student_messages(ex["prompt"], condition="human_intent"),
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        for ex in examples
+    ]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     results = []
@@ -703,7 +717,14 @@ def run_finetuned_reasoning_synthetic_intent(
     """
     print("\n=== Running: Fine-tuned Reasoning Synthetic Intent (reasoning + synthetic intent + harm) ===")
     examples = list(test_dataset)
-    prompts = [build_student_prompt(ex["prompt"], condition="synthetic_intent") + "\n" for ex in examples]
+    prompts = [
+        tokenizer.apply_chat_template(
+            build_student_messages(ex["prompt"], condition="synthetic_intent"),
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        for ex in examples
+    ]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     results = []

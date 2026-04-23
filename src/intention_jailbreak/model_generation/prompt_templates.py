@@ -10,7 +10,8 @@ loads them once at import time and exposes:
   - OUTPUT_FORMAT_WITH_INTENT
   - TEACHER_GROUND_TRUTH   -- dict with keys 'without_intent' and 'with_intent'
 
-  - build_student_prompt(user_prompt, with_intent) -- full input for the student model
+  - build_student_messages(user_prompt, condition) -- [system, user] messages for tokenizer.apply_chat_template
+  - build_student_prompt(user_prompt, with_intent) -- legacy raw-text input for the student model
 
 Safety classifier prompts (from safety_classifier section):
   - CLASSIFICATION_SYSTEM_PROMPT
@@ -96,6 +97,31 @@ DPO_JUDGE_INTENT_SYSTEM_PROMPT: str = _dpo.get("judge_intent_system_prompt", "")
 
 
 # ── Public helpers ────────────────────────────────────────────────────────────
+
+def build_student_messages(user_prompt: str, condition: str | None = None) -> list[dict]:
+    """
+    Build chat messages for the student model: [system, user].
+
+    Pass the returned list to tokenizer.apply_chat_template(..., add_generation_prompt=True)
+    to get the formatted prompt string for both training and inference.
+    """
+    if condition is None:
+        condition = "no_intent"
+
+    if condition == "no_intent":
+        preamble = PREAMBLE_NO_INTENT
+        output_format = OUTPUT_FORMAT_NO_INTENT
+    elif condition in ("synthetic_intent", "human_intent"):
+        preamble = PREAMBLE
+        output_format = OUTPUT_FORMAT_WITH_INTENT
+    else:
+        raise ValueError(f"Unknown condition: {condition!r}. Valid: 'no_intent', 'synthetic_intent', 'human_intent'")
+
+    return [
+        {"role": "system", "content": f"{preamble}\n\n{output_format}"},
+        {"role": "user", "content": user_prompt},
+    ]
+
 
 def build_student_prompt(user_prompt: str, condition: str | None = None, with_intent: bool | None = None) -> str:
     """

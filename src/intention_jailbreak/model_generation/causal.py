@@ -183,7 +183,7 @@ from vllm.lora.request import LoRARequest
 from .preprocessing import preprocess_data
 from .data_utils import align_tokenizer_with_model, apply_binary_harm_mapping
 from .evaluate_generations import compute_and_log_metrics
-from .prompt_templates import build_student_prompt
+from .prompt_templates import build_student_prompt, build_student_messages
 from .artifacts import artifact_exists, upload_adapter
 
 try:
@@ -834,11 +834,17 @@ def run_causal_flow(config):
         # Each example already has a reasoning field and a binary harm_label;
         # intent is available for the "with_intent" condition.
 
+        # Load tokenizer early so create_prompt_completion can apply the chat template.
+        # setup_causal_model_and_tokenizer will load it again (from cache) for training.
+        _early_tok = AutoTokenizer.from_pretrained(model_name)
+
         def create_prompt_completion(examples):
-            # Use the shared student prompt template: preamble + taxonomy + output format
-            # so that training and inference see the same input structure.
             prompts = [
-                build_student_prompt(p, condition=rt_condition) + "\n"
+                _early_tok.apply_chat_template(
+                    build_student_messages(p, condition=rt_condition),
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
                 for p in examples["prompt"]
             ]
             intents = examples["intent"] if with_intent else [None] * len(examples["prompt"])

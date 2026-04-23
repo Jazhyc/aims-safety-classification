@@ -66,13 +66,13 @@ INTENT_CONDITIONS = {"synthetic_intent", "human_intent"}
 
 # ── Dataset helpers ───────────────────────────────────────────────────────────
 
-def build_val_dataset(val_traces_path: str, condition: str):
+def build_val_dataset(val_traces_path: str, condition: str, tokenizer):
     """
     Load val traces and format prompts with the condition-correct template.
     Mirrors the create_prompt_completion logic in run_causal_flow.
     """
     from intention_jailbreak.model_generation.causal import load_reasoning_traces_dataset
-    from intention_jailbreak.model_generation.prompt_templates import build_student_prompt
+    from intention_jailbreak.model_generation.prompt_templates import build_student_messages
 
     data_cfg = {
         "reasoning_traces_path": val_traces_path,
@@ -82,7 +82,11 @@ def build_val_dataset(val_traces_path: str, condition: str):
 
     def apply_template(examples):
         prompts = [
-            build_student_prompt(p, condition=condition) + "\n"
+            tokenizer.apply_chat_template(
+                build_student_messages(p, condition=condition),
+                tokenize=False,
+                add_generation_prompt=True,
+            )
             for p in examples["prompt"]
         ]
         return {"prompt": prompts}
@@ -286,13 +290,16 @@ def main():
             enforce_eager=True,
         )
 
+        from transformers import AutoTokenizer as _AutoTokenizer
+        _tok = _AutoTokenizer.from_pretrained(student_hf)
+
         for r in runs:
             print(f"\n  Run: {r['run_name']}  condition={r['condition']}")
             print(f"  Adapter: {r['adapter_path'].name}")
             print(f"  Current val_harm_f1: {r['current_f1']}")
 
             try:
-                val_dataset = build_val_dataset(r["val_traces_path"], r["condition"])
+                val_dataset = build_val_dataset(r["val_traces_path"], r["condition"], _tok)
                 print(f"  Val examples: {len(val_dataset)}")
             except Exception as e:
                 print(f"  [error] Could not load val dataset: {e}")

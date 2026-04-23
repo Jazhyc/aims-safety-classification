@@ -92,7 +92,7 @@ Human-annotated intents for ~1.7K WildGuardMix prompts. Loaded via HuggingFace `
 | `src/intention_jailbreak/model_generation/causal.py` | `train`/`validation`/`test` |
 | `src/intention_jailbreak/model_generation/seq2seq.py` | `train`/`validation`/`test` |
 | `src/intention_jailbreak/model_generation/bert_harm.py` | `train`/`validation`/`test` |
-| `scripts/dpo/generate_dpo_pairs.py` *(do not touch)* | still uses manual split |
+| `scripts/dpo/generate_dpo_pairs.py` | still uses manual split |
 
 ## Reasoning Traces
 
