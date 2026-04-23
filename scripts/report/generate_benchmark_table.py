@@ -191,11 +191,11 @@ def get_hardcoded_results() -> Dict[str, Dict[str, float]]:
         },
         # SFT Generation (from baselines_results.ipynb plot)
         "SFT Generation": {
-            "wildguardmix": 0.863,
-            "xstest": 0.900,
-            "aegis": 0.797,
-            "toxic_chat": 0.655,
-            "openai_moderation": 0.737,
+            "wildguardmix": 0.856,
+            "xstest": 0.908,
+            "aegis": 0.803,
+            "toxic_chat": 0.664,
+            "openai_moderation": 0.728,
         },
         # Best Distillation: Gemma-3-12B (student) with GPT-OSS-120B (teacher)
         "Distillation": {

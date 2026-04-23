@@ -57,7 +57,7 @@ TEST_EVAL_TEMPLATE = "scripts/hpc/distillation/distillation_eval_template.sh"
 OOD_VAL_TEMPLATE  = "scripts/hpc/distillation/distillation_ood_eval_template.sh"
 
 OOD_VAL_BASE_DIR  = PROJECT_ROOT / "data" / "safety_experiment" / "ood_validation" / "distillation"
-OOD_DATASET_DIRS  = ["toxic_chat", "aegis"]
+OOD_DATASET_DIRS  = ["toxic-chat", "aegis"]
 
 # ── Sweep dimensions (must match submit_distillation_sweep.py) ────────────────
 

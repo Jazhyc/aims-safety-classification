@@ -45,7 +45,7 @@ TEST_EVAL_TEMPLATE = "scripts/hpc/sft/sft_eval_template.sh"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 OOD_VAL_BASE_DIR = PROJECT_ROOT / "data" / "safety_experiment" / "ood_validation" / "sft"
-OOD_DATASET_DIRS = ["toxic_chat", "aegis"]
+OOD_DATASET_DIRS = ["toxic-chat", "aegis"]
 
 
 # ── W&B helpers ───────────────────────────────────────────────────────────────
