@@ -50,7 +50,7 @@ intention-jailbreak/
 |---|---|---|
 | `scripts/baselines/` | Intent classification & generation baselines | `eval_sft_baseline.py`, `eval_intent_generation.py`, `compare_models.py`, `train_generator.py` |
 | `scripts/distillation/` | Teacher reasoning trace generation & student distillation | `generate_reasoning_traces.py`, `run_distillation_pipeline.py`, `check_trace_leakage.py` |
-| `scripts/` (root) | Multi-condition safety/harm classification + misc | `eval_safety_classifier.py`, `intent_diversity_analysis.py` |
+| `scripts/` (root) | Multi-condition safety/harm classification + misc | `eval_safety_classifier.py` |
 | `scripts/` (root, **do not modify**) | DPO + contrastive preference learning | `train_dpo.py`, `train_contrastive.py`, `generate_dpo_pairs.py`, `balance_dpo_pairs.py`, `compare_dpo_sweep.py`, `run_preference_pipeline.py` |
 | `scripts/dataset_generation/` | ModernBERT classifier used to generate the annotation set via uncertainty filtering | `train.py`, `evaluate_test.py`, `plot_calibration.py` |
 | `scripts/dataset_analysis/` | One-off scripts for analysing the annotated dataset | `generate_harm_labels.py`, `synthetic_comparison.py`, `evaluate_harm_predictions.py` |

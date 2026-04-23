@@ -23,6 +23,7 @@ Safety classifier prompts (from safety_classifier section):
   - WILDGUARD_TEMPLATE
   - SAFEGUARD_SYSTEM_PROMPT
   - GUARDREASONER_INSTRUCT
+  - DPO_JUDGE_INTENT_SYSTEM_PROMPT
 
 The student model (fine-tuned via reasoning distillation) receives the same
 context at both training time (causal.py) and evaluation time (safety_experiment.py).
@@ -88,6 +89,10 @@ SAFEGUARD_SYSTEM_PROMPT: str = _sc["safeguard_system_prompt"].strip()
 GUARDREASONER_INSTRUCT: str = _sc["guardreasoner_instruct"].strip()
 SHIELDGEMMA_PROMPT: str = _sc["shieldgemma_prompt"].strip()
 NEMOTRON_SAFETY_PROMPT: str = _sc["nemotron_safety_prompt"].strip()
+
+# ── DPO prompts (used by scripts/dpo/generate_dpo_pairs.py) ───────────────────
+_dpo = _t.get("dpo", {})
+DPO_JUDGE_INTENT_SYSTEM_PROMPT: str = _dpo.get("judge_intent_system_prompt", "").strip()
 
 
 # ── Public helpers ────────────────────────────────────────────────────────────

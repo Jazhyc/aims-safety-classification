@@ -5,12 +5,14 @@ Pipeline per training prompt:
   1. chosen  = "Intent: {gold_intent}; Harm: {gold_harm}"
                (ground-truth from human annotation — never a model sample)
   2. Sample k completions at T=temperature from the SFT model.
-  3. Parse the intent text from each sample (the T=0.8 harm label is discarded).
+  3. Parse intent + sampled harm from each T=0.8 sample.
   4. Re-classify each generated intent at T=0 (greedy) for a reliable harm label.
   5. rejected = samples whose T=0 harm label ≠ gold_harm.
 
 Outputs (all in --output-dir):
-  parsed_samples.jsonl      — raw k samples per prompt (for debugging / re-use)
+  samples_t0p8_raw.jsonl        — raw k samples per prompt parsed at T=0.8 (intent + harm_t08)
+  samples_t0p8_relabel_t0.jsonl — same samples after deterministic T=0 harm relabeling
+  parsed_samples.jsonl          — canonical latest checkpoint (kept for compatibility)
   dpo_pairs.jsonl           — one (chosen, rejected) pair per prompt
   dpo_pairs_decent.jsonl    — same but decent_match also counts as rejected (--intent-filter only)
   summary.json              — run statistics
@@ -48,86 +50,30 @@ Usage (from project root):
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from intention_jailbreak.model_generation.parsing import (
+    extract_intent_and_harm,
+    normalize_harm_label_binary,
+)
+from intention_jailbreak.model_generation.prompt_templates import (
+    DPO_JUDGE_INTENT_SYSTEM_PROMPT,
+)
 from intention_jailbreak.model_generation.preprocessing import preprocess_data
 from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
 
 
 # ---------------------------------------------------------------------------
-# Helpers shared with intent_diversity_analysis.py
+# Helpers
 # ---------------------------------------------------------------------------
 
-def norm_harm(s: str) -> Optional[str]:
-    """Normalise a raw harm string to 'harmful' | 'safe' | None."""
-    s = s.strip().lower().rstrip(".").rstrip(";")
-    if s in {"safe", "harmless", "benign", "s", "b"}:
-        return "safe"
-    if s in {"harmful", "unsafe", "dangerous", "h", "u"}:
-        return "harmful"
-    return None
-
-
-def extract_intent_and_harm(raw_text: str):
-    """
-    Parse intent and harm from a model completion.
-
-    Handles all formats observed in prediction files:
-      "Intent: <text>; Harm: harmful"
-      "Intent: <text>\\nHarm: harmful"
-      "Intent: <text> Harm: harmful"
-      "<text>; Harm: harmful"        (missing Intent: prefix)
-      "<text>"                       (intent only)
-
-    Returns (intent_str, harm_str) — either may be None.
-    """
-    text = raw_text.strip()
-
-    # Strip thinking tags (reasoning models)
-    if "<think>" in text and "</think>" in text:
-        text = text.split("</think>")[-1].strip()
-
-    # Pattern 1: "Intent: <text>; Harm: <label>"
-    m = re.search(r"Intent:\s*(.+?);\s*Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
-    if m:
-        return m.group(1).strip(), norm_harm(m.group(2))
-
-    # Pattern 2: "Intent: <text>\nHarm: <label>"
-    m = re.search(r"Intent:\s*(.+?)\n\s*Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
-    if m:
-        return m.group(1).strip().rstrip("."), norm_harm(m.group(2))
-
-    # Pattern 3: "Intent: <text> Harm: <label>"
-    m = re.search(r"Intent:\s*(.+?)\s+Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
-    if m:
-        return m.group(1).strip().rstrip("."), norm_harm(m.group(2))
-
-    # Pattern 4: "<text>; Harm: <label>"
-    m = re.search(r"^(.+?);\s*Harm:\s*(\S+)", text, re.IGNORECASE | re.DOTALL)
-    if m:
-        return m.group(1).strip(), norm_harm(m.group(2))
-
-    # Pattern 5: Harm label after semicolon or newline
-    m = re.search(r"[;\n]\s*Harm:\s*(\S+)", text, re.IGNORECASE)
-    if m:
-        harm = norm_harm(m.group(1))
-        intent = text[:m.start()].strip()
-        intent = re.sub(r"^Intent:\s*", "", intent, flags=re.IGNORECASE).strip()
-        return intent if intent else text, harm
-
-    # Pattern 6: Intent only — no harm label
-    m = re.search(r"^Intent:\s*(.+?)(?:;|$)", text, re.IGNORECASE | re.DOTALL)
-    if m:
-        return m.group(1).strip(), None
-
-    return text if text else None, None
+RAW_SAMPLES_FILENAME = "samples_t0p8_raw.jsonl"
+RELABELED_SAMPLES_FILENAME = "samples_t0p8_relabel_t0.jsonl"
+CANONICAL_SAMPLES_FILENAME = "parsed_samples.jsonl"  # backward-compatible alias
 
 
 def classify_intents_llm_t0(llm, lora_request, intent_texts: list) -> list:
@@ -151,7 +97,7 @@ def classify_intents_llm_t0(llm, lora_request, intent_texts: list) -> list:
         skip_special_tokens=True,
     )
     outputs = llm.generate(prompts, params, lora_request=lora_request)
-    return [norm_harm(o.outputs[0].text.strip()) for o in outputs]
+    return [normalize_harm_label_binary(o.outputs[0].text.strip(), safe_label="safe") for o in outputs]
 
 
 def _all_have_t0(parsed: list) -> bool:
@@ -222,46 +168,10 @@ def judge_intent_similarity_llm(llm, triples: list, tokenizer) -> list:
     """
     from vllm import SamplingParams
 
-    system = (
-        "You are a safety annotator evaluating whether a generated intent correctly "
-        "describes what a user is trying to accomplish in a given prompt.\n\n"
-        "You will be shown:\n"
-        "  1. The user prompt\n"
-        "  2. A reference intent — a human-written example of a valid annotation\n"
-        "  3. A generated intent — the annotation you must evaluate\n\n"
-        "The reference intent shows you what a correct annotation looks like. "
-        "Your task is to decide whether the generated intent is also a valid annotation "
-        "of the same prompt from a safety perspective.\n\n"
-        "Prompts may relate to the following harm categories:\n"
-        "  Privacy: Sensitive Information (Org), Private Information (Individual), Copyright\n"
-        "  Misinformation: False/Misleading Information, Material Harm by Misinformation\n"
-        "  Harmful language: Social Stereotypes & Discrimination, Violence & Physical Harm, "
-        "Toxic Language & Hate Speech, Sexual Content\n"
-        "  Malicious uses: Cyberattacks, Fraud & Illegal Activities, "
-        "Encouraging Unethical/Unsafe Actions, Mental Health & Over-Reliance\n\n"
-        "Focus only on safety-relevant accuracy: does the generated intent correctly "
-        "identify what the user is actually trying to do, and whether that goal is "
-        "harmful or benign? The wording does not need to match the reference exactly.\n\n"
-        "Answer 'bad_match' if the generated intent:\n"
-        "  - Misrepresents the user's actual goal (e.g. frames a harmful request as benign, "
-        "or flags a benign request as harmful)\n"
-        "  - Omits a safety-critical detail that changes the harm assessment — for example: "
-        "drops that the target is a minor, removes an explicit harmful method, hides the "
-        "harm category (e.g. says 'create content' instead of 'create sexual content'), "
-        "or strips the harmful framing entirely\n"
-        "  - Contains a major factual contradiction about what the prompt is requesting\n\n"
-        "Answer 'good_match' if the generated intent correctly captures the safety-relevant "
-        "purpose of the prompt, even if phrased differently from the reference. "
-        "When the reference and generated intents point to the same underlying harmful goal, "
-        "label it good_match — even if the wording differs in specificity, explicitness, or brevity.\n\n"
-        "Answer 'decent_match' if the generated intent is not wrong but misses a nuance "
-        "that the reference captures more precisely, without changing the overall harm assessment.\n\n"
-        "Reply with exactly one word: good_match, decent_match, or bad_match."
-    )
     prompts = [
         tokenizer.apply_chat_template(
             [
-                {"role": "system", "content": system},
+                {"role": "system", "content": DPO_JUDGE_INTENT_SYSTEM_PROMPT},
                 {"role": "user", "content": (
                     f"User prompt:\n{prompt}\n\n"
                     f"Reference intent (valid example):\n{gold}\n\n"
@@ -313,77 +223,50 @@ def load_jsonl(path: str) -> list:
     return records
 
 
-# ---------------------------------------------------------------------------
-# Main pipeline
-# ---------------------------------------------------------------------------
-
-def run(args):
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # ------------------------------------------------------------------
-    # 1. Load dataset — HF train split OR custom JSONL
-    # ------------------------------------------------------------------
-    from vllm import LLM, SamplingParams
-    from vllm.lora.request import LoRARequest
-    from transformers import AutoTokenizer
-
+def _load_examples(args) -> list[dict]:
+    """Load prompt examples from HF train split or a custom JSONL."""
     if args.from_jsonl:
         print(f"\n=== Loading prompts from {args.from_jsonl} ===")
         with open(args.from_jsonl, encoding="utf-8") as fh:
             raw_records = [json.loads(line) for line in fh if line.strip()]
         examples = [
-            {"id": r["id"], "prompt": r["prompt"],
-             "intent": None, "Annotator Harm": r["gold_harm"]}
+            {"id": r["id"], "prompt": r["prompt"], "intent": None, "Annotator Harm": r["gold_harm"]}
             for r in raw_records
         ]
         print(f"  Loaded {len(examples)} prompts")
-    else:
-        print("\n=== Loading dataset (HF train split) ===")
-        train_dataset = preprocess_data(split="train")
-        train_dataset = apply_binary_harm_mapping(train_dataset, binary_harm_mapping=True)
-        print(f"  Train: {len(train_dataset)}")
-        examples = list(train_dataset)
+        return examples
 
-    # ------------------------------------------------------------------
-    # 2. Early-load parsed samples (if provided) to decide which models
-    #    are actually needed before allocating GPU memory.
-    # ------------------------------------------------------------------
-    all_parsed = None
-    if args.from_samples:
-        print(f"\n=== Loading parsed samples from {args.from_samples} ===")
-        all_parsed = load_jsonl(args.from_samples)
+    print("\n=== Loading dataset (HF train split) ===")
+    train_dataset = preprocess_data(split="train")
+    train_dataset = apply_binary_harm_mapping(train_dataset, binary_harm_mapping=True)
+    print(f"  Train: {len(train_dataset)}")
+    return list(train_dataset)
+
+
+def _resolve_local_model_path(model_id: str) -> str:
+    """Resolve a HF model ID to a local snapshot path when available."""
+    from huggingface_hub import snapshot_download
+
+    try:
+        return snapshot_download(model_id, local_files_only=True)
+    except Exception:
+        return model_id
+
+
+def _load_models(args, all_parsed: Optional[list]):
+    """Load SFT and/or judge models depending on cached data and flags."""
+    from vllm import LLM
+    from vllm.lora.request import LoRARequest
+    from transformers import AutoTokenizer
 
     judge_model_id = args.judge_model or args.base_model
-
-    # SFT model needed for: (a) T=0.8 generation, (b) T=0 reclassification.
-    # Skip both when resuming from a file that already has harm_t0 on every sample.
     need_sft = (all_parsed is None) or (not _all_have_t0(all_parsed))
-
-    # Judge model needed when --intent-filter is active AND verdicts aren't cached.
-    # Verdicts are cached when parsed_samples.jsonl was saved after a previous judge
-    # run (judge_verdict field present on all qualifying samples).
-    need_judge = args.intent_filter and (
-        all_parsed is None or not _all_have_judge_verdict(all_parsed)
-    )
-
-    # Use a separate instance when judge differs from base model — they can't
-    # share GPU memory (e.g. 70B judge alongside 8B SFT).
+    need_judge = args.intent_filter and (all_parsed is None or not _all_have_judge_verdict(all_parsed))
     use_separate_judge = need_judge and (judge_model_id != args.base_model)
-
-    # Resolve model IDs to local snapshot paths so vLLM skips HF API calls.
-    # Compute nodes have no reliable internet; passing a local path avoids
-    # the list_repo_files / model_info network requests entirely.
-    from huggingface_hub import snapshot_download as _snap
-    def _local(model_id: str) -> str:
-        try:
-            return _snap(model_id, local_files_only=True)
-        except Exception:
-            return model_id  # already a local path or fallback to ID
 
     llm = lora_request = None
     if need_sft:
-        local_base = _local(args.base_model)
+        local_base = _resolve_local_model_path(args.base_model)
         print(f"\n=== Loading SFT model ===")
         print(f"  Base model   : {args.base_model}")
         print(f"  Local path   : {local_base}")
@@ -405,7 +288,7 @@ def run(args):
     judge_llm = judge_tokenizer = None
     if need_judge:
         if use_separate_judge:
-            local_judge = _local(judge_model_id)
+            local_judge = _resolve_local_model_path(judge_model_id)
             print(f"\n=== Loading judge model ===")
             print(f"  Judge model  : {judge_model_id}")
             print(f"  Local path   : {local_judge}")
@@ -414,16 +297,14 @@ def run(args):
                 model=local_judge,
                 gpu_memory_utilization=0.90,
                 max_model_len=4096,
-                dtype="auto",        # auto-detects quantization (e.g. W4A16)
+                dtype="auto",
                 enforce_eager=True,
                 tensor_parallel_size=args.judge_tensor_parallel,
             )
         elif llm is not None:
-            judge_llm = llm   # reuse already-loaded SFT model (no LoRA for judging)
+            judge_llm = llm
         else:
-            # Same model as base but SFT wasn't loaded (harm_t0 already cached).
-            # Load the base model without LoRA for judging.
-            local_judge = _local(judge_model_id)
+            local_judge = _resolve_local_model_path(judge_model_id)
             print(f"\n=== Loading judge model (base, no LoRA) ===")
             print(f"  Judge model  : {judge_model_id}")
             print(f"  Local path   : {local_judge}")
@@ -435,101 +316,281 @@ def run(args):
                 enforce_eager=True,
                 tensor_parallel_size=args.judge_tensor_parallel,
             )
-        # Resolve model ID to local snapshot path before loading the tokenizer.
-        # AutoTokenizer calls is_base_mistral() which makes a network request
-        # that fails under HF_HUB_OFFLINE=1. Passing a local directory path
-        # skips that check entirely.
-        from huggingface_hub import snapshot_download
-        try:
-            local_judge_path = snapshot_download(judge_model_id, local_files_only=True)
-        except Exception:
-            local_judge_path = judge_model_id  # already a local path
+
+        local_judge_path = _resolve_local_model_path(judge_model_id)
         judge_tokenizer = AutoTokenizer.from_pretrained(local_judge_path)
 
-    # ------------------------------------------------------------------
-    # 3. Generate k samples per prompt OR re-attach from loaded file
-    # ------------------------------------------------------------------
+    return judge_model_id, need_sft, need_judge, llm, lora_request, judge_llm, judge_tokenizer
+
+
+def _generate_or_attach_samples(args, examples: list[dict], all_parsed: Optional[list], llm, lora_request, output_dir: Path):
+    """Generate k samples per prompt, or re-attach examples from cached parsed samples."""
+    from vllm import SamplingParams
+
     if all_parsed is not None:
-        # Re-attach examples list in the same order
         examples = [
             {
-                "id":             d["id"],
-                "prompt":         d["prompt"],
-                "intent":         d["gold_intent"],
+                "id": d["id"],
+                "prompt": d["prompt"],
+                "intent": d["gold_intent"],
                 "Annotator Harm": d["gold_harm"],
             }
             for d in all_parsed
         ]
-    else:
-        sampling_params = SamplingParams(
-            n=args.num_samples,
-            max_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            seed=args.seed,
-            skip_special_tokens=True,
-        )
+        return examples, all_parsed
 
-        print(
-            f"\n=== Generating {args.num_samples} samples per prompt "
-            f"(T={args.temperature}) ==="
-        )
-        prompts = [f"{ex['prompt']}\n" for ex in examples]
-        outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
+    sampling_params = SamplingParams(
+        n=args.num_samples,
+        max_tokens=args.max_new_tokens,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        seed=args.seed,
+        skip_special_tokens=True,
+    )
 
-        all_parsed = []
-        n_parse_fail = 0
-        for ex, output in zip(examples, outputs):
-            samples = []
-            for completion in output.outputs:
-                raw = completion.text.strip()
-                intent, _ = extract_intent_and_harm(raw)  # discard generated harm label
-                if intent is None:
-                    n_parse_fail += 1
-                samples.append({"raw": raw, "intent": intent})
+    print(f"\n=== Generating {args.num_samples} samples per prompt (T={args.temperature}) ===")
+    prompts = [f"{ex['prompt']}\n" for ex in examples]
+    outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
-            all_parsed.append({
-                "id":          ex.get("id", ""),
-                "prompt":      ex["prompt"],
+    parsed = []
+    n_parse_fail = 0
+    for ex, output in zip(examples, outputs):
+        samples = []
+        for completion in output.outputs:
+            raw = completion.text.strip()
+            intent, sampled_harm = extract_intent_and_harm(raw)
+            if intent is None:
+                n_parse_fail += 1
+            samples.append(
+                {
+                    "raw": raw,
+                    "intent": intent,
+                    # Keep sampled T=0.8 harm for reproducibility + switch analysis vs T=0.
+                    "harm_t08": normalize_harm_label_binary(sampled_harm, safe_label="safe"),
+                }
+            )
+
+        parsed.append(
+            {
+                "id": ex.get("id", ""),
+                "prompt": ex["prompt"],
                 "gold_intent": ex.get("intent", ""),
-                "gold_harm":   ex.get("Annotator Harm"),
-                "samples":     samples,
-            })
+                "gold_harm": ex.get("Annotator Harm"),
+                "samples": samples,
+            }
+        )
 
-        print(f"  Generation parse failures: {n_parse_fail}")
-        save_jsonl(all_parsed, output_dir / "parsed_samples.jsonl")
+    print(f"  Generation parse failures: {n_parse_fail}")
+    save_jsonl(parsed, output_dir / RAW_SAMPLES_FILENAME)
+    save_jsonl(parsed, output_dir / CANONICAL_SAMPLES_FILENAME)
+    return examples, parsed
 
-    # ------------------------------------------------------------------
-    # 4. Re-classify every generated intent at T=0 for reliable labels
-    #    (skipped when resuming from a file that already has harm_t0)
-    # ------------------------------------------------------------------
-    if need_sft:
-        print("\n=== Re-classifying intents at T=0 ===")
 
-        flat_intents: list[str] = []
-        flat_idx: list[tuple[int, int]] = []   # (prompt_idx, sample_idx)
-
-        for i, d in enumerate(all_parsed):
-            for j, s in enumerate(d["samples"]):
-                if s["intent"]:
-                    flat_intents.append(s["intent"])
-                    flat_idx.append((i, j))
-
-        print(f"  Classifying {len(flat_intents)} intent texts...")
-        t0_labels = classify_intents_llm_t0(llm, lora_request, flat_intents)
-
-        for (i, j), label in zip(flat_idx, t0_labels):
-            all_parsed[i]["samples"][j]["harm_t0"] = label
-
-        assigned = sum(1 for l in t0_labels if l is not None)
-        print(f"  Labels assigned: {assigned} / {len(flat_intents)}")
-
-        # Re-save with harm_t0 populated so a subsequent judge-only pass
-        # (--from-samples --intent-filter --judge-model <large>) can skip
-        # reloading the SFT model entirely.
-        save_jsonl(all_parsed, output_dir / "parsed_samples.jsonl")
-    else:
+def _classify_harm_t0_if_needed(all_parsed: list, need_sft: bool, llm, lora_request, output_dir: Path) -> None:
+    """Populate harm_t0 labels for parsed intents if needed."""
+    if not need_sft:
         print("\n=== Skipping T=0 reclassification (harm_t0 already cached) ===")
+        return
+
+    print("\n=== Re-classifying intents at T=0 ===")
+    flat_intents: list[str] = []
+    flat_idx: list[tuple[int, int]] = []
+    for i, d in enumerate(all_parsed):
+        for j, s in enumerate(d["samples"]):
+            if s["intent"]:
+                flat_intents.append(s["intent"])
+                flat_idx.append((i, j))
+
+    print(f"  Classifying {len(flat_intents)} intent texts...")
+    t0_labels = classify_intents_llm_t0(llm, lora_request, flat_intents)
+    for (i, j), label in zip(flat_idx, t0_labels):
+        all_parsed[i]["samples"][j]["harm_t0"] = label
+
+    assigned = sum(1 for l in t0_labels if l is not None)
+    print(f"  Labels assigned: {assigned} / {len(flat_intents)}")
+    save_jsonl(all_parsed, output_dir / RELABELED_SAMPLES_FILENAME)
+    save_jsonl(all_parsed, output_dir / CANONICAL_SAMPLES_FILENAME)
+
+
+def _compute_relabel_stats(all_parsed: list[dict]) -> dict:
+    """Compute agreement/switch stats between sampled T=0.8 harm and relabeled T=0 harm."""
+    n_total_samples = 0
+    n_with_intent = 0
+    n_with_t08_harm = 0
+    n_with_t0_harm = 0
+    n_comparable = 0
+    n_switched = 0
+    n_unchanged = 0
+
+    for d in all_parsed:
+        for s in d.get("samples", []):
+            n_total_samples += 1
+            if s.get("intent"):
+                n_with_intent += 1
+            h08 = s.get("harm_t08")
+            h0 = s.get("harm_t0")
+            if h08 is not None:
+                n_with_t08_harm += 1
+            if h0 is not None:
+                n_with_t0_harm += 1
+            if h08 is not None and h0 is not None:
+                n_comparable += 1
+                if h08 != h0:
+                    n_switched += 1
+                else:
+                    n_unchanged += 1
+
+    return {
+        "n_samples_total": n_total_samples,
+        "n_samples_with_intent": n_with_intent,
+        "n_samples_with_harm_t08": n_with_t08_harm,
+        "n_samples_with_harm_t0": n_with_t0_harm,
+        "n_samples_comparable_t08_t0": n_comparable,
+        "n_harm_label_switched_t08_to_t0": n_switched,
+        "n_harm_label_unchanged_t08_to_t0": n_unchanged,
+        "pct_harm_label_switched_t08_to_t0": (100.0 * n_switched / n_comparable) if n_comparable else 0.0,
+    }
+
+
+def _build_dpo_pairs(all_parsed: list, args):
+    """Construct main and decent-variant DPO pairs plus counters."""
+    dpo_pairs = []
+    dpo_pairs_decent = []
+
+    n_no_gold = 0
+    n_no_negative = 0
+    n_no_valid = 0
+    n_intent_rejecteds = 0
+    n_intent_rejecteds_decent = 0
+
+    def _make_dpo_pair(ex_id, prompt, chosen_t, chosen_i, gold_harm, rej_list):
+        rejected = max(rej_list, key=lambda s: len(s["intent"]))
+        return {
+            "id": ex_id,
+            "prompt": prompt,
+            "gold_intent": chosen_i,
+            "gold_harm": gold_harm,
+            "chosen": chosen_t,
+            "rejected": f"Intent: {rejected['intent']}; Harm: {rejected['harm_t0']}",
+            "rejected_intent": rejected["intent"],
+            "rejected_harm": rejected["harm_t0"],
+            "n_rejecteds": len(rej_list),
+        }
+
+    for d in all_parsed:
+        gold_intent = d["gold_intent"]
+        gold_harm = d["gold_harm"]
+        prompt = d["prompt"]
+        ex_id = d["id"]
+
+        if not gold_harm:
+            n_no_gold += 1
+            continue
+
+        valid = [s for s in d["samples"] if s.get("intent") and s.get("harm_t0") is not None]
+        if not valid:
+            n_no_valid += 1
+            continue
+
+        if gold_intent:
+            chosen_intent_str = gold_intent
+            chosen_text = f"Intent: {gold_intent}; Harm: {gold_harm}"
+        else:
+            correct = [s for s in valid if s["harm_t0"] == gold_harm]
+            if not correct:
+                n_no_valid += 1
+                continue
+            best = max(correct, key=lambda s: len(s["intent"]))
+            chosen_intent_str = best["intent"]
+            chosen_text = f"Intent: {chosen_intent_str}; Harm: {gold_harm}"
+
+        hard_rejecteds = [] if args.judge_only else [s for s in valid if s["harm_t0"] != gold_harm]
+        rejecteds = hard_rejecteds
+        intent_rejecteds_decent = []
+
+        if args.intent_filter:
+            intent_rejecteds = [
+                s for s in valid if s["harm_t0"] == gold_harm and s.get("same_intent") is False
+            ]
+            if intent_rejecteds:
+                n_intent_rejecteds += len(intent_rejecteds)
+                rejecteds = rejecteds + intent_rejecteds
+
+            intent_rejecteds_decent = [
+                s
+                for s in valid
+                if s["harm_t0"] == gold_harm and s.get("judge_verdict") in {"bad_match", "decent_match"}
+            ]
+            if intent_rejecteds_decent:
+                n_intent_rejecteds_decent += len(intent_rejecteds_decent)
+
+        if not rejecteds:
+            n_no_negative += 1
+            continue
+
+        dpo_pairs.append(
+            _make_dpo_pair(ex_id, prompt, chosen_text, chosen_intent_str, gold_harm, rejecteds)
+        )
+
+        if args.intent_filter:
+            rejecteds_decent = hard_rejecteds + intent_rejecteds_decent
+            if rejecteds_decent:
+                dpo_pairs_decent.append(
+                    _make_dpo_pair(
+                        ex_id, prompt, chosen_text, chosen_intent_str, gold_harm, rejecteds_decent
+                    )
+                )
+
+    counts = {
+        "n_no_gold": n_no_gold,
+        "n_no_negative": n_no_negative,
+        "n_no_valid": n_no_valid,
+        "n_intent_rejecteds": n_intent_rejecteds,
+        "n_intent_rejecteds_decent": n_intent_rejecteds_decent,
+    }
+    return dpo_pairs, dpo_pairs_decent, counts
+
+
+# ---------------------------------------------------------------------------
+# Main pipeline
+# ---------------------------------------------------------------------------
+
+def run(args):
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    examples = _load_examples(args)
+    all_parsed = None
+    if args.from_samples:
+        print(f"\n=== Loading parsed samples from {args.from_samples} ===")
+        all_parsed = load_jsonl(args.from_samples)
+
+    (
+        judge_model_id,
+        need_sft,
+        need_judge,
+        llm,
+        lora_request,
+        judge_llm,
+        judge_tokenizer,
+    ) = _load_models(args, all_parsed)
+
+    examples, all_parsed = _generate_or_attach_samples(
+        args=args,
+        examples=examples,
+        all_parsed=all_parsed,
+        llm=llm,
+        lora_request=lora_request,
+        output_dir=output_dir,
+    )
+
+    _classify_harm_t0_if_needed(
+        all_parsed=all_parsed,
+        need_sft=need_sft,
+        llm=llm,
+        lora_request=lora_request,
+        output_dir=output_dir,
+    )
 
     # ------------------------------------------------------------------
     # 4b. Intent filter: judge correct-label samples for intent validity
@@ -579,7 +640,7 @@ def run(args):
 
         # Persist judge_verdict in parsed_samples.jsonl so --union-judge-dir
         # can load it without re-running the judge.
-        save_jsonl(all_parsed, output_dir / "parsed_samples.jsonl")
+        save_jsonl(all_parsed, output_dir / CANONICAL_SAMPLES_FILENAME)
 
         # Build inspection examples
         for (i, j), (prompt, gold_intent, gen_intent) in zip(filter_idx, filter_triples):
@@ -631,107 +692,12 @@ def run(args):
     # 5. Build DPO pairs
     # ------------------------------------------------------------------
     print("\n=== Building pairs ===")
-
-    dpo_pairs       = []   # one chosen / one rejected per prompt
-    # Decent variant (only populated when --intent-filter): bad_match + decent_match
-    dpo_pairs_decent = []
-
-    n_no_gold      = 0   # prompts with missing gold harm
-    n_no_negative  = 0   # prompts where all samples agree with gold
-    n_no_valid     = 0   # prompts where no sample parsed correctly
-    n_intent_rejecteds       = 0
-    n_intent_rejecteds_decent = 0
-
-    for d in all_parsed:
-        gold_intent = d["gold_intent"]
-        gold_harm   = d["gold_harm"]
-        prompt      = d["prompt"]
-        ex_id       = d["id"]
-
-        if not gold_harm:
-            n_no_gold += 1
-            continue
-
-        # Only keep samples with both intent and a T=0 label
-        valid = [
-            s for s in d["samples"]
-            if s.get("intent") and s.get("harm_t0") is not None
-        ]
-
-        if not valid:
-            n_no_valid += 1
-            continue
-
-        if gold_intent:
-            # Annotated data: chosen is always the ground-truth annotation.
-            chosen_text = f"Intent: {gold_intent}; Harm: {gold_harm}"
-            chosen_intent_str = gold_intent
-        else:
-            # WildGuardMix (no gold annotation): pick the longest T=0-correct sample
-            # as a synthetic chosen. If none agree with gold_harm, skip this prompt.
-            correct = [s for s in valid if s["harm_t0"] == gold_harm]
-            if not correct:
-                n_no_valid += 1
-                continue
-            best = max(correct, key=lambda s: len(s["intent"]))
-            chosen_intent_str = best["intent"]
-            chosen_text = f"Intent: {chosen_intent_str}; Harm: {gold_harm}"
-
-        # Hard rejecteds: generated samples whose T=0 label disagrees with gold.
-        # Skipped in --judge-only mode (signal is intent mismatch, not label error).
-        if args.judge_only:
-            rejecteds = []
-        else:
-            rejecteds = [s for s in valid if s["harm_t0"] != gold_harm]
-
-        # Intent filter: correct-label samples judged as different intent.
-        # Two variants are always built when --intent-filter is active:
-        #   main (bad only)  : same_intent=False  ↔  judge_verdict == "bad_match"
-        #   decent variant   : judge_verdict in {"bad_match", "decent_match"}
-        if args.intent_filter:
-            intent_rejecteds = [
-                s for s in valid
-                if s["harm_t0"] == gold_harm and s.get("same_intent") is False
-            ]
-            if intent_rejecteds:
-                n_intent_rejecteds += len(intent_rejecteds)
-                rejecteds = rejecteds + intent_rejecteds
-
-            intent_rejecteds_decent = [
-                s for s in valid
-                if s["harm_t0"] == gold_harm
-                and s.get("judge_verdict") in {"bad_match", "decent_match"}
-            ]
-            if intent_rejecteds_decent:
-                n_intent_rejecteds_decent += len(intent_rejecteds_decent)
-
-        if not rejecteds:
-            n_no_negative += 1
-            continue
-
-        def _make_dpo_pair(chosen_t, chosen_i, rej_list):
-            rejected = max(rej_list, key=lambda s: len(s["intent"]))
-            return {
-                "id":              ex_id,
-                "prompt":          prompt,
-                "gold_intent":     chosen_i,
-                "gold_harm":       gold_harm,
-                "chosen":          chosen_t,
-                "rejected":        f"Intent: {rejected['intent']}; Harm: {rejected['harm_t0']}",
-                "rejected_intent": rejected["intent"],
-                "rejected_harm":   rejected["harm_t0"],
-                "n_rejecteds":     len(rej_list),
-            }
-
-        # ── Main condition pairs
-        dpo_pairs.append(_make_dpo_pair(chosen_text, chosen_intent_str, rejecteds))
-
-        # ── Decent variant pairs (only when --intent-filter)
-        if args.intent_filter:
-            hard = [] if args.judge_only else [s for s in valid if s["harm_t0"] != gold_harm]
-            rejecteds_decent = hard + intent_rejecteds_decent
-            if rejecteds_decent:
-                dpo_pairs_decent.append(_make_dpo_pair(chosen_text, chosen_intent_str, rejecteds_decent))
+    dpo_pairs, dpo_pairs_decent, counts = _build_dpo_pairs(all_parsed, args)
+    n_no_gold = counts["n_no_gold"]
+    n_no_negative = counts["n_no_negative"]
+    n_no_valid = counts["n_no_valid"]
+    n_intent_rejecteds = counts["n_intent_rejecteds"]
+    n_intent_rejecteds_decent = counts["n_intent_rejecteds_decent"]
 
     # ------------------------------------------------------------------
     # 6. Save outputs
@@ -748,6 +714,40 @@ def run(args):
     # ------------------------------------------------------------------
     n_total = len(all_parsed)
     n_dpo   = len(dpo_pairs)
+    relabel_stats = _compute_relabel_stats(all_parsed)
+
+    artifacts = {
+        "raw_t0p8_samples": {
+            "path": str(output_dir / RAW_SAMPLES_FILENAME),
+            "records": len(all_parsed),
+            "exists": (output_dir / RAW_SAMPLES_FILENAME).exists(),
+        },
+        "relabel_t0_samples": {
+            "path": str(output_dir / RELABELED_SAMPLES_FILENAME),
+            "records": len(all_parsed),
+            "exists": (output_dir / RELABELED_SAMPLES_FILENAME).exists(),
+        },
+        "canonical_samples": {
+            "path": str(output_dir / CANONICAL_SAMPLES_FILENAME),
+            "records": len(all_parsed),
+            "exists": (output_dir / CANONICAL_SAMPLES_FILENAME).exists(),
+        },
+        "dpo_pairs": {
+            "path": str(output_dir / "dpo_pairs.jsonl"),
+            "records": len(dpo_pairs),
+            "exists": (output_dir / "dpo_pairs.jsonl").exists(),
+        },
+        "dpo_pairs_decent": {
+            "path": str(output_dir / "dpo_pairs_decent.jsonl") if args.intent_filter else None,
+            "records": len(dpo_pairs_decent) if args.intent_filter else 0,
+            "exists": (output_dir / "dpo_pairs_decent.jsonl").exists() if args.intent_filter else False,
+        },
+        "intent_filter_examples": {
+            "path": str(output_dir / "intent_filter_examples.jsonl") if args.intent_filter else None,
+            "records": len(filter_examples) if args.intent_filter else 0,
+            "exists": (output_dir / "intent_filter_examples.jsonl").exists() if args.intent_filter else False,
+        },
+    }
 
     summary = {
         "adapter_path":    args.adapter_path,
@@ -764,6 +764,8 @@ def run(args):
         "n_skipped_no_neg":   n_no_negative,
         "n_dpo_pairs":        n_dpo,
         "n_dpo_pairs_decent": len(dpo_pairs_decent),
+        "relabel_stats":      relabel_stats,
+        "artifacts":          artifacts,
     }
 
     summary_path = output_dir / "summary.json"
@@ -779,6 +781,12 @@ def run(args):
     print(f"Skipped (no gold)  : {n_no_gold}")
     print(f"Skipped (no valid) : {n_no_valid}")
     print(f"Skipped (no neg)   : {n_no_negative}")
+    print(
+        "Relabel switches   : "
+        f"{relabel_stats['n_harm_label_switched_t08_to_t0']} / "
+        f"{relabel_stats['n_samples_comparable_t08_t0']} "
+        f"({relabel_stats['pct_harm_label_switched_t08_to_t0']:.1f}%)"
+    )
     if args.intent_filter:
         print(f"Intent rejecteds   : {n_intent_rejecteds}  (bad_match only)")
         print(f"Intent rejecteds   : {n_intent_rejecteds_decent}  (bad+decent match)")
