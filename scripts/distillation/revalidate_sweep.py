@@ -66,11 +66,12 @@ INTENT_CONDITIONS = {"synthetic_intent", "human_intent"}
 
 # ── Dataset helpers ───────────────────────────────────────────────────────────
 
-def build_val_dataset(val_traces_path: str, condition: str, tokenizer):
+def build_val_dataset(val_traces_path: str, condition: str, tokenizer, test_traces_path: str | None = None):
     """
-    Load val traces and format prompts with the condition-correct template.
+    Load val (and optionally test) traces and format prompts with the condition-correct template.
     Mirrors the create_prompt_completion logic in run_causal_flow.
     """
+    from datasets import concatenate_datasets
     from intention_jailbreak.model_generation.causal import load_reasoning_traces_dataset
     from intention_jailbreak.model_generation.prompt_templates import build_student_messages
 
@@ -79,6 +80,9 @@ def build_val_dataset(val_traces_path: str, condition: str, tokenizer):
         "reasoning_traces_condition": condition,
     }
     raw = load_reasoning_traces_dataset(data_cfg)
+    if test_traces_path:
+        test_data_cfg = {**data_cfg, "reasoning_traces_path": test_traces_path}
+        raw = concatenate_datasets([raw, load_reasoning_traces_dataset(test_data_cfg)])
 
     def apply_template(examples):
         prompts = [
@@ -174,6 +178,7 @@ def collect_runs(
         if not val_traces_path:
             print(f"    [skip] {run.name}: no reasoning_traces_val_path in config")
             continue
+        test_traces_path = run.config.get("data", {}).get("reasoning_traces_test_path")
 
         # Resolve adapter path
         adapter_path_str = run.summary.get("adapter_path")
@@ -196,16 +201,17 @@ def collect_runs(
         current_f1 = run.summary.get("val_harm_f1")
 
         results.append({
-            "run_id":          run.id,
-            "run_path":        f"{project}/{run.id}",
-            "run_name":        run.name,
-            "condition":       run_condition,
-            "val_traces_path": val_traces_path,
-            "adapter_path":    adapter_path,
-            "student_hf":      student_hf,
-            "lora_rank":       lora_rank,
-            "current_f1":      current_f1,
-            "_api_run":        run,
+            "run_id":            run.id,
+            "run_path":          f"{project}/{run.id}",
+            "run_name":          run.name,
+            "condition":         run_condition,
+            "val_traces_path":   val_traces_path,
+            "test_traces_path":  test_traces_path,
+            "adapter_path":      adapter_path,
+            "student_hf":        student_hf,
+            "lora_rank":         lora_rank,
+            "current_f1":        current_f1,
+            "_api_run":          run,
         })
 
     return results
@@ -299,7 +305,7 @@ def main():
             print(f"  Current val_harm_f1: {r['current_f1']}")
 
             try:
-                val_dataset = build_val_dataset(r["val_traces_path"], r["condition"], _tok)
+                val_dataset = build_val_dataset(r["val_traces_path"], r["condition"], _tok, r.get("test_traces_path"))
                 print(f"  Val examples: {len(val_dataset)}")
             except Exception as e:
                 print(f"  [error] Could not load val dataset: {e}")

@@ -858,9 +858,16 @@ def run_causal_flow(config):
         train_dataset = raw_train.map(create_prompt_completion, batched=True)
 
         val_traces_path = data_cfg.get("reasoning_traces_val_path")
+        test_traces_path = data_cfg.get("reasoning_traces_test_path")
         if val_traces_path:
             val_data_cfg = {**data_cfg, "reasoning_traces_path": val_traces_path}
             raw_val = load_reasoning_traces_dataset(val_data_cfg)
+            if test_traces_path:
+                from datasets import concatenate_datasets
+                test_data_cfg = {**data_cfg, "reasoning_traces_path": test_traces_path}
+                raw_test = load_reasoning_traces_dataset(test_data_cfg)
+                raw_val = concatenate_datasets([raw_val, raw_test])
+                print(f"  Combined val+test traces: {len(raw_val)} examples")
         else:
             print("WARNING: data.reasoning_traces_val_path not set — falling back to train split for validation")
             raw_val = raw_train
@@ -892,7 +899,9 @@ def run_causal_flow(config):
 
         print("Loading dataset splits from Hub...")
         train_dataset = _load_and_format("train")
-        val_dataset = _load_and_format("validation")
+        from datasets import concatenate_datasets
+        val_dataset = concatenate_datasets([_load_and_format("validation"), _load_and_format("test")])
+        print(f"  Combined val+test: {len(val_dataset)} examples")
 
         extra_train_path = data_cfg.get("extra_train_data")
         if extra_train_path:

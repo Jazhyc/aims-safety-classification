@@ -17,6 +17,7 @@ source .venv/bin/activate
 #   CONDITION          — "without_intent" or "with_intent"
 #   TRACES_TRAIN_PATH  — path to train/parsed_results.json
 #   TRACES_VAL_PATH    — path to validation/parsed_results.json
+#   TRACES_TEST_PATH   — path to test/parsed_results.json (combined with val for early stopping)
 #   RUN_NAME           — unique identifier for filesystem paths
 #   WANDB_PROJECT      — W&B project (one per student x teacher combo)
 #   WANDB_RUN_NAME     — W&B run name within the project (condition + lr + version)
@@ -32,6 +33,7 @@ python scripts/baselines/train_generator.py \
     training.skip_vllm_eval=false \
     data.reasoning_traces_path="${TRACES_TRAIN_PATH}" \
     data.reasoning_traces_val_path="${TRACES_VAL_PATH}" \
+    data.reasoning_traces_test_path="${TRACES_TEST_PATH}" \
     data.reasoning_traces_condition="${CONDITION}" \
     paths.output_dir="data/train_results/distillation-sweep/${RUN_NAME}" \
     paths.logs_dir="logs/distillation-sweep/${RUN_NAME}" \

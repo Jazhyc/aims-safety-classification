@@ -116,14 +116,15 @@ def build_export_vars(
     wandb_run_name = f"{cond_slug}--lr{lr_str}--{TRACES_VERSION}"
 
     return {
-        "STUDENT_MODEL":     student_hf,
-        "LEARNING_RATE":     lr,
-        "CONDITION":         condition,
-        "TRACES_TRAIN_PATH": f"{TRACES_BASE_DIR}/{teacher_slug}/train/parsed_results.json",
-        "TRACES_VAL_PATH":   f"{TRACES_BASE_DIR}/{teacher_slug}/validation/parsed_results.json",
-        "RUN_NAME":          run_name,
-        "WANDB_PROJECT":     wandb_project,
-        "WANDB_RUN_NAME":    wandb_run_name,
+        "STUDENT_MODEL":      student_hf,
+        "LEARNING_RATE":      lr,
+        "CONDITION":          condition,
+        "TRACES_TRAIN_PATH":  f"{TRACES_BASE_DIR}/{teacher_slug}/train/parsed_results.json",
+        "TRACES_VAL_PATH":    f"{TRACES_BASE_DIR}/{teacher_slug}/validation/parsed_results.json",
+        "TRACES_TEST_PATH":   f"{TRACES_BASE_DIR}/{teacher_slug}/test/parsed_results.json",
+        "RUN_NAME":           run_name,
+        "WANDB_PROJECT":      wandb_project,
+        "WANDB_RUN_NAME":     wandb_run_name,
     }
 
 
