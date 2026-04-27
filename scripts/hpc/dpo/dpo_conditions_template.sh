@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=dpo-cond
-#SBATCH --time=10:00:00
+#SBATCH --time=02:00:00
 #SBATCH --mem=32GB
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=a100:1
