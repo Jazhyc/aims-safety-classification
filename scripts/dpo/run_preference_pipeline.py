@@ -4,9 +4,7 @@ End-to-end preference-learning pipeline:
   Step 1 – generate_dpo_pairs.py   : sample model outputs, build DPO pairs
   Step 2 – balance_dpo_pairs.py    : undersample to 50/50 harm distribution
   Step 3 – train_dpo.py            : DPO fine-tuning on top of the SFT adapter
-  Step 4 – eval_sft_baseline.py    : evaluate SFT adapter on held-out test set
-  Step 5 – eval_safety_classifier.py: evaluate DPO adapter on all benchmarks
-  Step 6 – compare_models.py       : side-by-side comparison table
+  Step 4 – eval_safety_classifier.py: evaluate DPO adapter on all benchmarks
 
 Caching: each step is skipped if its output file already exists.
 Pass --force to re-run all steps, or --force-from=N to re-run from step N onward.
@@ -14,7 +12,7 @@ Pass --force to re-run all steps, or --force-from=N to re-run from step N onward
 Usage (from project root):
     python scripts/dpo/run_preference_pipeline.py
     python scripts/dpo/run_preference_pipeline.py --force
-    python scripts/dpo/run_preference_pipeline.py --force-from 4
+    python scripts/dpo/run_preference_pipeline.py --force-from 3
     python scripts/dpo/run_preference_pipeline.py --skip-steps 2,3
     python scripts/dpo/run_preference_pipeline.py --wandb-project intention-jailbreak
 """
@@ -25,7 +23,8 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SFT_ADAPTER = "Jazhyc/llama-3.1-8b-sft-generation"
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +73,8 @@ def step1_generate_pairs(args) -> bool:
         "--max-model-len",  str(args.max_model_len),
         "--seed",           str(args.seed),
     ]
+    if args.adapter_revision:
+        cmd += ["--adapter-revision", args.adapter_revision]
     if args.from_samples:
         cmd += ["--from-samples", args.from_samples]
     if args.intent_filter:
@@ -120,31 +121,21 @@ def step3_train_dpo(args) -> bool:
         "--wandb-project",        args.wandb_project,
         "--wandb-run",            f"dpo-beta{args.dpo_beta}",
     ]
+    if args.adapter_revision:
+        cmd += ["--adapter-revision", args.adapter_revision]
     if args.harmful_weight != 1.0:
         cmd += ["--harmful-weight", str(args.harmful_weight)]
+    if args.val_pairs_path:
+        cmd += ["--val-pairs-path", args.val_pairs_path]
     return run(cmd, "Step 3 – DPO training")
 
 
-def step4_eval_sft(args) -> bool:
-    pred_path = Path(args.sft_pred_dir) / "test_predictions.jsonl"
-    if _cached(pred_path):
-        print(f"\n[SKIP] Step 4 – SFT predictions already exist at {pred_path}")
-        return True
-    cmd = [
-        sys.executable, "scripts/baselines/eval_sft_baseline.py",
-        "--adapter-path",   args.adapter_path,
-        "--base-model",     args.base_model,
-        "--output-dir",     args.sft_pred_dir,
-    ]
-    return run(cmd, "Step 4 – Evaluate SFT baseline")
-
-
-def step5_eval_dpo(args) -> bool:
+def step4_eval_dpo(args) -> bool:
     pred_dir = Path(args.dpo_output_dir) / "predictions"
     model_slug = args.base_model.replace("/", "_")
     pred_path = pred_dir / "annotated_intents" / f"{model_slug}_finetuned_generation.jsonl"
     if _cached(pred_path):
-        print(f"\n[SKIP] Step 5 – DPO predictions already exist at {pred_path}")
+        print(f"\n[SKIP] Step 4 – DPO predictions already exist at {pred_path}")
         return True
     adapter_path = args.dpo_output_dir + "_adapter"
     cmd = [
@@ -154,19 +145,7 @@ def step5_eval_dpo(args) -> bool:
         f"paths.output_dir={pred_dir}",
         f"model.name={args.base_model}",
     ]
-    return run(cmd, "Step 5 – Evaluate DPO adapter")
-
-
-def step6_compare(args) -> bool:
-    sft_dir = str(args.sft_pred_dir)
-    dpo_dir = str(Path(args.dpo_output_dir) / "predictions")
-    cmd = [
-        sys.executable, "scripts/baselines/compare_models.py",
-        "--sft",       sft_dir,
-        "--dpo-hard",  dpo_dir,
-        "--no-intent",
-    ]
-    return run(cmd, "Step 6 – Compare SFT vs DPO")
+    return run(cmd, "Step 4 – Evaluate DPO adapter")
 
 
 # ---------------------------------------------------------------------------
@@ -174,38 +153,49 @@ def step6_compare(args) -> bool:
 # ---------------------------------------------------------------------------
 
 STEPS = {
-    1: step1_generate_pairs,
-    2: step2_balance_pairs,
-    3: step3_train_dpo,
-    4: step4_eval_sft,
-    5: step5_eval_dpo,
-    6: step6_compare,
+    1: ("generate pairs", step1_generate_pairs),
+    2: ("balance pairs", step2_balance_pairs),
+    3: ("train DPO", step3_train_dpo),
+    4: ("eval DPO", step4_eval_dpo),
 }
 
-STEP_NAMES = {
-    1: "generate pairs",
-    2: "balance pairs",
-    3: "train DPO",
-    4: "eval SFT",
-    5: "eval DPO",
-    6: "compare models",
-}
+VALID_STEPS = set(STEPS)
+
+
+def _parse_skip_steps(skip_steps: str) -> set[int]:
+    """Parse and validate comma-separated step numbers."""
+    if not skip_steps.strip():
+        return set()
+    parsed = {int(s) for s in skip_steps.split(",") if s.strip()}
+    invalid = parsed - VALID_STEPS
+    if invalid:
+        raise SystemExit(f"Invalid --skip-steps values: {sorted(invalid)}. Valid steps: {sorted(VALID_STEPS)}")
+    return parsed
 
 
 def main():
     args = parse_args()
 
     # Build the set of steps to run
-    skip = set(int(s) for s in args.skip_steps.split(",") if s.strip()) if args.skip_steps else set()
+    skip = _parse_skip_steps(args.skip_steps)
+    if args.force_from is not None and args.force_from not in VALID_STEPS:
+        raise SystemExit(f"Invalid --force-from value: {args.force_from}. Valid steps: {sorted(VALID_STEPS)}")
     # --force starts from step 2 to protect pairs; --force-pairs or --force-from 1
     # are the only ways to regenerate pairs intentionally.
-    force_from = args.force_from if args.force_from else (1 if args.force_pairs else (2 if args.force else None))
+    if args.force_from:
+        force_from = args.force_from
+    elif args.force_pairs:
+        force_from = 1
+    elif args.force:
+        force_from = 2
+    else:
+        force_from = None
 
     results = {}
 
-    for step_num, step_fn in STEPS.items():
+    for step_num, (step_name, step_fn) in STEPS.items():
         if step_num in skip:
-            print(f"\n[SKIP] Step {step_num} – {STEP_NAMES[step_num]} (--skip-steps)")
+            print(f"\n[SKIP] Step {step_num} – {step_name} (--skip-steps)")
             results[step_num] = "skipped"
             continue
 
@@ -230,8 +220,9 @@ def main():
     print("  Pipeline summary")
     print(f"{'='*70}")
     for step_num, status in results.items():
+        step_name = STEPS[step_num][0]
         icon = "✓" if status == "ok" else ("–" if status == "skipped" else "✗")
-        print(f"  {icon}  Step {step_num}: {STEP_NAMES[step_num]}  [{status}]")
+        print(f"  {icon}  Step {step_num}: {step_name}  [{status}]")
     print()
 
 
@@ -241,10 +232,8 @@ def _clear_cache(step_num: int, args) -> None:
         1: [Path(args.pairs_dir) / "dpo_pairs.jsonl"],
         2: [Path(args.balanced_pairs_dir) / "dpo_pairs.jsonl"],
         3: [Path(args.dpo_output_dir + "_adapter") / "adapter_config.json"],
-        4: [Path(args.sft_pred_dir) / "test_predictions.jsonl"],
-        5: [Path(args.dpo_output_dir) / "predictions" / "annotated_intents" /
+        4: [Path(args.dpo_output_dir) / "predictions" / "annotated_intents" /
             f"{args.base_model.replace('/', '_')}_finetuned_generation.jsonl"],
-        6: [Path("data/comparison/comparison_summary.json")],
     }
     for path in sentinels.get(step_num, []):
         if path.exists():
@@ -260,7 +249,10 @@ def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     # Paths
-    p.add_argument("--adapter-path",       default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
+    p.add_argument("--adapter-path",       default=DEFAULT_SFT_ADAPTER,
+                   help="SFT adapter source (local path or Hugging Face repo ID).")
+    p.add_argument("--adapter-revision",   default=None,
+                   help="Optional HF revision (branch/tag/commit) for --adapter-path when using a repo ID.")
     p.add_argument("--base-model",         default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--pairs-dir",          default="data/dpo_pairs/train_t0.8")
     p.add_argument("--pairs-filename",     default="dpo_pairs.jsonl",
@@ -268,7 +260,6 @@ def parse_args():
                         "Use 'dpo_pairs_decent.jsonl' for bad+decent match conditions.")
     p.add_argument("--balanced-pairs-dir", default="data/dpo_pairs/train_t0.8_balanced")
     p.add_argument("--dpo-output-dir",     default="trained_models/causal/llama-dpo")
-    p.add_argument("--sft-pred-dir",       default="data/predictions/sft_baseline")
 
     # Pair generation
     p.add_argument("--temperature",  type=float, default=0.8)
@@ -292,6 +283,9 @@ def parse_args():
     p.add_argument("--batch-size",      type=int,   default=2)
     p.add_argument("--grad-accum",      type=int,   default=8)
     p.add_argument("--dpo-beta",        type=float, default=0.1)
+    p.add_argument("--val-pairs-path",  type=str, default=None,
+                   help="Optional explicit validation DPO pairs passed to train_dpo.py. "
+                        "If unset, train_dpo.py splits --pairs-path by --val-split.")
     p.add_argument("--harmful-weight",  type=float, default=1.0,
                    help="Up-weight harmful pairs in DPO loss to correct class imbalance "
                         "(use n_safe/n_harmful, e.g. 1.4 for unbalanced annotated pairs). "
@@ -302,7 +296,7 @@ def parse_args():
 
     # Pipeline control
     p.add_argument("--force",         action="store_true",
-                   help="Re-run steps 2–5 (training + eval), ignoring cached outputs. "
+                   help="Re-run steps 2–4 (training + eval), ignoring cached outputs. "
                         "Does NOT regenerate pairs (step 1) — use --force-pairs for that.")
     p.add_argument("--force-pairs",   action="store_true",
                    help="Force regeneration of DPO pairs (step 1). "

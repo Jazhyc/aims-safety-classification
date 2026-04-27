@@ -22,7 +22,8 @@ from pathlib import Path
 
 
 def main(args):
-    pairs = [json.loads(l) for l in open(args.input, encoding="utf-8") if l.strip()]
+    with open(args.input, encoding="utf-8") as fh:
+        pairs = [json.loads(l) for l in fh if l.strip()]
 
     safe    = [p for p in pairs if p["gold_harm"] == "safe"]
     harmful = [p for p in pairs if p["gold_harm"] == "harmful"]

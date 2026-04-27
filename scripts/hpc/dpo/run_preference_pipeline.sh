@@ -20,24 +20,22 @@ echo "  Use --force-from=N to re-run from a specific step"
 echo "======================================================================"
 
 python scripts/dpo/run_preference_pipeline.py \
-    --adapter-path           trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \
+    --adapter-path           Jazhyc/llama-3.1-8b-sft-generation \
     --base-model             meta-llama/Llama-3.1-8B-Instruct \
     --pairs-dir              data/dpo_pairs/train_t0.8 \
     --dpo-output-dir         trained_models/causal/llama-dpo \
-    --contrastive-output-dir trained_models/causal/llama-contrastive \
     --sft-pred-dir           data/predictions/sft_baseline \
     --epochs                 1 \
     --learning-rate          5e-5 \
     --batch-size             2 \
     --grad-accum             8 \
     --dpo-beta               0.5 \
-    --kl-beta                0.5 \
     --temperature            0.8 \
     --k-samples              5 \
     --seed                   22 \
-    --wandb-project          dpo-contrastive-pipeline \
+    --wandb-project          dpo-pipeline \
     --force-from             5 \
-    --skip-steps             4,7
+    --skip-steps             4
 
 echo ""
 echo "======================================================================"

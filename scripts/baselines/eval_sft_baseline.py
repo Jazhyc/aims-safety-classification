@@ -13,7 +13,7 @@ Outputs:
 
 Usage (from project root):
     python scripts/eval_sft_baseline.py \\
-        --adapter-path models/sft/hyperparam_sweep/lr_5e-05_e_5_adapter \\
+        --adapter-path Jazhyc/llama-3.1-8b-sft-generation \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/predictions/sft_baseline
 """
@@ -28,11 +28,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from datasets import load_dataset
 from intention_jailbreak.model_generation.preprocessing import preprocess_data
 from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
+from intention_jailbreak.model_generation.prompt_templates import GENERATION_SYSTEM_PROMPT
 from intention_jailbreak.model_generation.safety_classifier import map_harm_to_binary
 from sklearn.metrics import classification_report, f1_score, accuracy_score
 
 import re
 from typing import Optional
+
+DEFAULT_SFT_ADAPTER = "Jazhyc/llama-3.1-8b-sft-generation"
+
+
+def _resolve_local_adapter_path(adapter_ref: str, revision: Optional[str] = None) -> str:
+    """Resolve adapter source (local path or HF repo) to a local directory."""
+    p = Path(adapter_ref).expanduser()
+    if p.exists():
+        return str(p.resolve())
+
+    from huggingface_hub import snapshot_download
+    try:
+        return snapshot_download(adapter_ref, revision=revision)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to resolve adapter '{adapter_ref}'"
+            + (f" at revision '{revision}'" if revision else "")
+            + f": {e}"
+        ) from e
 
 
 def _norm_harm(s: str) -> Optional[str]:
@@ -50,6 +70,23 @@ def _norm_harm(s: str) -> Optional[str]:
     if any(w in s for w in ("safe", "harmless", "benign", "unharmful")):
         return "safe"
     return None
+
+
+def _apply_chat_template(tokenizer, messages: list[dict]) -> str:
+    """Apply chat template with optional enable_thinking=False for Qwen3 models."""
+    try:
+        return tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            enable_thinking=False,
+        )
+    except TypeError:
+        return tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+        )
 
 
 def extract_intent_and_harm(raw_text: str):
@@ -142,9 +179,18 @@ def load_benchmark(name: str):
         raise ValueError(f"Unknown benchmark: {name}")
 
 
-def run_eval(llm, lora_request, sampling_params, examples, harm_col, pred_path: Path, dataset_name: str):
+def run_eval(llm, lora_request, sampling_params, tokenizer, examples, harm_col, pred_path: Path, dataset_name: str):
     """Run inference on examples, save predictions, print metrics."""
-    prompts = [f"{ex['prompt']}\n" for ex in examples]
+    prompts = [
+        _apply_chat_template(
+            tokenizer,
+            [
+                {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
+                {"role": "user", "content": ex["prompt"]},
+            ],
+        )
+        for ex in examples
+    ]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     pred_path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +229,9 @@ def run_eval(llm, lora_request, sampling_params, examples, harm_col, pred_path: 
 def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--adapter-path", type=str,
-                   default="models/sft/hyperparam_sweep/lr_5e-05_e_5_adapter")
+                   default=DEFAULT_SFT_ADAPTER)
+    p.add_argument("--adapter-revision", type=str, default=None,
+                   help="Optional HF revision (branch/tag/commit) for --adapter-path.")
     p.add_argument("--base-model",   type=str,
                    default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--output-dir",   type=str,
@@ -195,6 +243,7 @@ def parse_args():
 def main():
     args = parse_args()
     output_dir = Path(args.output_dir)
+    local_adapter = _resolve_local_adapter_path(args.adapter_path, args.adapter_revision)
 
     # ── Dataset ───────────────────────────────────────────────────────────
     print("=== Loading test dataset ===")
@@ -205,14 +254,16 @@ def main():
     # ── vLLM ─────────────────────────────────────────────────────────────
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
+    from transformers import AutoTokenizer
 
     print(f"\n=== Loading model with vLLM ===")
     print(f"  Base   : {args.base_model}")
     print(f"  Adapter: {args.adapter_path}")
+    print(f"  Local  : {local_adapter}")
 
     llm = LLM(
         model=args.base_model,
-        tokenizer=args.adapter_path,
+        tokenizer=local_adapter,
         enable_lora=True,
         max_lora_rank=64,
         max_loras=1,
@@ -222,7 +273,8 @@ def main():
         dtype="bfloat16",
         enforce_eager=True,
     )
-    lora_request = LoRARequest("sft_lora", 1, args.adapter_path)
+    tokenizer = AutoTokenizer.from_pretrained(local_adapter)
+    lora_request = LoRARequest("sft_lora", 1, local_adapter)
     sampling_params = SamplingParams(
         max_tokens=args.max_new_tokens,
         temperature=0.0,
@@ -234,7 +286,7 @@ def main():
     print("\n=== Loading annotated intents test split ===")
     test_dataset = preprocess_data(split="test")
     test_dataset = apply_binary_harm_mapping(test_dataset, binary_harm_mapping=True)
-    run_eval(llm, lora_request, sampling_params,
+    run_eval(llm, lora_request, sampling_params, tokenizer,
              list(test_dataset), "Annotator Harm",
              output_dir / "test_predictions.jsonl",
              "Annotated Intents")
@@ -243,7 +295,7 @@ def main():
     print("\n=== Loading WildGuardTest ===")
     wgt_examples, wgt_harm_col = load_benchmark("wildguardtest")
     print(f"WildGuardTest: {len(wgt_examples)} examples")
-    run_eval(llm, lora_request, sampling_params,
+    run_eval(llm, lora_request, sampling_params, tokenizer,
              wgt_examples, wgt_harm_col,
              output_dir / "wildguardtest_predictions.jsonl",
              "WildGuardTest")
@@ -252,7 +304,7 @@ def main():
     print("\n=== Loading XSTest ===")
     xst_examples, xst_harm_col = load_benchmark("xstest")
     print(f"XSTest: {len(xst_examples)} examples")
-    run_eval(llm, lora_request, sampling_params,
+    run_eval(llm, lora_request, sampling_params, tokenizer,
              xst_examples, xst_harm_col,
              output_dir / "xstest_predictions.jsonl",
              "XSTest")
@@ -261,7 +313,7 @@ def main():
     print("\n=== Loading ToxicChat ===")
     tc_examples, tc_harm_col = load_benchmark("toxic-chat")
     print(f"ToxicChat: {len(tc_examples)} examples")
-    run_eval(llm, lora_request, sampling_params,
+    run_eval(llm, lora_request, sampling_params, tokenizer,
              tc_examples, tc_harm_col,
              output_dir / "toxic_chat_predictions.jsonl",
              "ToxicChat")
@@ -270,7 +322,7 @@ def main():
     print("\n=== Loading AEGIS 2 ===")
     aegis_examples, aegis_harm_col = load_benchmark("aegis")
     print(f"AEGIS 2: {len(aegis_examples)} examples")
-    run_eval(llm, lora_request, sampling_params,
+    run_eval(llm, lora_request, sampling_params, tokenizer,
              aegis_examples, aegis_harm_col,
              output_dir / "aegis_predictions.jsonl",
              "AEGIS 2")
@@ -279,7 +331,7 @@ def main():
     print("\n=== Loading OpenAI Moderation ===")
     oai_examples, oai_harm_col = load_benchmark("openai-moderation")
     print(f"OpenAI Moderation: {len(oai_examples)} examples")
-    run_eval(llm, lora_request, sampling_params,
+    run_eval(llm, lora_request, sampling_params, tokenizer,
              oai_examples, oai_harm_col,
              output_dir / "openai_moderation_predictions.jsonl",
              "OpenAI Moderation")

@@ -31,7 +31,7 @@ echo "Output dir  : ${OUTPUT_DIR}"
 
 python scripts/dpo/generate_dpo_pairs.py \
     --from-samples data/dpo_pairs/train_t0.8/parsed_samples.jsonl \
-    --adapter-path "${PROJECTS_DIR}/trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter" \
+    --adapter-path "Jazhyc/llama-3.1-8b-sft-generation" \
     --base-model   meta-llama/Llama-3.1-8B-Instruct \
     --judge-model  "${JUDGE_MODEL}" \
     --intent-filter \

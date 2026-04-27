@@ -35,7 +35,7 @@ fi
 # Shared defaults (override via sbatch --export)
 # ---------------------------------------------------------------------------
 BASE_MODEL="${BASE_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
-BASE_SFT_ADAPTER="${BASE_SFT_ADAPTER:-trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter}"
+BASE_SFT_ADAPTER="${BASE_SFT_ADAPTER:-Jazhyc/llama-3.1-8b-sft-generation}"
 JUDGE_MODEL="${JUDGE_MODEL:-openai/gpt-oss-120b}"
 # GPT-OSS 120B is natively 4-bit quantized; fits on a single RTX 6000 Pro (96 GB VRAM)
 JUDGE_TENSOR_PARALLEL="${JUDGE_TENSOR_PARALLEL:-1}"

@@ -116,7 +116,7 @@ def parse_args() -> argparse.Namespace:
     # ── Model ──────────────────────────────────────────────────────────────
     p.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--base-sft-adapter",
-                   default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
+                   default="Jazhyc/llama-3.1-8b-sft-generation")
     p.add_argument("--judge", choices=list(JUDGE_PRESETS), default=None, metavar="PRESET",
                    help=f"Judge preset — sets model, GPU type, and tensor parallelism in one flag. "
                         f"Choices: {', '.join(JUDGE_PRESETS)}. "

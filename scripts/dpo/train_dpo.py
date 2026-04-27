@@ -15,7 +15,7 @@ Data format (dpo_pairs.jsonl):
 Usage (from project root):
     python scripts/dpo/train_dpo.py \\
         --pairs-path     data/dpo_pairs/train_t0.8/dpo_pairs.jsonl \\
-        --adapter-path   trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
+        --adapter-path   Jazhyc/llama-3.1-8b-sft-generation \\
         --base-model     meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir     trained_models/causal/llama-dpo \\
         --beta           0.1
@@ -34,10 +34,12 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import torch
 import wandb
 from datasets import Dataset
-from peft import LoraConfig, PeftModel, prepare_model_for_kbit_training
+from peft import PeftModel, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import torch.nn as nn
 from trl import DPOConfig, DPOTrainer
+
+DEFAULT_SFT_ADAPTER = "Jazhyc/llama-3.1-8b-sft-generation"
 
 
 # ---------------------------------------------------------------------------
@@ -88,18 +90,36 @@ class WeightedDPOTrainer(DPOTrainer):
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from intention_jailbreak.training import set_all_seeds, print_gpu_info
 from intention_jailbreak.model_generation.parsing import extract_intent_and_harm
+from intention_jailbreak.model_generation.prompt_templates import GENERATION_SYSTEM_PROMPT
 
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_dpo_dataset(pairs_path: str, prompt_suffix: str = "\n",
+def _apply_chat_template(tokenizer, messages: list[dict]) -> str:
+    """Apply chat template with optional enable_thinking=False for Qwen3 models."""
+    try:
+        return tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            enable_thinking=False,
+        )
+    except TypeError:
+        return tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+        )
+
+
+def load_dpo_dataset(pairs_path: str, tokenizer,
                      include_gold_harm: bool = False) -> Dataset:
     """
     Load dpo_pairs.jsonl and return a HuggingFace Dataset with columns:
       prompt, chosen, rejected  (and optionally gold_harm for weighted loss)
-    The prompt is formatted with the same trailing newline used during SFT.
+    The prompt is formatted with the model chat template used for SFT inference.
     """
     records = []
     with open(pairs_path, encoding="utf-8") as f:
@@ -109,7 +129,13 @@ def load_dpo_dataset(pairs_path: str, prompt_suffix: str = "\n",
                 continue
             d = json.loads(line)
             rec = {
-                "prompt":   d["prompt"] + prompt_suffix,
+                "prompt":   _apply_chat_template(
+                    tokenizer,
+                    [
+                        {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
+                        {"role": "user", "content": d["prompt"]},
+                    ],
+                ),
                 "chosen":   d["chosen"],
                 "rejected": d["rejected"],
             }
@@ -137,13 +163,77 @@ def _bnb_config():
     )
 
 
-def load_policy_model(base_model: str, adapter_path: str, tokenizer):
+def _resolve_local_adapter_path(adapter_ref: str, revision: str | None = None) -> str:
+    """Resolve adapter source (local path or HF repo) to a local directory."""
+    p = Path(adapter_ref).expanduser()
+    if p.exists():
+        return str(p.resolve())
+
+    from huggingface_hub import snapshot_download
+    try:
+        return snapshot_download(adapter_ref, revision=revision)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to resolve adapter '{adapter_ref}'"
+            + (f" at revision '{revision}'" if revision else "")
+            + f": {e}"
+        ) from e
+
+
+def _load_base_tokenizer(base_model: str):
+    """Load tokenizer from local HF cache snapshot for base_model when possible."""
+    import os as _os
+
+    # Resolve local snapshot path to avoid network calls (is_base_mistral check).
+    # HF_HUB_CACHE takes priority (set in the SLURM template); fall back to
+    # HF_HOME/hub, then the standard ~/.cache/huggingface/hub default.
+    hf_hub_cache = _os.environ.get(
+        "HF_HUB_CACHE",
+        _os.path.join(
+            _os.environ.get("HF_HOME", _os.path.expanduser("~/.cache/huggingface")),
+            "hub",
+        ),
+    )
+    model_id = base_model.replace("/", "--")
+    snapshots = _os.path.join(hf_hub_cache, f"models--{model_id}", "snapshots")
+    tok_path = base_model
+    if _os.path.isdir(snapshots):
+        # Pick the newest snapshot that actually has tokenizer assets.
+        # Some cache snapshots can be incomplete (e.g., interrupted downloads).
+        for snap in sorted(_os.listdir(snapshots), reverse=True):
+            candidate = _os.path.join(snapshots, snap)
+            if not _os.path.isdir(candidate):
+                continue
+            if _os.path.exists(_os.path.join(candidate, "tokenizer.json")) or _os.path.exists(
+                _os.path.join(candidate, "tokenizer.model")
+            ):
+                tok_path = candidate
+                break
+    # use_fast=True avoids instantiating LlamaTokenizer (slow/sentencepiece)
+    # which fails for Llama 3.x models that have no tokenizer.model file.
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(tok_path, local_files_only=True, use_fast=True)
+    except (TypeError, OSError, ValueError):
+        # Fallback: let HF resolve from model id within the explicit cache dir.
+        tokenizer = AutoTokenizer.from_pretrained(
+            base_model,
+            cache_dir=hf_hub_cache,
+            local_files_only=True,
+            use_fast=True,
+        )
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+
+def load_policy_model(base_model: str, adapter_path: str, attn_implementation: str):
     """Load base model in 4-bit and attach the SFT LoRA adapter (trainable)."""
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         quantization_config=_bnb_config(),
         device_map="auto",
-        attn_implementation="sdpa",
+        attn_implementation=attn_implementation,
     )
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
@@ -154,13 +244,13 @@ def load_policy_model(base_model: str, adapter_path: str, tokenizer):
     return model
 
 
-def load_ref_model(base_model: str, adapter_path: str):
+def load_ref_model(base_model: str, adapter_path: str, attn_implementation: str):
     """Load base model in 4-bit and attach the SFT LoRA adapter (frozen)."""
     ref = AutoModelForCausalLM.from_pretrained(
         base_model,
         quantization_config=_bnb_config(),
         device_map="auto",
-        attn_implementation="sdpa",
+        attn_implementation=attn_implementation,
     )
     ref = PeftModel.from_pretrained(ref, adapter_path, is_trainable=False)
     ref.eval()
@@ -175,6 +265,7 @@ def load_ref_model(base_model: str, adapter_path: str):
 def train(args):
     set_all_seeds(args.seed)
     print_gpu_info()
+    local_adapter = _resolve_local_adapter_path(args.adapter_path, args.adapter_revision)
 
     # ── Weights & Biases ──────────────────────────────────────────────────
     wandb.init(
@@ -183,7 +274,10 @@ def train(args):
         config={
             "base_model":    args.base_model,
             "adapter_path":  args.adapter_path,
+            "adapter_revision": args.adapter_revision,
+            "adapter_path_resolved": local_adapter,
             "pairs_path":    args.pairs_path,
+            "val_pairs_path": args.val_pairs_path,
             "beta":          args.beta,
             "loss_type":     args.loss_type,
             "label_smoothing": args.label_smoothing,
@@ -198,61 +292,28 @@ def train(args):
         },
     )
 
+    # ── Tokenizer ─────────────────────────────────────────────────────────
+    tokenizer = _load_base_tokenizer(args.base_model)
+
     # ── Data ──────────────────────────────────────────────────────────────
     use_weighted = args.harmful_weight > 1.0
-    dataset = load_dpo_dataset(args.pairs_path, include_gold_harm=use_weighted)
-
-    split = dataset.train_test_split(test_size=args.val_split, seed=args.seed)
-    train_dataset = split["train"]
-    val_dataset   = split["test"]
+    train_dataset = load_dpo_dataset(args.pairs_path, tokenizer, include_gold_harm=use_weighted)
+    if args.val_pairs_path:
+        val_dataset = load_dpo_dataset(args.val_pairs_path, tokenizer, include_gold_harm=use_weighted)
+        print(f"Using explicit validation pairs from {args.val_pairs_path}")
+    else:
+        split = train_dataset.train_test_split(test_size=args.val_split, seed=args.seed)
+        train_dataset = split["train"]
+        val_dataset   = split["test"]
+        print(
+            "No --val-pairs-path provided; validation set was sampled from training DPO pairs "
+            f"(val_split={args.val_split})."
+        )
     print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
 
-    # ── Tokenizer ─────────────────────────────────────────────────────────
-    # Resolve local snapshot path to avoid network calls (is_base_mistral check).
-    # HF_HUB_CACHE takes priority (set in the SLURM template); fall back to
-    # HF_HOME/hub, then the standard ~/.cache/huggingface/hub default.
-    import os as _os
-    _hf_hub_cache = _os.environ.get(
-        "HF_HUB_CACHE",
-        _os.path.join(
-            _os.environ.get("HF_HOME", _os.path.expanduser("~/.cache/huggingface")),
-            "hub",
-        ),
-    )
-    _model_id = args.base_model.replace("/", "--")
-    _snapshots = _os.path.join(_hf_hub_cache, f"models--{_model_id}", "snapshots")
-    _tok_path = args.base_model
-    if _os.path.isdir(_snapshots):
-        # Pick the newest snapshot that actually has tokenizer assets.
-        # Some cache snapshots can be incomplete (e.g., interrupted downloads).
-        for _snap in sorted(_os.listdir(_snapshots), reverse=True):
-            _candidate = _os.path.join(_snapshots, _snap)
-            if not _os.path.isdir(_candidate):
-                continue
-            if _os.path.exists(_os.path.join(_candidate, "tokenizer.json")) or _os.path.exists(
-                _os.path.join(_candidate, "tokenizer.model")
-            ):
-                _tok_path = _candidate
-                break
-    # use_fast=True avoids instantiating LlamaTokenizer (slow/sentencepiece)
-    # which fails for Llama 3.x models that have no tokenizer.model file.
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(_tok_path, local_files_only=True, use_fast=True)
-    except (TypeError, OSError, ValueError):
-        # Fallback: let HF resolve from model id within the explicit cache dir.
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.base_model,
-            cache_dir=_hf_hub_cache,
-            local_files_only=True,
-            use_fast=True,
-        )
-    tokenizer.padding_side = "left"
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
     # ── Models ────────────────────────────────────────────────────────────
-    policy_model = load_policy_model(args.base_model, args.adapter_path, tokenizer)
-    ref_model    = load_ref_model(args.base_model, args.adapter_path)
+    policy_model = load_policy_model(args.base_model, local_adapter, args.attn_implementation)
+    ref_model    = load_ref_model(args.base_model, local_adapter, args.attn_implementation)
 
     # ── DPO config ────────────────────────────────────────────────────────
     output_dir = Path(args.output_dir)
@@ -329,6 +390,8 @@ def train(args):
     summary = {
         "base_model":    args.base_model,
         "sft_adapter":   args.adapter_path,
+        "sft_adapter_revision": args.adapter_revision,
+        "sft_adapter_resolved": local_adapter,
         "dpo_adapter":   adapter_save_dir,
         "pairs_path":    args.pairs_path,
         "beta":          args.beta,
@@ -364,7 +427,6 @@ def _run_vllm_eval(args, adapter_save_dir: str, tokenizer):
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
     from intention_jailbreak.model_generation.preprocessing import preprocess_data
     from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
     from intention_jailbreak.model_generation.evaluate_generations import compute_and_log_metrics
@@ -397,7 +459,16 @@ def _run_vllm_eval(args, adapter_save_dir: str, tokenizer):
     )
 
     examples = list(test_dataset)
-    prompts  = [f"{ex['prompt']}\n" for ex in examples]
+    prompts = [
+        _apply_chat_template(
+            tokenizer,
+            [
+                {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
+                {"role": "user", "content": ex["prompt"]},
+            ],
+        )
+        for ex in examples
+    ]
     outputs  = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     preds_dir = Path(args.output_dir) / "predictions"
@@ -437,14 +508,27 @@ def parse_args():
     # Data
     p.add_argument("--pairs-path",   type=str,
                    default="data/dpo_pairs/train_t0.8/dpo_pairs.jsonl")
+    p.add_argument("--val-pairs-path", type=str, default=None,
+                   help="Optional explicit validation DPO pairs file. "
+                        "If set, disables train_test_split on --pairs-path.")
     p.add_argument("--val-split",    type=float, default=0.1,
                    help="Fraction of DPO pairs held out for validation.")
 
     # Model
     p.add_argument("--adapter-path", type=str,
-                   default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter")
+                   default=DEFAULT_SFT_ADAPTER)
+    p.add_argument("--adapter-revision", type=str, default=None,
+                   help="Optional HF revision (branch/tag/commit) for --adapter-path.")
     p.add_argument("--base-model",   type=str,
                    default="meta-llama/Llama-3.1-8B-Instruct")
+    p.add_argument(
+        "--attn-implementation",
+        type=str,
+        default="flash_attention_2",
+        choices=["flash_attention_2", "sdpa", "eager"],
+        help="Attention backend for loading policy/reference models. "
+             "Use 'sdpa' if flash_attention_2 is unavailable in your environment.",
+    )
 
     # Output
     p.add_argument("--output-dir",   type=str,

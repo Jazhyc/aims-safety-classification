@@ -12,15 +12,23 @@ Pipeline per training prompt:
 Outputs (all in --output-dir):
   samples_t0p8_raw.jsonl        — raw k samples per prompt parsed at T=0.8 (intent + harm_t08)
   samples_t0p8_relabel_t0.jsonl — same samples after deterministic T=0 harm relabeling
-  parsed_samples.jsonl          — canonical latest checkpoint (kept for compatibility)
-  dpo_pairs.jsonl           — one (chosen, rejected) pair per prompt
-  dpo_pairs_decent.jsonl    — same but decent_match also counts as rejected (--intent-filter only)
+  parsed_samples_t0p8.jsonl     — structured snapshot after T=0.8 parsing
+  parsed_samples_t0.jsonl       — structured snapshot after deterministic T=0 relabeling
+  parsed_samples_t0_judged.jsonl — structured snapshot after judge verdicts (--intent-filter only)
+  parsed_samples.jsonl          — canonical latest snapshot (kept for compatibility)
+  pairs_wrong_only.jsonl        — harm_t0 != gold_harm
+  pairs_judge_bad_only.jsonl    — harm_t0 == gold_harm and judge_verdict == bad_match
+  pairs_judge_bad_decent_only.jsonl — harm_t0 == gold_harm and judge_verdict in {bad_match,decent_match}
+  pairs_wrong_plus_judge_bad.jsonl — union of wrong_only and judge_bad_only
+  pairs_wrong_plus_judge_bad_decent.jsonl — union of wrong_only and judge_bad_decent_only
+  dpo_pairs.jsonl               — legacy alias to the active training set for this run
+  dpo_pairs_decent.jsonl        — legacy alias to decent variant when available
   summary.json              — run statistics
   intent_filter_examples.jsonl — per-sample judge verdicts (only with --intent-filter)
 
 Usage (from project root):
     python scripts/dpo/generate_dpo_pairs.py \\
-        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
+        --adapter-path Jazhyc/llama-3.1-8b-sft-generation \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/dpo_pairs/train_t0.8 \\
         --num-samples  5 \\
@@ -28,7 +36,7 @@ Usage (from project root):
 
     # Step 1 — generate samples + T=0 labels (SFT 8B):
     python scripts/dpo/generate_dpo_pairs.py \\
-        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
+        --adapter-path Jazhyc/llama-3.1-8b-sft-generation \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/dpo_pairs/train_t0.8
 
@@ -43,7 +51,7 @@ Usage (from project root):
     python scripts/dpo/generate_dpo_pairs.py \\
         --from-samples data/dpo_pairs/train_t0.8/parsed_samples.jsonl \\
         --intent-filter \\
-        --adapter-path trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter \\
+        --adapter-path Jazhyc/llama-3.1-8b-sft-generation \\
         --base-model   meta-llama/Llama-3.1-8B-Instruct \\
         --output-dir   data/dpo_pairs/train_t0.8
 """
@@ -51,6 +59,7 @@ Usage (from project root):
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -62,6 +71,7 @@ from intention_jailbreak.model_generation.parsing import (
 )
 from intention_jailbreak.model_generation.prompt_templates import (
     DPO_JUDGE_INTENT_SYSTEM_PROMPT,
+    GENERATION_SYSTEM_PROMPT,
 )
 from intention_jailbreak.model_generation.preprocessing import preprocess_data
 from intention_jailbreak.model_generation.data_utils import apply_binary_harm_mapping
@@ -73,22 +83,69 @@ from intention_jailbreak.model_generation.data_utils import apply_binary_harm_ma
 
 RAW_SAMPLES_FILENAME = "samples_t0p8_raw.jsonl"
 RELABELED_SAMPLES_FILENAME = "samples_t0p8_relabel_t0.jsonl"
+PARSED_T0P8_FILENAME = "parsed_samples_t0p8.jsonl"
+PARSED_T0_FILENAME = "parsed_samples_t0.jsonl"
+PARSED_JUDGED_FILENAME = "parsed_samples_t0_judged.jsonl"
 CANONICAL_SAMPLES_FILENAME = "parsed_samples.jsonl"  # backward-compatible alias
+PAIRS_WRONG_ONLY_FILENAME = "pairs_wrong_only.jsonl"
+PAIRS_JUDGE_BAD_ONLY_FILENAME = "pairs_judge_bad_only.jsonl"
+PAIRS_JUDGE_BAD_DECENT_ONLY_FILENAME = "pairs_judge_bad_decent_only.jsonl"
+PAIRS_WRONG_PLUS_JUDGE_BAD_FILENAME = "pairs_wrong_plus_judge_bad.jsonl"
+PAIRS_WRONG_PLUS_JUDGE_BAD_DECENT_FILENAME = "pairs_wrong_plus_judge_bad_decent.jsonl"
+DEFAULT_SFT_ADAPTER = "Jazhyc/llama-3.1-8b-sft-generation"
 
 
-def classify_intents_llm_t0(llm, lora_request, intent_texts: list) -> list:
+@dataclass
+class LoadedModels:
+    judge_model_id: str
+    need_sft: bool
+    need_judge: bool
+    llm: object | None
+    lora_request: object | None
+    sft_tokenizer: object | None
+    judge_llm: object | None
+    judge_tokenizer: object | None
+
+
+def _apply_chat_template(tokenizer, messages: list[dict]) -> str:
+    """Apply chat template with optional enable_thinking=False for Qwen3 models."""
+    try:
+        return tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+            enable_thinking=False,
+        )
+    except TypeError:
+        return tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+        )
+
+
+def classify_intents_llm_t0(llm, lora_request, intent_texts: list, tokenizer) -> list:
     """
     Re-classify intent texts with the SFT model at T=0 (greedy).
 
-    Prompts the model with "Intent: {text}\\nHarm: " and reads the first token.
-    This gives a deterministic, reliable harm label independent of the T=0.8
-    generation that produced the intent.
+    Prompts the model with chat-template-wrapped input whose user message is
+    "Intent: {text}\\nHarm: " and reads the first token. This keeps prompt
+    formatting aligned with how the SFT adapter expects inputs.
 
     Returns a list of "harmful" | "safe" | None (one per input).
     """
     from vllm import SamplingParams
 
-    prompts = [f"Intent: {t}\nHarm: " for t in intent_texts]
+    prompts = [
+        _apply_chat_template(
+            tokenizer,
+            [
+                {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
+                {"role": "user", "content": f"Intent: {t}\nHarm: "},
+            ],
+        )
+        for t in intent_texts
+    ]
     params = SamplingParams(
         n=1,
         max_tokens=5,
@@ -169,7 +226,8 @@ def judge_intent_similarity_llm(llm, triples: list, tokenizer) -> list:
     from vllm import SamplingParams
 
     prompts = [
-        tokenizer.apply_chat_template(
+        _apply_chat_template(
+            tokenizer,
             [
                 {"role": "system", "content": DPO_JUDGE_INTENT_SYSTEM_PROMPT},
                 {"role": "user", "content": (
@@ -179,8 +237,6 @@ def judge_intent_similarity_llm(llm, triples: list, tokenizer) -> list:
                     f"Verdict:"
                 )},
             ],
-            tokenize=False,
-            add_generation_prompt=True,
         )
         for prompt, gold, generated in triples
     ]
@@ -253,6 +309,23 @@ def _resolve_local_model_path(model_id: str) -> str:
         return model_id
 
 
+def _resolve_local_adapter_path(adapter_ref: str, revision: Optional[str] = None) -> str:
+    """Resolve adapter source (local path or HF repo) to a local directory."""
+    p = Path(adapter_ref).expanduser()
+    if p.exists():
+        return str(p.resolve())
+
+    from huggingface_hub import snapshot_download
+    try:
+        return snapshot_download(adapter_ref, revision=revision)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to resolve adapter '{adapter_ref}'"
+            + (f" at revision '{revision}'" if revision else "")
+            + f": {e}"
+        ) from e
+
+
 def _load_models(args, all_parsed: Optional[list]):
     """Load SFT and/or judge models depending on cached data and flags."""
     from vllm import LLM
@@ -264,16 +337,18 @@ def _load_models(args, all_parsed: Optional[list]):
     need_judge = args.intent_filter and (all_parsed is None or not _all_have_judge_verdict(all_parsed))
     use_separate_judge = need_judge and (judge_model_id != args.base_model)
 
-    llm = lora_request = None
+    llm = lora_request = sft_tokenizer = None
     if need_sft:
+        local_adapter = _resolve_local_adapter_path(args.adapter_path, args.adapter_revision)
         local_base = _resolve_local_model_path(args.base_model)
         print(f"\n=== Loading SFT model ===")
         print(f"  Base model   : {args.base_model}")
         print(f"  Local path   : {local_base}")
         print(f"  LoRA adapter : {args.adapter_path}")
+        print(f"  Local adapter: {local_adapter}")
         llm = LLM(
             model=local_base,
-            tokenizer=args.adapter_path,
+            tokenizer=local_adapter,
             enable_lora=True,
             max_lora_rank=64,
             max_loras=1,
@@ -283,7 +358,8 @@ def _load_models(args, all_parsed: Optional[list]):
             dtype="bfloat16",
             enforce_eager=True,
         )
-        lora_request = LoRARequest("sft_lora", 1, args.adapter_path)
+        lora_request = LoRARequest("sft_lora", 1, local_adapter)
+        sft_tokenizer = AutoTokenizer.from_pretrained(local_adapter)
 
     judge_llm = judge_tokenizer = None
     if need_judge:
@@ -320,10 +396,27 @@ def _load_models(args, all_parsed: Optional[list]):
         local_judge_path = _resolve_local_model_path(judge_model_id)
         judge_tokenizer = AutoTokenizer.from_pretrained(local_judge_path)
 
-    return judge_model_id, need_sft, need_judge, llm, lora_request, judge_llm, judge_tokenizer
+    return LoadedModels(
+        judge_model_id=judge_model_id,
+        need_sft=need_sft,
+        need_judge=need_judge,
+        llm=llm,
+        lora_request=lora_request,
+        sft_tokenizer=sft_tokenizer,
+        judge_llm=judge_llm,
+        judge_tokenizer=judge_tokenizer,
+    )
 
 
-def _generate_or_attach_samples(args, examples: list[dict], all_parsed: Optional[list], llm, lora_request, output_dir: Path):
+def _generate_or_attach_samples(
+    args,
+    examples: list[dict],
+    all_parsed: Optional[list],
+    llm,
+    lora_request,
+    sft_tokenizer,
+    output_dir: Path,
+):
     """Generate k samples per prompt, or re-attach examples from cached parsed samples."""
     from vllm import SamplingParams
 
@@ -339,6 +432,12 @@ def _generate_or_attach_samples(args, examples: list[dict], all_parsed: Optional
         ]
         return examples, all_parsed
 
+    if llm is None or lora_request is None or sft_tokenizer is None:
+        raise RuntimeError(
+            "SFT model + tokenizer are required to generate fresh samples. "
+            "Pass --from-samples to reuse cached parsed samples."
+        )
+
     sampling_params = SamplingParams(
         n=args.num_samples,
         max_tokens=args.max_new_tokens,
@@ -349,7 +448,16 @@ def _generate_or_attach_samples(args, examples: list[dict], all_parsed: Optional
     )
 
     print(f"\n=== Generating {args.num_samples} samples per prompt (T={args.temperature}) ===")
-    prompts = [f"{ex['prompt']}\n" for ex in examples]
+    prompts = [
+        _apply_chat_template(
+            sft_tokenizer,
+            [
+                {"role": "system", "content": GENERATION_SYSTEM_PROMPT},
+                {"role": "user", "content": ex["prompt"]},
+            ],
+        )
+        for ex in examples
+    ]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
 
     parsed = []
@@ -382,15 +490,30 @@ def _generate_or_attach_samples(args, examples: list[dict], all_parsed: Optional
 
     print(f"  Generation parse failures: {n_parse_fail}")
     save_jsonl(parsed, output_dir / RAW_SAMPLES_FILENAME)
+    save_jsonl(parsed, output_dir / PARSED_T0P8_FILENAME)
     save_jsonl(parsed, output_dir / CANONICAL_SAMPLES_FILENAME)
     return examples, parsed
 
 
-def _classify_harm_t0_if_needed(all_parsed: list, need_sft: bool, llm, lora_request, output_dir: Path) -> None:
+def _classify_harm_t0_if_needed(
+    all_parsed: list,
+    need_sft: bool,
+    llm,
+    lora_request,
+    sft_tokenizer,
+    output_dir: Path,
+) -> None:
     """Populate harm_t0 labels for parsed intents if needed."""
     if not need_sft:
         print("\n=== Skipping T=0 reclassification (harm_t0 already cached) ===")
+        save_jsonl(all_parsed, output_dir / PARSED_T0_FILENAME)
+        save_jsonl(all_parsed, output_dir / CANONICAL_SAMPLES_FILENAME)
         return
+
+    if llm is None or lora_request is None or sft_tokenizer is None:
+        raise RuntimeError(
+            "SFT model + tokenizer are required for T=0 relabeling but were not loaded."
+        )
 
     print("\n=== Re-classifying intents at T=0 ===")
     flat_intents: list[str] = []
@@ -402,13 +525,14 @@ def _classify_harm_t0_if_needed(all_parsed: list, need_sft: bool, llm, lora_requ
                 flat_idx.append((i, j))
 
     print(f"  Classifying {len(flat_intents)} intent texts...")
-    t0_labels = classify_intents_llm_t0(llm, lora_request, flat_intents)
+    t0_labels = classify_intents_llm_t0(llm, lora_request, flat_intents, sft_tokenizer)
     for (i, j), label in zip(flat_idx, t0_labels):
         all_parsed[i]["samples"][j]["harm_t0"] = label
 
     assigned = sum(1 for l in t0_labels if l is not None)
     print(f"  Labels assigned: {assigned} / {len(flat_intents)}")
     save_jsonl(all_parsed, output_dir / RELABELED_SAMPLES_FILENAME)
+    save_jsonl(all_parsed, output_dir / PARSED_T0_FILENAME)
     save_jsonl(all_parsed, output_dir / CANONICAL_SAMPLES_FILENAME)
 
 
@@ -453,29 +577,38 @@ def _compute_relabel_stats(all_parsed: list[dict]) -> dict:
 
 
 def _build_dpo_pairs(all_parsed: list, args):
-    """Construct main and decent-variant DPO pairs plus counters."""
-    dpo_pairs = []
-    dpo_pairs_decent = []
+    """Construct explicit pair sets, plus legacy training-set selections."""
+    pairs_wrong_only = []
+    pairs_judge_bad_only = []
+    pairs_judge_bad_decent_only = []
+    pairs_wrong_plus_judge_bad = []
+    pairs_wrong_plus_judge_bad_decent = []
 
-    n_no_gold = 0
+    n_no_gold_harm = 0
+    n_no_gold_intent = 0
     n_no_negative = 0
     n_no_valid = 0
     n_intent_rejecteds = 0
     n_intent_rejecteds_decent = 0
+    n_hard_rejecteds = 0
 
-    def _make_dpo_pair(ex_id, prompt, chosen_t, chosen_i, gold_harm, rej_list):
-        rejected = max(rej_list, key=lambda s: len(s["intent"]))
-        return {
-            "id": ex_id,
-            "prompt": prompt,
-            "gold_intent": chosen_i,
-            "gold_harm": gold_harm,
-            "chosen": chosen_t,
-            "rejected": f"Intent: {rejected['intent']}; Harm: {rejected['harm_t0']}",
-            "rejected_intent": rejected["intent"],
-            "rejected_harm": rejected["harm_t0"],
-            "n_rejecteds": len(rej_list),
-        }
+    def _make_dpo_pairs(ex_id, prompt, chosen_t, chosen_i, gold_harm, rej_list):
+        """Build one DPO row per rejected candidate for a prompt."""
+        n_rejecteds_total = len(rej_list)
+        return [
+            {
+                "id": ex_id,
+                "prompt": prompt,
+                "gold_intent": chosen_i,
+                "gold_harm": gold_harm,
+                "chosen": chosen_t,
+                "rejected": f"Intent: {rejected['intent']}; Harm: {rejected['harm_t0']}",
+                "rejected_intent": rejected["intent"],
+                "rejected_harm": rejected["harm_t0"],
+                "n_rejecteds": n_rejecteds_total,
+            }
+            for rejected in rej_list
+        ]
 
     for d in all_parsed:
         gold_intent = d["gold_intent"]
@@ -484,7 +617,13 @@ def _build_dpo_pairs(all_parsed: list, args):
         ex_id = d["id"]
 
         if not gold_harm:
-            n_no_gold += 1
+            n_no_gold_harm += 1
+            continue
+
+        # Chosen must always come from the human annotation.
+        # If gold intent is missing, skip this prompt entirely.
+        if not gold_intent:
+            n_no_gold_intent += 1
             continue
 
         valid = [s for s in d["samples"] if s.get("intent") and s.get("harm_t0") is not None]
@@ -492,29 +631,30 @@ def _build_dpo_pairs(all_parsed: list, args):
             n_no_valid += 1
             continue
 
-        if gold_intent:
-            chosen_intent_str = gold_intent
-            chosen_text = f"Intent: {gold_intent}; Harm: {gold_harm}"
-        else:
-            correct = [s for s in valid if s["harm_t0"] == gold_harm]
-            if not correct:
-                n_no_valid += 1
-                continue
-            best = max(correct, key=lambda s: len(s["intent"]))
-            chosen_intent_str = best["intent"]
-            chosen_text = f"Intent: {chosen_intent_str}; Harm: {gold_harm}"
+        chosen_intent_str = gold_intent
+        chosen_text = f"Intent: {gold_intent}; Harm: {gold_harm}"
 
         hard_rejecteds = [] if args.judge_only else [s for s in valid if s["harm_t0"] != gold_harm]
-        rejecteds = hard_rejecteds
+        n_hard_rejecteds += len(hard_rejecteds)
+        if hard_rejecteds:
+            pairs_wrong_only.extend(
+                _make_dpo_pairs(ex_id, prompt, chosen_text, chosen_intent_str, gold_harm, hard_rejecteds)
+            )
+
+        judge_bad_rejecteds = []
         intent_rejecteds_decent = []
 
         if args.intent_filter:
-            intent_rejecteds = [
+            judge_bad_rejecteds = [
                 s for s in valid if s["harm_t0"] == gold_harm and s.get("same_intent") is False
             ]
-            if intent_rejecteds:
-                n_intent_rejecteds += len(intent_rejecteds)
-                rejecteds = rejecteds + intent_rejecteds
+            if judge_bad_rejecteds:
+                n_intent_rejecteds += len(judge_bad_rejecteds)
+                pairs_judge_bad_only.extend(
+                    _make_dpo_pairs(
+                        ex_id, prompt, chosen_text, chosen_intent_str, gold_harm, judge_bad_rejecteds
+                    )
+                )
 
             intent_rejecteds_decent = [
                 s
@@ -523,32 +663,69 @@ def _build_dpo_pairs(all_parsed: list, args):
             ]
             if intent_rejecteds_decent:
                 n_intent_rejecteds_decent += len(intent_rejecteds_decent)
-
-        if not rejecteds:
-            n_no_negative += 1
-            continue
-
-        dpo_pairs.append(
-            _make_dpo_pair(ex_id, prompt, chosen_text, chosen_intent_str, gold_harm, rejecteds)
-        )
-
-        if args.intent_filter:
-            rejecteds_decent = hard_rejecteds + intent_rejecteds_decent
-            if rejecteds_decent:
-                dpo_pairs_decent.append(
-                    _make_dpo_pair(
-                        ex_id, prompt, chosen_text, chosen_intent_str, gold_harm, rejecteds_decent
+                pairs_judge_bad_decent_only.extend(
+                    _make_dpo_pairs(
+                        ex_id, prompt, chosen_text, chosen_intent_str, gold_harm, intent_rejecteds_decent
                     )
                 )
 
+        rejecteds_union_bad = hard_rejecteds + judge_bad_rejecteds
+        rejecteds_union_bad_decent = hard_rejecteds + intent_rejecteds_decent
+
+        if rejecteds_union_bad:
+            pairs_wrong_plus_judge_bad.extend(
+                _make_dpo_pairs(
+                    ex_id, prompt, chosen_text, chosen_intent_str, gold_harm, rejecteds_union_bad
+                )
+            )
+        if rejecteds_union_bad_decent:
+            pairs_wrong_plus_judge_bad_decent.extend(
+                _make_dpo_pairs(
+                    ex_id, prompt, chosen_text, chosen_intent_str, gold_harm, rejecteds_union_bad_decent
+                )
+            )
+
+        if args.intent_filter:
+            active_rejecteds = judge_bad_rejecteds if args.judge_only else rejecteds_union_bad
+        else:
+            active_rejecteds = hard_rejecteds
+        if not active_rejecteds:
+            n_no_negative += 1
+
+    if args.intent_filter:
+        dpo_pairs = pairs_judge_bad_only if args.judge_only else pairs_wrong_plus_judge_bad
+        dpo_pairs_decent = (
+            pairs_judge_bad_decent_only if args.judge_only else pairs_wrong_plus_judge_bad_decent
+        )
+    else:
+        dpo_pairs = pairs_wrong_only
+        dpo_pairs_decent = []
+
+    pair_sets = {
+        "wrong_only": pairs_wrong_only,
+        "judge_bad_only": pairs_judge_bad_only,
+        "judge_bad_decent_only": pairs_judge_bad_decent_only,
+        "wrong_plus_judge_bad": pairs_wrong_plus_judge_bad,
+        "wrong_plus_judge_bad_decent": pairs_wrong_plus_judge_bad_decent,
+        "legacy_main": dpo_pairs,
+        "legacy_decent": dpo_pairs_decent,
+    }
+
     counts = {
-        "n_no_gold": n_no_gold,
+        "n_no_gold_harm": n_no_gold_harm,
+        "n_no_gold_intent": n_no_gold_intent,
         "n_no_negative": n_no_negative,
         "n_no_valid": n_no_valid,
+        "n_hard_rejecteds": n_hard_rejecteds,
         "n_intent_rejecteds": n_intent_rejecteds,
         "n_intent_rejecteds_decent": n_intent_rejecteds_decent,
+        "n_rows_wrong_only": len(pairs_wrong_only),
+        "n_rows_judge_bad_only": len(pairs_judge_bad_only),
+        "n_rows_judge_bad_decent_only": len(pairs_judge_bad_decent_only),
+        "n_rows_wrong_plus_judge_bad": len(pairs_wrong_plus_judge_bad),
+        "n_rows_wrong_plus_judge_bad_decent": len(pairs_wrong_plus_judge_bad_decent),
     }
-    return dpo_pairs, dpo_pairs_decent, counts
+    return pair_sets, counts
 
 
 # ---------------------------------------------------------------------------
@@ -565,30 +742,24 @@ def run(args):
         print(f"\n=== Loading parsed samples from {args.from_samples} ===")
         all_parsed = load_jsonl(args.from_samples)
 
-    (
-        judge_model_id,
-        need_sft,
-        need_judge,
-        llm,
-        lora_request,
-        judge_llm,
-        judge_tokenizer,
-    ) = _load_models(args, all_parsed)
+    models = _load_models(args, all_parsed)
 
     examples, all_parsed = _generate_or_attach_samples(
         args=args,
         examples=examples,
         all_parsed=all_parsed,
-        llm=llm,
-        lora_request=lora_request,
+        llm=models.llm,
+        lora_request=models.lora_request,
+        sft_tokenizer=models.sft_tokenizer,
         output_dir=output_dir,
     )
 
     _classify_harm_t0_if_needed(
         all_parsed=all_parsed,
-        need_sft=need_sft,
-        llm=llm,
-        lora_request=lora_request,
+        need_sft=models.need_sft,
+        llm=models.llm,
+        lora_request=models.lora_request,
+        sft_tokenizer=models.sft_tokenizer,
         output_dir=output_dir,
     )
 
@@ -597,7 +768,7 @@ def run(args):
     # ------------------------------------------------------------------
     filter_examples = []   # for intent_filter_examples.jsonl
 
-    if args.intent_filter and not need_judge:
+    if args.intent_filter and not models.need_judge:
         print("\n=== Skipping judge inference (verdicts already cached in parsed_samples) ===")
         # Restore same_intent from cached judge_verdict
         for d in all_parsed:
@@ -605,7 +776,7 @@ def run(args):
                 if "judge_verdict" in s:
                     s["same_intent"] = (s["judge_verdict"] != "bad_match")
 
-    if need_judge:
+    if models.need_judge:
         # Collect all samples where harm_t0 == gold_harm
         filter_triples = []   # (prompt, gold_intent, generated_intent)
         filter_idx     = []   # (prompt_idx, sample_idx)
@@ -622,8 +793,12 @@ def run(args):
 
         print(f"\n  Judging {len(filter_triples)} correct-label samples for intent validity...")
 
-        print(f"\n=== LLM judge ({judge_model_id}) ===")
-        verdicts = judge_intent_similarity_llm(judge_llm, filter_triples, judge_tokenizer)
+        print(f"\n=== LLM judge ({models.judge_model_id}) ===")
+        verdicts = judge_intent_similarity_llm(
+            models.judge_llm,
+            filter_triples,
+            models.judge_tokenizer,
+        )
         for (i, j), verdict in zip(filter_idx, verdicts):
             all_parsed[i]["samples"][j]["judge_verdict"] = verdict
 
@@ -688,26 +863,50 @@ def run(args):
 
         print(f"  Extra bad_match from second judge: {n_union_added}")
 
+    # Persist explicit judged-stage snapshot when intent filter is active.
+    if args.intent_filter:
+        save_jsonl(all_parsed, output_dir / PARSED_JUDGED_FILENAME)
+        save_jsonl(all_parsed, output_dir / CANONICAL_SAMPLES_FILENAME)
+
     # ------------------------------------------------------------------
     # 5. Build DPO pairs
     # ------------------------------------------------------------------
     print("\n=== Building pairs ===")
-    dpo_pairs, dpo_pairs_decent, counts = _build_dpo_pairs(all_parsed, args)
-    n_no_gold = counts["n_no_gold"]
+    pair_sets, counts = _build_dpo_pairs(all_parsed, args)
+    dpo_pairs = pair_sets["legacy_main"]
+    dpo_pairs_decent = pair_sets["legacy_decent"]
+    n_no_gold_harm = counts["n_no_gold_harm"]
+    n_no_gold_intent = counts["n_no_gold_intent"]
     n_no_negative = counts["n_no_negative"]
     n_no_valid = counts["n_no_valid"]
     n_intent_rejecteds = counts["n_intent_rejecteds"]
     n_intent_rejecteds_decent = counts["n_intent_rejecteds_decent"]
+    n_hard_rejecteds = counts["n_hard_rejecteds"]
+    n_rows_wrong_only = counts["n_rows_wrong_only"]
+    n_rows_judge_bad_only = counts["n_rows_judge_bad_only"]
+    n_rows_judge_bad_decent_only = counts["n_rows_judge_bad_decent_only"]
+    n_rows_wrong_plus_judge_bad = counts["n_rows_wrong_plus_judge_bad"]
+    n_rows_wrong_plus_judge_bad_decent = counts["n_rows_wrong_plus_judge_bad_decent"]
 
     # ------------------------------------------------------------------
     # 6. Save outputs
     # ------------------------------------------------------------------
     print("\n=== Saving outputs ===")
+    save_jsonl(pair_sets["wrong_only"], output_dir / PAIRS_WRONG_ONLY_FILENAME)
+    save_jsonl(pair_sets["judge_bad_only"], output_dir / PAIRS_JUDGE_BAD_ONLY_FILENAME)
+    save_jsonl(pair_sets["judge_bad_decent_only"], output_dir / PAIRS_JUDGE_BAD_DECENT_ONLY_FILENAME)
+    save_jsonl(pair_sets["wrong_plus_judge_bad"], output_dir / PAIRS_WRONG_PLUS_JUDGE_BAD_FILENAME)
+    save_jsonl(
+        pair_sets["wrong_plus_judge_bad_decent"],
+        output_dir / PAIRS_WRONG_PLUS_JUDGE_BAD_DECENT_FILENAME,
+    )
+
+    # Backward-compatible aliases used by the existing pipeline.
     save_jsonl(dpo_pairs, output_dir / "dpo_pairs.jsonl")
     if args.intent_filter:
         save_jsonl(dpo_pairs_decent, output_dir / "dpo_pairs_decent.jsonl")
-        if filter_examples:
-            save_jsonl(filter_examples, output_dir / "intent_filter_examples.jsonl")
+    if filter_examples:
+        save_jsonl(filter_examples, output_dir / "intent_filter_examples.jsonl")
 
     # ------------------------------------------------------------------
     # 7. Summary
@@ -722,10 +921,25 @@ def run(args):
             "records": len(all_parsed),
             "exists": (output_dir / RAW_SAMPLES_FILENAME).exists(),
         },
+        "parsed_t0p8_samples": {
+            "path": str(output_dir / PARSED_T0P8_FILENAME),
+            "records": len(all_parsed),
+            "exists": (output_dir / PARSED_T0P8_FILENAME).exists(),
+        },
         "relabel_t0_samples": {
             "path": str(output_dir / RELABELED_SAMPLES_FILENAME),
             "records": len(all_parsed),
             "exists": (output_dir / RELABELED_SAMPLES_FILENAME).exists(),
+        },
+        "parsed_t0_samples": {
+            "path": str(output_dir / PARSED_T0_FILENAME),
+            "records": len(all_parsed),
+            "exists": (output_dir / PARSED_T0_FILENAME).exists(),
+        },
+        "parsed_judged_samples": {
+            "path": str(output_dir / PARSED_JUDGED_FILENAME) if args.intent_filter else None,
+            "records": len(all_parsed) if args.intent_filter else 0,
+            "exists": (output_dir / PARSED_JUDGED_FILENAME).exists() if args.intent_filter else False,
         },
         "canonical_samples": {
             "path": str(output_dir / CANONICAL_SAMPLES_FILENAME),
@@ -736,6 +950,31 @@ def run(args):
             "path": str(output_dir / "dpo_pairs.jsonl"),
             "records": len(dpo_pairs),
             "exists": (output_dir / "dpo_pairs.jsonl").exists(),
+        },
+        "pairs_wrong_only": {
+            "path": str(output_dir / PAIRS_WRONG_ONLY_FILENAME),
+            "records": len(pair_sets["wrong_only"]),
+            "exists": (output_dir / PAIRS_WRONG_ONLY_FILENAME).exists(),
+        },
+        "pairs_judge_bad_only": {
+            "path": str(output_dir / PAIRS_JUDGE_BAD_ONLY_FILENAME),
+            "records": len(pair_sets["judge_bad_only"]),
+            "exists": (output_dir / PAIRS_JUDGE_BAD_ONLY_FILENAME).exists(),
+        },
+        "pairs_judge_bad_decent_only": {
+            "path": str(output_dir / PAIRS_JUDGE_BAD_DECENT_ONLY_FILENAME),
+            "records": len(pair_sets["judge_bad_decent_only"]),
+            "exists": (output_dir / PAIRS_JUDGE_BAD_DECENT_ONLY_FILENAME).exists(),
+        },
+        "pairs_wrong_plus_judge_bad": {
+            "path": str(output_dir / PAIRS_WRONG_PLUS_JUDGE_BAD_FILENAME),
+            "records": len(pair_sets["wrong_plus_judge_bad"]),
+            "exists": (output_dir / PAIRS_WRONG_PLUS_JUDGE_BAD_FILENAME).exists(),
+        },
+        "pairs_wrong_plus_judge_bad_decent": {
+            "path": str(output_dir / PAIRS_WRONG_PLUS_JUDGE_BAD_DECENT_FILENAME),
+            "records": len(pair_sets["wrong_plus_judge_bad_decent"]),
+            "exists": (output_dir / PAIRS_WRONG_PLUS_JUDGE_BAD_DECENT_FILENAME).exists(),
         },
         "dpo_pairs_decent": {
             "path": str(output_dir / "dpo_pairs_decent.jsonl") if args.intent_filter else None,
@@ -750,7 +989,9 @@ def run(args):
     }
 
     summary = {
+        "summary_version": 2,
         "adapter_path":    args.adapter_path,
+        "adapter_revision": args.adapter_revision,
         "base_model":      args.base_model,
         "temperature":     args.temperature,
         "num_samples":     args.num_samples,
@@ -759,13 +1000,48 @@ def run(args):
         "from_jsonl":      args.from_jsonl,
         "split":           "train" if not args.from_jsonl else "custom_jsonl",
         "n_prompts_total": n_total,
-        "n_skipped_no_gold":  n_no_gold,
+        "n_skipped_no_gold_harm":  n_no_gold_harm,
+        "n_skipped_no_gold_intent": n_no_gold_intent,
         "n_skipped_no_valid": n_no_valid,
         "n_skipped_no_neg":   n_no_negative,
         "n_dpo_pairs":        n_dpo,
         "n_dpo_pairs_decent": len(dpo_pairs_decent),
+        "pair_set_definitions": {
+            "wrong_only": "harm_t0 != gold_harm",
+            "judge_bad_only": "harm_t0 == gold_harm and judge_verdict == bad_match",
+            "judge_bad_decent_only": "harm_t0 == gold_harm and judge_verdict in {bad_match, decent_match}",
+            "wrong_plus_judge_bad": "union of wrong_only and judge_bad_only",
+            "wrong_plus_judge_bad_decent": "union of wrong_only and judge_bad_decent_only",
+        },
+        "pair_set_rows": {
+            "wrong_only": n_rows_wrong_only,
+            "judge_bad_only": n_rows_judge_bad_only,
+            "judge_bad_decent_only": n_rows_judge_bad_decent_only,
+            "wrong_plus_judge_bad": n_rows_wrong_plus_judge_bad,
+            "wrong_plus_judge_bad_decent": n_rows_wrong_plus_judge_bad_decent,
+        },
+        "rejecteds_counts": {
+            "hard_wrong_label": n_hard_rejecteds,
+            "judge_bad": n_intent_rejecteds,
+            "judge_bad_decent": n_intent_rejecteds_decent,
+        },
         "relabel_stats":      relabel_stats,
         "artifacts":          artifacts,
+        "artifact_roles": {
+            RAW_SAMPLES_FILENAME: "Raw generation parse at T=temperature with harm_t08.",
+            PARSED_T0P8_FILENAME: "Structured snapshot after T=temperature parsing.",
+            RELABELED_SAMPLES_FILENAME: "Snapshot after deterministic T=0 harm relabeling.",
+            PARSED_T0_FILENAME: "Structured snapshot after deterministic T=0 relabeling.",
+            PARSED_JUDGED_FILENAME: "Structured snapshot after judge verdict assignment (intent filter only).",
+            CANONICAL_SAMPLES_FILENAME: "Backward-compatible alias to latest structured snapshot.",
+            PAIRS_WRONG_ONLY_FILENAME: "Pair set: wrong_only (harm_t0 != gold_harm).",
+            PAIRS_JUDGE_BAD_ONLY_FILENAME: "Pair set: judge_bad_only (correct harm, bad_match intent).",
+            PAIRS_JUDGE_BAD_DECENT_ONLY_FILENAME: "Pair set: judge_bad_decent_only (correct harm, bad/decent intent).",
+            PAIRS_WRONG_PLUS_JUDGE_BAD_FILENAME: "Pair set: wrong_plus_judge_bad (union).",
+            PAIRS_WRONG_PLUS_JUDGE_BAD_DECENT_FILENAME: "Pair set: wrong_plus_judge_bad_decent (union).",
+            "dpo_pairs.jsonl": "Legacy alias to the active training set for this run.",
+            "dpo_pairs_decent.jsonl": "Legacy alias to the active decent variant for this run.",
+        },
     }
 
     summary_path = output_dir / "summary.json"
@@ -778,7 +1054,8 @@ def run(args):
     print("=" * 65)
     print(f"Split              : HF train split")
     print(f"Total prompts      : {n_total}")
-    print(f"Skipped (no gold)  : {n_no_gold}")
+    print(f"Skipped (no harm)  : {n_no_gold_harm}")
+    print(f"Skipped (no intent): {n_no_gold_intent}")
     print(f"Skipped (no valid) : {n_no_valid}")
     print(f"Skipped (no neg)   : {n_no_negative}")
     print(
@@ -807,8 +1084,12 @@ def parse_args():
     # Model
     p.add_argument(
         "--adapter-path", type=str,
-        default="trained_models/causal/hyperparam_sweep/lr_5e-05_e_5_adapter",
-        help="Path to the SFT LoRA adapter.",
+        default=DEFAULT_SFT_ADAPTER,
+        help="SFT LoRA adapter source (local path or Hugging Face repo ID).",
+    )
+    p.add_argument(
+        "--adapter-revision", type=str, default=None,
+        help="Optional HF revision (branch/tag/commit) for --adapter-path.",
     )
     p.add_argument(
         "--base-model", type=str,
