@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=dpo-cond
 #SBATCH --time=10:00:00
-#SBATCH --mem=64GB
+#SBATCH --mem=32GB
 #SBATCH --partition=gpu
 #SBATCH --gpus-per-node=a100:1
 #SBATCH --output=logs/slurm/%x-%j.out
