@@ -12,10 +12,12 @@ module load CUDA/12.8.0
 source .venv/bin/activate
 source ~/.wandb_secrets
 
+ATTN_IMPL="${ATTN_IMPL:-sdpa}"
+WANDB_RUN="${WANDB_RUN:-hard-dpo-beta0.5-seed22}"
+
 echo "======================================================================"
 echo " Preference-learning pipeline (DPO only)"
-echo "  Steps: generate pairs → train DPO"
-echo "         → eval SFT/DPO → compare"
+echo "  Steps: generate pairs → balance pairs → train DPO → eval DPO"
 echo "  Use --force-from=N to re-run from a specific step"
 echo "======================================================================"
 
@@ -24,24 +26,23 @@ python scripts/dpo/run_preference_pipeline.py \
     --base-model             meta-llama/Llama-3.1-8B-Instruct \
     --pairs-dir              data/dpo_pairs/train_t0.8 \
     --dpo-output-dir         trained_models/causal/llama-dpo \
-    --sft-pred-dir           data/predictions/sft_baseline \
     --epochs                 1 \
     --learning-rate          5e-5 \
     --batch-size             2 \
     --grad-accum             8 \
     --dpo-beta               0.5 \
+    --attn-implementation    "${ATTN_IMPL}" \
     --temperature            0.8 \
     --k-samples              5 \
     --seed                   22 \
     --wandb-project          dpo-pipeline \
-    --force-from             5 \
+    --wandb-run              "${WANDB_RUN}" \
+    --force-from             3 \
     --skip-steps             4
 
 echo ""
 echo "======================================================================"
 echo " Done. Key outputs:"
 echo "   trained_models/causal/llama-dpo_adapter/"
-echo "   data/predictions/sft_baseline/test_predictions.jsonl"
-echo "   trained_models/causal/llama-dpo/predictions/test_predictions.jsonl"
-echo "   data/comparison/comparison_summary.json"
+echo "   trained_models/causal/llama-dpo/predictions/"
 echo "======================================================================"

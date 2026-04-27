@@ -39,6 +39,14 @@ datasets:
     use_manual_split: false
     output_dir: "${paths.output_dir}/annotated_intents"
 
+  - name: "annotated-intents-val"
+    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    subset: null
+    split: "validation"
+    harm_column: "Annotator Harm"
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/annotated_intents_val"
+
   - name: "wildguardmix"
     dataset_name: "allenai/wildguardmix"
     subset: "wildguardtest"

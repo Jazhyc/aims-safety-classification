@@ -105,6 +105,7 @@ def step3_train_dpo(args) -> bool:
     # Unbalanced mode: train directly on raw pairs (no undersampling); use
     # harmful_weight to correct class imbalance in the loss instead.
     pairs_dir = args.pairs_dir if args.unbalanced else args.balanced_pairs_dir
+    run_name = args.wandb_run or f"{Path(args.dpo_output_dir).name}-beta{args.dpo_beta}-seed{args.seed}"
     cmd = [
         sys.executable, "scripts/dpo/train_dpo.py",
         "--pairs-path",           str(Path(pairs_dir) / "dpo_pairs.jsonl"),
@@ -117,16 +118,15 @@ def step3_train_dpo(args) -> bool:
         "--batch-size",           str(args.batch_size),
         "--gradient-accumulation", str(args.grad_accum),
         "--seed",                 str(args.seed),
-        "--skip-eval",                          # evaluation done in step 5
+        "--skip-eval",                          # evaluation done in step 4
         "--wandb-project",        args.wandb_project,
-        "--wandb-run",            f"dpo-beta{args.dpo_beta}",
+        "--wandb-run",            run_name,
+        "--attn-implementation",  args.attn_implementation,
     ]
     if args.adapter_revision:
         cmd += ["--adapter-revision", args.adapter_revision]
     if args.harmful_weight != 1.0:
         cmd += ["--harmful-weight", str(args.harmful_weight)]
-    if args.val_pairs_path:
-        cmd += ["--val-pairs-path", args.val_pairs_path]
     return run(cmd, "Step 3 – DPO training")
 
 
@@ -283,9 +283,9 @@ def parse_args():
     p.add_argument("--batch-size",      type=int,   default=2)
     p.add_argument("--grad-accum",      type=int,   default=8)
     p.add_argument("--dpo-beta",        type=float, default=0.1)
-    p.add_argument("--val-pairs-path",  type=str, default=None,
-                   help="Optional explicit validation DPO pairs passed to train_dpo.py. "
-                        "If unset, train_dpo.py splits --pairs-path by --val-split.")
+    p.add_argument("--attn-implementation", type=str, default="flash_attention_2",
+                   choices=["flash_attention_2", "sdpa", "eager"],
+                   help="Attention backend passed to train_dpo.py.")
     p.add_argument("--harmful-weight",  type=float, default=1.0,
                    help="Up-weight harmful pairs in DPO loss to correct class imbalance "
                         "(use n_safe/n_harmful, e.g. 1.4 for unbalanced annotated pairs). "
@@ -309,6 +309,8 @@ def parse_args():
 
     # W&B
     p.add_argument("--wandb-project", default="intention-jailbreak")
+    p.add_argument("--wandb-run", default=None,
+                   help="Optional W&B run name override passed to train_dpo.py.")
 
     return p.parse_args()
 

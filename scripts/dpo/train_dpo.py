@@ -277,7 +277,6 @@ def train(args):
             "adapter_revision": args.adapter_revision,
             "adapter_path_resolved": local_adapter,
             "pairs_path":    args.pairs_path,
-            "val_pairs_path": args.val_pairs_path,
             "beta":          args.beta,
             "loss_type":     args.loss_type,
             "label_smoothing": args.label_smoothing,
@@ -286,7 +285,6 @@ def train(args):
             "batch_size":    args.batch_size,
             "gradient_accumulation": args.gradient_accumulation,
             "max_length":    args.max_length,
-            "val_split":     args.val_split,
             "seed":          args.seed,
             "harmful_weight":args.harmful_weight,
         },
@@ -298,18 +296,7 @@ def train(args):
     # ── Data ──────────────────────────────────────────────────────────────
     use_weighted = args.harmful_weight > 1.0
     train_dataset = load_dpo_dataset(args.pairs_path, tokenizer, include_gold_harm=use_weighted)
-    if args.val_pairs_path:
-        val_dataset = load_dpo_dataset(args.val_pairs_path, tokenizer, include_gold_harm=use_weighted)
-        print(f"Using explicit validation pairs from {args.val_pairs_path}")
-    else:
-        split = train_dataset.train_test_split(test_size=args.val_split, seed=args.seed)
-        train_dataset = split["train"]
-        val_dataset   = split["test"]
-        print(
-            "No --val-pairs-path provided; validation set was sampled from training DPO pairs "
-            f"(val_split={args.val_split})."
-        )
-    print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)}")
+    print(f"Train: {len(train_dataset)} pairs")
 
     # ── Models ────────────────────────────────────────────────────────────
     policy_model = load_policy_model(args.base_model, local_adapter, args.attn_implementation)
@@ -328,7 +315,6 @@ def train(args):
         # Optimisation
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation,
         learning_rate=args.learning_rate,
         lr_scheduler_type="cosine",
@@ -344,12 +330,9 @@ def train(args):
         max_length=args.max_length,
         max_prompt_length=args.max_prompt_length,
 
-        # Saving / evaluation
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        save_total_limit=2,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
+        # No eval during training — fixed epochs, final model saved explicitly
+        eval_strategy="no",
+        save_strategy="no",
 
         # Misc
         gradient_checkpointing=True,
@@ -364,7 +347,6 @@ def train(args):
         ref_model=ref_model,
         args=dpo_config,
         train_dataset=train_dataset,
-        eval_dataset=val_dataset,
         processing_class=tokenizer,
     )
     if use_weighted:
@@ -374,10 +356,6 @@ def train(args):
 
     print("\n=== Starting DPO training ===")
     trainer.train()
-
-    eval_results = trainer.evaluate()
-    print(f"Final eval loss: {eval_results['eval_loss']:.4f}")
-    wandb.run.summary["final_eval_loss"] = eval_results["eval_loss"]
 
     # ── Save adapter ───────────────────────────────────────────────────────
     adapter_save_dir = str(output_dir) + "_adapter"
@@ -398,9 +376,7 @@ def train(args):
         "epochs":        args.epochs,
         "learning_rate": args.learning_rate,
         "n_train":       len(train_dataset),
-        "n_val":         len(val_dataset),
         "harmful_weight":args.harmful_weight,
-        "eval_loss":     eval_results["eval_loss"],
     }
     with open(output_dir / "training_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
@@ -508,11 +484,6 @@ def parse_args():
     # Data
     p.add_argument("--pairs-path",   type=str,
                    default="data/dpo_pairs/train_t0.8/dpo_pairs.jsonl")
-    p.add_argument("--val-pairs-path", type=str, default=None,
-                   help="Optional explicit validation DPO pairs file. "
-                        "If set, disables train_test_split on --pairs-path.")
-    p.add_argument("--val-split",    type=float, default=0.1,
-                   help="Fraction of DPO pairs held out for validation.")
 
     # Model
     p.add_argument("--adapter-path", type=str,

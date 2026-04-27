@@ -1,5 +1,5 @@
 """
-Generate DPO training pairs from the annotated training split.
+Generate DPO pairs from an annotated HF split (default: train).
 
 Pipeline per training prompt:
   1. chosen  = "Intent: {gold_intent}; Harm: {gold_harm}"
@@ -280,7 +280,7 @@ def load_jsonl(path: str) -> list:
 
 
 def _load_examples(args) -> list[dict]:
-    """Load prompt examples from HF train split or a custom JSONL."""
+    """Load prompt examples from HF splits or a custom JSONL."""
     if args.from_jsonl:
         print(f"\n=== Loading prompts from {args.from_jsonl} ===")
         with open(args.from_jsonl, encoding="utf-8") as fh:
@@ -292,11 +292,21 @@ def _load_examples(args) -> list[dict]:
         print(f"  Loaded {len(examples)} prompts")
         return examples
 
-    print("\n=== Loading dataset (HF train split) ===")
-    train_dataset = preprocess_data(split="train")
-    train_dataset = apply_binary_harm_mapping(train_dataset, binary_harm_mapping=True)
-    print(f"  Train: {len(train_dataset)}")
-    return list(train_dataset)
+    split = args.split
+    if split == "val_and_test":
+        print("\n=== Loading dataset (HF validation + test splits combined) ===")
+        val_dataset  = preprocess_data(split="validation")
+        test_dataset = preprocess_data(split="test")
+        val_dataset  = apply_binary_harm_mapping(val_dataset,  binary_harm_mapping=True)
+        test_dataset = apply_binary_harm_mapping(test_dataset, binary_harm_mapping=True)
+        print(f"  Validation: {len(val_dataset)}  Test: {len(test_dataset)}")
+        return list(val_dataset) + list(test_dataset)
+
+    print(f"\n=== Loading dataset (HF {split} split) ===")
+    dataset = preprocess_data(split=split)
+    dataset = apply_binary_harm_mapping(dataset, binary_harm_mapping=True)
+    print(f"  {split.capitalize()}: {len(dataset)}")
+    return list(dataset)
 
 
 def _resolve_local_model_path(model_id: str) -> str:
@@ -998,7 +1008,7 @@ def run(args):
         "intent_filter":   args.intent_filter,
         "judge_only":      args.judge_only,
         "from_jsonl":      args.from_jsonl,
-        "split":           "train" if not args.from_jsonl else "custom_jsonl",
+        "split":           "custom_jsonl" if args.from_jsonl else args.split,
         "n_prompts_total": n_total,
         "n_skipped_no_gold_harm":  n_no_gold_harm,
         "n_skipped_no_gold_intent": n_no_gold_intent,
@@ -1052,7 +1062,8 @@ def run(args):
     print("\n" + "=" * 65)
     print("PAIR GENERATION SUMMARY")
     print("=" * 65)
-    print(f"Split              : HF train split")
+    split_label = "custom_jsonl" if args.from_jsonl else args.split
+    print(f"Split              : {split_label}")
     print(f"Total prompts      : {n_total}")
     print(f"Skipped (no harm)  : {n_no_gold_harm}")
     print(f"Skipped (no intent): {n_no_gold_intent}")
@@ -1117,6 +1128,15 @@ def parse_args():
         "--from-samples", type=str, default=None,
         help="Path to parsed_samples.jsonl from a previous run. "
              "Skips the T=temperature generation step.",
+    )
+
+    # Dataset split
+    p.add_argument(
+        "--split", type=str, default="train",
+        choices=["train", "validation", "test", "val_and_test"],
+        help="Which annotated HF split(s) to use as the prompt source. "
+             "'val_and_test' concatenates validation + test (346 examples) — "
+             "use this to build the canonical DPO validation set for early stopping.",
     )
 
     # Custom input dataset (for WildGuardMix augmentation)

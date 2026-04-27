@@ -156,8 +156,6 @@ def parse_args() -> argparse.Namespace:
                    help="Override JUDGE_BALANCED_DIR.")
     p.add_argument("--judge-dpo-output", default=None,
                    help="Override JUDGE_DPO_OUTPUT (trained model save path).")
-    p.add_argument("--sft-pred-dir-judge", default=None,
-                   help="Override SFT_PRED_DIR_JUDGE.")
 
     # ── SLURM resources ────────────────────────────────────────────────────
     p.add_argument("--short-partition", default="gpushort")
@@ -218,7 +216,6 @@ def main() -> None:
         **({} if args.judge_pairs_dir    is None else {"JUDGE_PAIRS_DIR":    args.judge_pairs_dir}),
         **({} if args.judge_balanced_dir is None else {"JUDGE_BALANCED_DIR": args.judge_balanced_dir}),
         **({} if args.judge_dpo_output   is None else {"JUDGE_DPO_OUTPUT":   args.judge_dpo_output}),
-        **({} if args.sft_pred_dir_judge is None else {"SFT_PRED_DIR_JUDGE": args.sft_pred_dir_judge}),
     }
 
     def sbatch_opts(stage: str) -> list[str]:
