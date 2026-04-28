@@ -7,8 +7,8 @@
 #   paths.output_dir=<dir>               — where predictions are saved
 
 defaults:
-  - base_wandb@wandb
-  - base_hydra@hydra
+  - ../base_wandb@wandb
+  - ../base_hydra@hydra
   - _self_
 
 experiment:
