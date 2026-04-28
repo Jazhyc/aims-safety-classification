@@ -371,6 +371,7 @@ def _load_models(args, all_parsed: Optional[list]):
             max_model_len=args.max_model_len,
             dtype="bfloat16",
             enforce_eager=True,
+            trust_remote_code=True,
         )
         lora_request = LoRARequest("sft_lora", 1, local_adapter)
         sft_tokenizer = AutoTokenizer.from_pretrained(local_adapter)
