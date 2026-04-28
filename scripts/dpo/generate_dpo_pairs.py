@@ -128,9 +128,9 @@ def classify_intents_llm_t0(llm, lora_request, intent_texts: list, tokenizer) ->
     """
     Re-classify intent texts with the SFT model at T=0 (greedy).
 
-    Prompts the model with chat-template-wrapped input whose user message is
-    "Intent: {text}\\nHarm: " and reads the first token. This keeps prompt
-    formatting aligned with how the SFT adapter expects inputs.
+    The SFT model always generates the full "Intent: ...; Harm: <label>" format,
+    so we give it enough tokens to complete that format and parse the harm label
+    with extract_intent_and_harm rather than truncating to 5 tokens.
 
     Returns a list of "harmful" | "safe" | None (one per input).
     """
@@ -148,13 +148,17 @@ def classify_intents_llm_t0(llm, lora_request, intent_texts: list, tokenizer) ->
     ]
     params = SamplingParams(
         n=1,
-        max_tokens=5,
+        max_tokens=64,
         temperature=0.0,
         top_p=1.0,
         skip_special_tokens=True,
     )
     outputs = llm.generate(prompts, params, lora_request=lora_request)
-    return [normalize_harm_label_binary(o.outputs[0].text.strip(), safe_label="safe") for o in outputs]
+    results = []
+    for o in outputs:
+        _, harm = extract_intent_and_harm(o.outputs[0].text.strip())
+        results.append(harm)
+    return results
 
 
 def _all_have_t0(parsed: list) -> bool:
