@@ -7,7 +7,7 @@
 #SBATCH --output=logs/slurm/%x-%j.out
 
 module load Python/3.12.3-GCCcore-13.3.0
-module load CUDA/12.8.0
+module load CUDA/13.2.0
 
 source .venv/bin/activate
 

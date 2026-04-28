@@ -10,7 +10,7 @@ set -euo pipefail
 
 module purge
 module load Python/3.12.3-GCCcore-13.3.0
-module load CUDA/12.8.0
+module load CUDA/13.2.0
 
 PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
 cd "${PROJECT_ROOT}"
