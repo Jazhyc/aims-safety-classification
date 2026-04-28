@@ -362,7 +362,7 @@ def _load_models(args, all_parsed: Optional[list]):
         print(f"  Local adapter: {local_adapter}")
         llm = LLM(
             model=local_base,
-            tokenizer=local_adapter,
+            tokenizer=local_base,
             enable_lora=True,
             max_lora_rank=64,
             max_loras=1,
@@ -371,10 +371,9 @@ def _load_models(args, all_parsed: Optional[list]):
             max_model_len=args.max_model_len,
             dtype="bfloat16",
             enforce_eager=True,
-            trust_remote_code=True,
         )
         lora_request = LoRARequest("sft_lora", 1, local_adapter)
-        sft_tokenizer = AutoTokenizer.from_pretrained(local_adapter)
+        sft_tokenizer = AutoTokenizer.from_pretrained(local_base)
 
     judge_llm = judge_tokenizer = None
     if need_judge:
