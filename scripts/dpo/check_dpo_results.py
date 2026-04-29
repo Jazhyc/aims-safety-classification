@@ -118,15 +118,29 @@ def load_metrics(path: Path) -> dict | None:
 OOD_DATASETS = ["toxic_chat", "aegis"]
 
 
-def load_ood_f1(ood_base: Path, dir_name: str) -> tuple[float, float] | tuple[None, None]:
-    """Return (avg_ood_f1, None) or (None, None) if not available."""
+def load_ood_f1(ood_base: Path, dir_name: str) -> tuple[float, list] | tuple[None, None]:
+    """Return (avg_ood_f1, [f1s]) or (None, None) if not available.
+
+    Checks two layouts:
+      - nested:  ood_base / dir_name / dir_name_adapter / dataset   (normal loop)
+      - flat:    ood_base / dir_name_adapter / dataset              (direct submit)
+    """
     adapter_slug = f"{dir_name}_adapter"
+    candidate_dirs = [
+        ood_base / dir_name / adapter_slug,  # nested (standard)
+        ood_base / adapter_slug,             # flat (direct submit without subdir)
+    ]
     f1s = []
     for ds in OOD_DATASETS:
-        pred_file = find_pred_file(ood_base / dir_name / adapter_slug, ds)
-        if pred_file is None:
+        found = None
+        for candidate in candidate_dirs:
+            pred_file = find_pred_file(candidate, ds)
+            if pred_file is not None:
+                found = pred_file
+                break
+        if found is None:
             return None, None
-        m = load_metrics(pred_file)
+        m = load_metrics(found)
         if m is None:
             return None, None
         f1s.append(m["f1"])
