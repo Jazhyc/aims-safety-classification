@@ -131,13 +131,13 @@ def step3_train_dpo(args) -> bool:
 
 
 def step4_eval_dpo(args) -> bool:
-    pred_dir = Path(args.dpo_output_dir) / "predictions"
+    pred_dir = (ROOT / args.dpo_output_dir / "predictions").resolve()
     model_slug = args.base_model.replace("/", "_")
     pred_path = pred_dir / "annotated_intents" / f"{model_slug}_finetuned_generation.jsonl"
     if _cached(pred_path):
         print(f"\n[SKIP] Step 4 – DPO predictions already exist at {pred_path}")
         return True
-    adapter_path = args.dpo_output_dir + "_adapter"
+    adapter_path = str((ROOT / (args.dpo_output_dir + "_adapter")).resolve())
     cmd = [
         sys.executable, "scripts/eval_safety_classifier.py",
         "--config-name=dpo/eval_dpo_condition",
