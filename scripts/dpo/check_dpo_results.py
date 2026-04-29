@@ -18,19 +18,32 @@ except ImportError:
 
 
 CONDITIONS = {
-    "hard_dpo":               "dpo-hard",
-    "hard_dpo-seed42":        "dpo-hard-seed42",
-    "hard_dpo-ep1":           "dpo-hard-ep1",
-    "hard_dpo-beta0.1":       "dpo-hard-beta0.1",
-    "hard_dpo-beta0.3":       "dpo-hard-beta0.3",
-    "hard_dpo-beta0.3-ep1":   "dpo-hard-beta0.3-ep1",
-    "judge_standalone":       "dpo-judge-standalone",
-    "judge_dpo":              "dpo-judge",
-    "judge_gptoss":           "dpo-judge-gptoss",
-    "judge_gptoss_standalone": "dpo-judge-gptoss-standalone",
-    "judge_decent":           "dpo-judge-decent",
-    "union_decent":           "dpo-union-decent",
-    "judge_union":            "dpo-judge-union",
+    # Hard mislabel conditions
+    "hard":                       "dpo-hard",
+    "hard-seed42":                "dpo-hard-seed42",
+    "hard-ep1":                   "dpo-hard-ep1",
+    "hard-beta0.1":               "dpo-hard-beta0.1",
+    "hard-beta0.3":               "dpo-hard-beta0.3",
+    "hard-beta0.3-ep1":           "dpo-hard-beta0.3-ep1",
+    # Gemma judge conditions
+    "gemma-standalone":           "dpo-judge-standalone",
+    "gemma-standalone-beta0.1":   "dpo-judge-standalone-beta0.1",
+    "gemma-standalone-beta0.3":   "dpo-judge-standalone-beta0.3",
+    "gemma-standalone-ep1":       "dpo-judge-standalone-ep1",
+    "gemma-dpo":                  "dpo-judge",
+    "gemma-dpo-beta0.1":          "dpo-judge-beta0.1",
+    "gemma-dpo-beta0.3":          "dpo-judge-beta0.3",
+    "gemma-dpo-ep1":              "dpo-judge-ep1",
+    "gemma-decent":               "dpo-judge-decent",
+    "gemma-decent-beta0.1":       "dpo-judge-decent-beta0.1",
+    "gemma-decent-beta0.3":       "dpo-judge-decent-beta0.3",
+    "gemma-decent-ep1":           "dpo-judge-decent-ep1",
+    "gemma-union-decent":         "dpo-union-decent",
+    # GPT-OSS judge conditions
+    "gptoss-standalone":          "dpo-judge-gptoss-standalone",
+    "gptoss-dpo":                 "dpo-judge-gptoss",
+    # Union (gemma + gptoss)
+    "union-gemma-gptoss":         "dpo-judge-union",
 }
 
 DATASET_ORDER = [
