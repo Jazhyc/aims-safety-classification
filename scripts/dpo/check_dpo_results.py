@@ -108,58 +108,101 @@ def load_metrics(path: Path) -> dict | None:
             "n": len(y_true), "unparsed": unparsed}
 
 
+OOD_DATASETS = ["toxic_chat", "aegis"]
+
+
+def load_ood_f1(ood_base: Path, dir_name: str) -> tuple[float, float] | tuple[None, None]:
+    """Return (avg_ood_f1, None) or (None, None) if not available."""
+    adapter_slug = f"{dir_name}_adapter"
+    f1s = []
+    for ds in OOD_DATASETS:
+        pred_file = find_pred_file(ood_base / dir_name / adapter_slug, ds)
+        if pred_file is None:
+            return None, None
+        m = load_metrics(pred_file)
+        if m is None:
+            return None, None
+        f1s.append(m["f1"])
+    avg = round(sum(f1s) / len(f1s), 4)
+    return avg, f1s
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--base", default="/scratch/s4351495/intention-jailbreak/trained_models/causal",
-                   help="Base directory containing dpo-* model dirs")
+                   help="Base directory containing dpo-* model dirs (test predictions)")
+    p.add_argument("--ood-base", default="data/safety_experiment/ood_validation/dpo",
+                   help="Base directory for OOD validation predictions")
     args = p.parse_args()
-    base = Path(args.base)
+    base     = Path(args.base)
+    ood_base = Path(args.ood_base)
 
     ds_keys = DATASET_ORDER
-    short  = [SHORT_NAMES[d] for d in ds_keys]
+    short   = [SHORT_NAMES[d] for d in ds_keys]
 
-    col_w = 12
+    col_w  = 12
     cond_w = 26
 
+    # ---- OOD validation table ----
+    ood_header = f"{'Condition':<{cond_w}}{'toxic-F1':>12}{'aegis-F1':>12}{'avg-OOD':>12}  {'*'}"
+    print("OOD Validation F1  (model selection — do NOT use for reporting)")
+    print(ood_header)
+    print("-" * (cond_w + 38))
+
+    ood_avgs = {}
+    for cond_name, dir_name in CONDITIONS.items():
+        avg, f1s = load_ood_f1(ood_base, dir_name)
+        if avg is None:
+            ood_avgs[cond_name] = None
+            print(f"{cond_name:<{cond_w}}{'—':>12}{'—':>12}{'—':>12}")
+        else:
+            ood_avgs[cond_name] = avg
+            print(f"{cond_name:<{cond_w}}{f1s[0]:>12.4f}{f1s[1]:>12.4f}{avg:>12.4f}")
+
+    valid = {k: v for k, v in ood_avgs.items() if v is not None}
+    if valid:
+        best = max(valid, key=lambda k: valid[k])
+        print(f"\n  Best by OOD avg: {best}  ({valid[best]:.4f})")
+
+    # ---- Test F1 table ----
+    print()
     header = f"{'Condition':<{cond_w}}" + "".join(f"{s:>{col_w}}" for s in short)
-    print("F1 (harmful class)")
+    print("Test F1 (report only for OOD-selected model)")
     print(header)
     print("-" * len(header))
 
     coverage_rows = []
-
     for cond_name, dir_name in CONDITIONS.items():
         pred_dir = base / dir_name / "predictions"
-        row_f1   = f"{cond_name:<{cond_w}}"
-        row_cov  = f"{cond_name:<{cond_w}}"
+        row_f1  = f"{cond_name:<{cond_w}}"
+        row_cov = f"{cond_name:<{cond_w}}"
 
         for ds_key in ds_keys:
             pred_file = find_pred_file(pred_dir, ds_key)
             if pred_file is None:
-                row_f1   += f"{'—':>{col_w}}"
-                row_cov  += f"{'—':>{col_w}}"
+                row_f1  += f"{'—':>{col_w}}"
+                row_cov += f"{'—':>{col_w}}"
             else:
                 m = load_metrics(pred_file)
                 if m is None:
-                    row_f1   += f"{'(empty)':>{col_w}}"
-                    row_cov  += f"{'—':>{col_w}}"
+                    row_f1  += f"{'(empty)':>{col_w}}"
+                    row_cov += f"{'—':>{col_w}}"
                 else:
-                    row_f1   += f"{m['f1']:.4f}".rjust(col_w)
+                    row_f1  += f"{m['f1']:.4f}".rjust(col_w)
                     row_cov += f"{m['n']}/{m['unparsed']}".rjust(col_w)
 
         print(row_f1)
         coverage_rows.append(row_cov)
 
     print()
-    print("Coverage (n/miss)")
+    print("Coverage (n/unparsed)")
     print(header)
     print("-" * len(header))
     for row_cov in coverage_rows:
         print(row_cov)
 
     print()
-    print("Legend: F1 = harmful-class F1, coverage = parsed predictions/missing.")
-    print("— = predictions not yet saved.")
+    print("Legend: — = predictions not yet saved.")
 
 
 if __name__ == "__main__":
