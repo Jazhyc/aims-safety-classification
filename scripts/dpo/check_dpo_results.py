@@ -23,6 +23,7 @@ CONDITIONS = {
     "hard_dpo-ep1":           "dpo-hard-ep1",
     "hard_dpo-beta0.1":       "dpo-hard-beta0.1",
     "hard_dpo-beta0.3":       "dpo-hard-beta0.3",
+    "hard_dpo-beta0.1-ep1":   "dpo-hard-beta0.1-ep1",
     "judge_standalone":       "dpo-judge-standalone",
     "judge_dpo":              "dpo-judge",
     "judge_gptoss":           "dpo-judge-gptoss",
