@@ -141,9 +141,9 @@ def step4_eval_dpo(args) -> bool:
     cmd = [
         sys.executable, "scripts/eval_safety_classifier.py",
         "--config-name=dpo/eval_dpo_condition",
-        f"finetuned.generation_adapter={adapter_path}",
-        f"paths.output_dir={pred_dir}",
-        f"model.name={args.base_model}",
+        f"++finetuned.generation_adapter={adapter_path}",
+        f"++paths.output_dir={pred_dir}",
+        f"++model.name={args.base_model}",
     ]
     return run(cmd, "Step 4 – Evaluate DPO adapter")
 
