@@ -113,41 +113,48 @@ def main():
     ds_keys = DATASET_ORDER
     short  = [SHORT_NAMES[d] for d in ds_keys]
 
-    col_w = 14
+    col_w = 12
     cond_w = 26
 
     header = f"{'Condition':<{cond_w}}" + "".join(f"{s:>{col_w}}" for s in short)
+    print("F1 (harmful class)")
     print(header)
     print("-" * len(header))
+
+    coverage_rows = []
 
     for cond_name, dir_name in CONDITIONS.items():
         pred_dir = base / dir_name / "predictions"
         row_f1   = f"{cond_name:<{cond_w}}"
-        row_info = f"{'':>{cond_w}}"
-        any_found = False
+        row_cov  = f"{cond_name:<{cond_w}}"
 
         for ds_key in ds_keys:
             pred_file = find_pred_file(pred_dir, ds_key)
             if pred_file is None:
                 row_f1   += f"{'—':>{col_w}}"
-                row_info += f"{'':>{col_w}}"
+                row_cov  += f"{'—':>{col_w}}"
             else:
                 m = load_metrics(pred_file)
                 if m is None:
                     row_f1   += f"{'(empty)':>{col_w}}"
-                    row_info += f"{'':>{col_w}}"
+                    row_cov  += f"{'—':>{col_w}}"
                 else:
-                    any_found = True
                     row_f1   += f"{m['f1']:.4f}".rjust(col_w)
-                    info = f"n={m['n']}" + (f" miss={m['unparsed']}" if m['unparsed'] else "")
-                    row_info += f"{info:>{col_w}}"
+                    row_cov += f"{m['n']}/{m['unparsed']}".rjust(col_w)
 
         print(row_f1)
-        if any_found and "miss=" in row_info:
-            print(row_info)
+        coverage_rows.append(row_cov)
 
     print()
-    print("F1 (harmful class). — = predictions not yet saved.")
+    print("Coverage (n/miss)")
+    print(header)
+    print("-" * len(header))
+    for row_cov in coverage_rows:
+        print(row_cov)
+
+    print()
+    print("Legend: F1 = harmful-class F1, coverage = parsed predictions/missing.")
+    print("— = predictions not yet saved.")
 
 
 if __name__ == "__main__":
