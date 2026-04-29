@@ -73,7 +73,14 @@ def find_pred_file(pred_dir: Path, ds_key: str) -> Path | None:
 
 
 def load_metrics(path: Path) -> dict | None:
-    rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+    rows = []
+    for l in path.read_text().splitlines():
+        if not l.strip():
+            continue
+        try:
+            rows.append(json.loads(l))
+        except json.JSONDecodeError:
+            pass
     if not rows:
         return None
 
