@@ -143,7 +143,7 @@ def main():
                     row_info += f"{info:>{col_w}}"
 
         print(row_f1)
-        if any_found and any("miss=" in row_info):
+        if any_found and "miss=" in row_info:
             print(row_info)
 
     print()
