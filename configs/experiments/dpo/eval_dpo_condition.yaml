@@ -1,3 +1,4 @@
+# @package _global_
 # Evaluate a single DPO generation adapter on all benchmarks.
 # Used by run_preference_pipeline.py (step 5) so DPO results are produced
 # by the same script and metric code as distillation, enabling direct comparison.
