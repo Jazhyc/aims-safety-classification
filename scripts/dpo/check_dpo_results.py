@@ -43,6 +43,9 @@ DATASET_ORDER = [
     "openai_moderation",
 ]
 
+# Datasets included in the external average (excludes annotated-intents — seen during SFT training)
+EXT_AVG_DATASETS = {"wildguardmix", "xstest", "toxic_chat", "aegis", "openai_moderation"}
+
 SHORT_NAMES = {
     "annotated_intents":     "ann-test",
     "annotated_intents_val": "ann-val",
@@ -187,7 +190,7 @@ def main():
 
     # ---- Test F1 table ----
     print()
-    header = f"{'Condition':<{cond_w}}" + "".join(f"{s:>{col_w}}" for s in short)
+    header = f"{'Condition':<{cond_w}}" + "".join(f"{s:>{col_w}}" for s in short) + f"{'ext-avg':>{col_w}}"
     print("Test F1 (report only for OOD-selected model)")
     print(header)
     print("-" * len(header))
@@ -197,6 +200,7 @@ def main():
         pred_dir = base / dir_name / "predictions"
         row_f1  = f"{cond_name:<{cond_w}}"
         row_cov = f"{cond_name:<{cond_w}}"
+        ext_f1s = []
 
         for ds_key in ds_keys:
             pred_file = find_pred_file(pred_dir, ds_key)
@@ -211,6 +215,13 @@ def main():
                 else:
                     row_f1  += f"{m['f1']:.4f}".rjust(col_w)
                     row_cov += f"{m['n']}/{m['unparsed']}".rjust(col_w)
+                    if ds_key in EXT_AVG_DATASETS:
+                        ext_f1s.append(m["f1"])
+
+        if len(ext_f1s) == len(EXT_AVG_DATASETS):
+            row_f1 += f"{sum(ext_f1s)/len(ext_f1s):>{col_w}.4f}"
+        else:
+            row_f1 += f"{'—':>{col_w}}"
 
         print(row_f1)
         coverage_rows.append(row_cov)
