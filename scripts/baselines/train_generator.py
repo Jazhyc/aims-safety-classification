@@ -7,12 +7,16 @@ Usage:
     python scripts/train_generator.py training.batch_size=16
 """
 
+import logging
 import os
 from pathlib import Path
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["USE_TF"] = "0"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+for _name in ("httpx", "httpcore", "huggingface_hub", "filelock", "urllib3"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 import hydra
 from omegaconf import DictConfig, OmegaConf

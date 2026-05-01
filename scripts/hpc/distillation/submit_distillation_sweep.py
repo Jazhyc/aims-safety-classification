@@ -52,7 +52,6 @@ LEARNING_RATES = [
     2e-5,
     5e-5,
     1e-4,
-    2e-4,
 ]
 
 CONDITIONS = ["no_intent", "synthetic_intent", "human_intent"]
