@@ -34,17 +34,17 @@ from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_
 # Slug must match model_name.replace("/", "-") used by generate_reasoning_traces.py.
 TEACHER_MODELS = [
     ("cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit",  "cyankiwi-Mistral-Small-4-119B-2603-AWQ-4bit"),
-    ("cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit",          "cyankiwi-Qwen3.5-122B-A10B-AWQ-4bit"),
+    ("Qwen/Qwen3-32B",                               "Qwen-Qwen3-32B"),
     ("openai/gpt-oss-120b",                           "openai-gpt-oss-120b"),
     ("RedHatAI/gemma-3-27b-it-quantized.w4a16",       "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
 ]
 
 # (HuggingFace model ID, short slug used in run names and W&B project names)
 STUDENT_MODELS = [
-    # ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
-    # ("mistralai/Ministral-3-14B-Reasoning-2512",        "ministral-3-14b-reasoning"),
+    ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
+    ("mistralai/Ministral-3-14B-Reasoning-2512",        "ministral-3-14b-reasoning"),
     ("Qwen/Qwen3-8B",                                  "qwen3-8b"),
-    # ("google/gemma-3-12b-it",                          "gemma-3-12b"),
+    ("google/gemma-3-12b-it",                          "gemma-3-12b"),
 ]
 
 LEARNING_RATES = [

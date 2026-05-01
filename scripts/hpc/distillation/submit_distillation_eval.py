@@ -63,7 +63,7 @@ OOD_DATASET_DIRS  = ["toxic-chat", "aegis"]
 
 TEACHER_MODELS = [
     ("cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit",  "cyankiwi-Mistral-Small-4-119B-2603-AWQ-4bit"),
-    ("cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit",          "cyankiwi-Qwen3.5-122B-A10B-AWQ-4bit"),
+    ("Qwen/Qwen3-32B",                               "Qwen-Qwen3-32B"),
     ("openai/gpt-oss-120b",                           "openai-gpt-oss-120b"),
     ("RedHatAI/gemma-3-27b-it-quantized.w4a16",       "RedHatAI-gemma-3-27b-it-quantized.w4a16"),
 ]

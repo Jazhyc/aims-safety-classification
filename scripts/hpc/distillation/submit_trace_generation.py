@@ -30,10 +30,10 @@ from slurm_utils import create_logs_dir, submit_sbatch, print_header, print_job_
 # thinking_mode=false for non-native-thinking models.
 TEACHER_MODELS = [
     # ("cyankiwi/gemma-4-31B-it-AWQ-4bit",             "false"),
-    ("cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit",  "false"),
-    ("cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit",          "false"),
-    ("openai/gpt-oss-120b",                         "false"),
-    ("RedHatAI/gemma-3-27b-it-quantized.w4a16",     "false"),
+    #("cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit",  "false"),
+    ("Qwen/Qwen3-32B",                               "false"),
+    #("openai/gpt-oss-120b",                         "false"),
+    #("RedHatAI/gemma-3-27b-it-quantized.w4a16",     "false"),
 ]
 
 TRACES_VERSION = "v7"

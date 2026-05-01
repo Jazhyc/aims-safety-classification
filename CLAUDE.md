@@ -205,7 +205,7 @@ Current distillation and trace generation experiments use version **v7**. The ve
 
 **v7 Teacher Models (no thinking mode):**
 - `cyankiwi/Mistral-Small-4-119B-2603-AWQ-4bit`
-- `cyankiwi/Qwen3.5-122B-A10B-AWQ-4bit`
+- `Qwen/Qwen3-32B`
 - `cyankiwi/gemma-4-31B-it-AWQ-4bit`
 
 To bump to v8, update the version constant in all submission scripts and the pipeline config above. The version is appended to output directories and W&B projects for traceability and to prevent collisions.
