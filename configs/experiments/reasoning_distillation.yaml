@@ -44,6 +44,7 @@ data:
   # Paths to parsed_results.json produced by generate_reasoning_traces.py.
   reasoning_traces_path: "data/reasoning_traces/RedHatAI-gemma-3-27b-it-quantized.w4a16/train/parsed_results.json"
   reasoning_traces_val_path: "data/reasoning_traces/RedHatAI-gemma-3-27b-it-quantized.w4a16/validation/parsed_results.json"
+  reasoning_traces_test_path: null
 
   # "no_intent":       trains a classifier (Reasoning + Prompt harm)
   # "synthetic_intent": trains a generator on model-generated intents (Reasoning + Intent + Prompt harm)
