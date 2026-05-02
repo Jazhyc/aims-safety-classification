@@ -251,4 +251,4 @@ But vLLM serves the full `*ForConditionalGeneration` model, where the same modul
 
 **Do NOT** set `enable_tower_connector_lora=True` in vLLM as a workaround — that flag is for applying LoRA to vision tower weights (which our text-only adapters don't have) and it crashes when combined with `limit_mm_per_prompt={"image": 0}`.
 
-**Affected students**: `google/gemma-3-12b-it`, `mistralai/Ministral-3-14B-Reasoning-2512`. Llama 3.1 8B and `Qwen/Qwen3-8B` are pure CausalLMs and are unaffected.
+**Affected students**: `google/gemma-3-12b-it`, `mistralai/Ministral-3-14B-Instruct-2512-BF16`. Llama 3.1 8B and `Qwen/Qwen3-8B` are pure CausalLMs and are unaffected.

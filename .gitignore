@@ -233,5 +233,6 @@ scripts/outputs
 notebooks/clustering_analysis_copy.ipynb
 !scripts/report/
 .codex
+.claude/
 notebooks/dpo/figures/
 logs/

@@ -838,13 +838,24 @@ def run_causal_flow(config):
         # setup_causal_model_and_tokenizer will load it again (from cache) for training.
         _early_tok = AutoTokenizer.from_pretrained(model_name)
 
-        def create_prompt_completion(examples):
-            prompts = [
-                _early_tok.apply_chat_template(
-                    build_student_messages(p, condition=rt_condition),
+        def _apply_template(messages):
+            try:
+                return _early_tok.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+            except TypeError:
+                return _early_tok.apply_chat_template(
+                    messages,
                     tokenize=False,
                     add_generation_prompt=True,
                 )
+
+        def create_prompt_completion(examples):
+            prompts = [
+                _apply_template(build_student_messages(p, condition=rt_condition))
                 for p in examples["prompt"]
             ]
             intents = examples["intent"] if with_intent else [None] * len(examples["prompt"])

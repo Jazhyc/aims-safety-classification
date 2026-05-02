@@ -25,7 +25,7 @@ SWEEP_DIR = PROJECT_ROOT / "models" / "distillation-sweep"
 
 # These students were trained via the CausalLM extraction path and need fixing.
 # Llama 3.1 8B is a pure CausalLM and is already correct.
-NEEDS_FIX = {"gemma-3-12b", "ministral-3-14b-reasoning"}
+NEEDS_FIX = {"gemma-3-12b", "ministral-3-14b-instruct"}
 
 
 def needs_renaming(sf_path: Path) -> bool:

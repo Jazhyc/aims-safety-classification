@@ -42,7 +42,7 @@ TEACHER_MODELS = [
 # (HuggingFace model ID, short slug used in run names and W&B project names)
 STUDENT_MODELS = [
     ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
-    ("mistralai/Ministral-3-14B-Reasoning-2512",        "ministral-3-14b-reasoning"),
+    ("mistralai/Ministral-3-14B-Instruct-2512-BF16",    "ministral-3-14b-instruct"),
     ("Qwen/Qwen3-8B",                                  "qwen3-8b"),
     ("google/gemma-3-12b-it",                          "gemma-3-12b"),
 ]
@@ -155,15 +155,29 @@ def main():
         "--dry-run", "-n", action="store_true",
         help="Validate traces and print all job configs without submitting to SLURM.",
     )
+    parser.add_argument(
+        "--student", action="append", default=None, metavar="SLUG",
+        help=("Restrict the sweep to one or more student slugs (e.g. --student qwen3-8b). "
+              "Can be passed multiple times. Default: all students."),
+    )
     args = parser.parse_args()
 
+    students = STUDENT_MODELS
+    if args.student:
+        valid = {slug for _, slug in STUDENT_MODELS}
+        unknown = [s for s in args.student if s not in valid]
+        if unknown:
+            print(f"Unknown student slug(s): {unknown}. Valid: {sorted(valid)}")
+            sys.exit(1)
+        students = [(hf, slug) for hf, slug in STUDENT_MODELS if slug in args.student]
+
     total_jobs = (
-        len(TEACHER_MODELS) * len(STUDENT_MODELS) * len(LEARNING_RATES) * len(CONDITIONS)
+        len(TEACHER_MODELS) * len(students) * len(LEARNING_RATES) * len(CONDITIONS)
     )
 
     print_header(
         "Distillation Hyperparameter Sweep — SLURM Job Submission",
-        f"{len(TEACHER_MODELS)} teacher(s) × {len(STUDENT_MODELS)} student(s) "
+        f"{len(TEACHER_MODELS)} teacher(s) × {len(students)} student(s) "
         f"× {len(LEARNING_RATES)} LRs × {len(CONDITIONS)} conditions = {total_jobs} jobs"
         + (" [DRY RUN]" if args.dry_run else ""),
     )
@@ -182,7 +196,7 @@ def main():
     for teacher_hf, teacher_slug in TEACHER_MODELS:
         if args.dry_run:
             print(f"\n── Teacher: {teacher_slug} ──")
-        for student_hf, student_slug in STUDENT_MODELS:
+        for student_hf, student_slug in students:
             for condition in CONDITIONS:
                 for lr in LEARNING_RATES:
                     label = (

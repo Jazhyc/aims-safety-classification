@@ -630,11 +630,7 @@ def run_finetuned_reasoning_classification(
     print("\n=== Running: Fine-tuned Reasoning Classification (reasoning + harm) ===")
     examples = list(test_dataset)
     prompts = [
-        tokenizer.apply_chat_template(
-            build_student_messages(ex["prompt"], condition="no_intent"),
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        _apply_chat_template(tokenizer, build_student_messages(ex["prompt"], condition="no_intent"))
         for ex in examples
     ]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
@@ -672,11 +668,7 @@ def run_finetuned_reasoning_human_intent(
     print("\n=== Running: Fine-tuned Reasoning Human Intent (reasoning + human intent + harm) ===")
     examples = list(test_dataset)
     prompts = [
-        tokenizer.apply_chat_template(
-            build_student_messages(ex["prompt"], condition="human_intent"),
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        _apply_chat_template(tokenizer, build_student_messages(ex["prompt"], condition="human_intent"))
         for ex in examples
     ]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
@@ -718,11 +710,7 @@ def run_finetuned_reasoning_synthetic_intent(
     print("\n=== Running: Fine-tuned Reasoning Synthetic Intent (reasoning + synthetic intent + harm) ===")
     examples = list(test_dataset)
     prompts = [
-        tokenizer.apply_chat_template(
-            build_student_messages(ex["prompt"], condition="synthetic_intent"),
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        _apply_chat_template(tokenizer, build_student_messages(ex["prompt"], condition="synthetic_intent"))
         for ex in examples
     ]
     outputs = llm.generate(prompts, sampling_params, lora_request=lora_request)
