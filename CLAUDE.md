@@ -157,13 +157,18 @@ Artifact name = adapter directory name (e.g. `reasoning-distillation-gemma-3-27b
 
 Model selection uses a two-stage eval workflow to avoid leaking test-set signal into adapter selection:
 
-**Stage 1 — OOD validation** (`--mode ood-val`, default): every trained adapter is evaluated on two held-out splits never seen during training:
+**Stage 1 — OOD validation** (`--mode ood-val`, default): trained adapters are evaluated on two held-out splits never seen during training:
 - `lmsys/toxic-chat` subset `toxicchat0124`, **train** split
 - `nvidia/Aegis-AI-Content-Safety-Dataset-2.0`, **validation** split
 
+- **SFT**: every trained adapter is submitted.
+- **Distillation**: only the best LR per (teacher × student × condition) by W&B `val_harm_f1` is submitted (compresses 192 → 48 jobs).
+
 Config: `configs/experiments/eval_ood_validation.yaml`. Output: `data/safety_experiment/ood_validation/{sft|distillation}/...`
 
-**Stage 2 — Test eval** (`--mode test`): reads OOD val JSONL files, picks the adapter with the highest average F1 across both OOD datasets, and submits a full test-set eval job. Falls back to W&B `val_harm_f1` for combinations with no OOD val results.
+**Stage 2 — Test eval** (`--mode test`): reads OOD val JSONL files and submits test eval jobs based on OOD val F1.
+- **SFT**: picks the best adapter per combination (falls back to W&B `val_harm_f1` if no OOD results).
+- **Distillation**: picks the **single** adapter with the highest mean OOD val F1 across all (teacher × student × condition) combinations and submits one test job.
 
 ```bash
 # Run OOD val for all trained adapters
