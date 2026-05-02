@@ -4,16 +4,17 @@ Select best distillation adapters from W&B and submit eval jobs.
 
 Two modes (--mode):
   ood-val  (default)
-      Submit one OOD validation job per adapter for every (teacher × student ×
-      condition × LR) combination that has been trained. OOD datasets are
-      ToxicChat (train) and Aegis (validation). Already-evaluated adapters are
-      skipped unless --force is given.
+      For every (teacher × student × condition) combination, pick the adapter
+      with the highest W&B val_harm_f1 across the LR sweep and submit one OOD
+      validation job for it. OOD datasets are ToxicChat (train) and Aegis
+      (validation). Already-evaluated adapters are skipped unless --force is
+      given.
 
   test
-      Read OOD val results from disk, pick the adapter with the highest average
-      F1 per (teacher × student × condition), and submit a full test-set eval
-      job for each. Requires OOD val to have been run first.
-      Falls back to W&B val_harm_f1 for combinations with no OOD val results.
+      Read OOD val results from disk, pick the single adapter with the highest
+      average F1 across all (teacher × student × condition) combinations, and
+      submit one full test-set eval job for it. Requires OOD val to have been
+      run first.
 
 --cleanup removes every adapter in models/distillation-sweep/ that was not
 selected as best in test mode. Combine with --dry-run to preview deletions.
@@ -249,50 +250,52 @@ def cleanup_suboptimal(best_adapters: set[Path], dry_run: bool):
 # ── Mode implementations ──────────────────────────────────────────────────────
 
 def ood_val_mode(traces_version: str, dry_run: bool, force: bool):
-    """Submit one OOD validation job per adapter for all (teacher × student × condition × LR)."""
+    """Submit OOD validation for the best-LR adapter per (teacher × student × condition)."""
     print(f"\nOOD datasets: ToxicChat (train split) + Aegis (validation split)")
     print(f"Output base:  {OOD_VAL_BASE_DIR}")
 
     print("\nFetching all adapters from W&B ...")
     all_adapters = fetch_all_distillation_adapters(traces_version)
     total = sum(len(v) for v in all_adapters.values())
-    print(f"Found {total} adapter(s) across {len(all_adapters)} (teacher, student, condition) groups.\n")
+    print(f"Found {total} adapter(s) across {len(all_adapters)} (teacher, student, condition) groups.")
+
+    best_adapters = fetch_best_by_wandb_f1(all_adapters)
+    print(f"Selected best LR per combination by W&B val_harm_f1: {len(best_adapters)} adapter(s).\n")
 
     submitted, skipped = [], []
 
-    for (teacher_slug, student_slug, condition), adapters in sorted(all_adapters.items()):
+    for (teacher_slug, student_slug, condition), (adapter_path, wandb_f1) in sorted(best_adapters.items()):
         student_hf = next(hf for hf, slug in STUDENT_MODELS if slug == student_slug)
         eval_condition = CONDITION_TO_EVAL[condition]
 
-        for adapter_path, wandb_f1 in adapters:
-            ood_output_dir = OOD_VAL_BASE_DIR / teacher_slug / student_slug / condition / adapter_path.name
-            label = f"{teacher_slug}/{student_slug}/{condition}/{adapter_path.name}"
+        ood_output_dir = OOD_VAL_BASE_DIR / teacher_slug / student_slug / condition / adapter_path.name
+        label = f"{teacher_slug}/{student_slug}/{condition}/{adapter_path.name}"
 
-            if not force and compute_ood_val_f1(ood_output_dir) is not None:
-                print(f"  [done] {adapter_path.name} — OOD val results present, skipping (--force to re-run)")
-                skipped.append(label)
-                continue
+        if not force and compute_ood_val_f1(ood_output_dir) is not None:
+            print(f"  [done] {adapter_path.name} — OOD val results present, skipping (--force to re-run)")
+            skipped.append(label)
+            continue
 
-            run_label = f"distill-ood-val--{teacher_slug}--{student_slug}--{condition}--{adapter_path.name}"
-            print(f"  {'[dry-run] ' if dry_run else ''}submit {adapter_path.name}  "
-                  f"(wandb_f1={wandb_f1:.4f})")
+        run_label = f"distill-ood-val--{teacher_slug}--{student_slug}--{condition}--{adapter_path.name}"
+        print(f"  {'[dry-run] ' if dry_run else ''}submit {adapter_path.name}  "
+              f"(wandb_f1={wandb_f1:.4f})")
 
-            if dry_run:
-                continue
+        if dry_run:
+            continue
 
-            export_vars = {
-                "STUDENT_MODEL":  student_hf,
-                "ADAPTER_PATH":   str(adapter_path),
-                "EVAL_CONDITION": eval_condition,
-                "OUTPUT_DIR":     str(ood_output_dir),
-                "WANDB_RUN_NAME": run_label,
-            }
-            try:
-                job_id = submit_sbatch(OOD_VAL_TEMPLATE, export_vars)
-                print(f"    ✓ job {job_id}")
-                submitted.append((label, job_id))
-            except subprocess.CalledProcessError as e:
-                print(f"    ✗ submission failed: {e.stderr}")
+        export_vars = {
+            "STUDENT_MODEL":  student_hf,
+            "ADAPTER_PATH":   str(adapter_path),
+            "EVAL_CONDITION": eval_condition,
+            "OUTPUT_DIR":     str(ood_output_dir),
+            "WANDB_RUN_NAME": run_label,
+        }
+        try:
+            job_id = submit_sbatch(OOD_VAL_TEMPLATE, export_vars)
+            print(f"    ✓ job {job_id}")
+            submitted.append((label, job_id))
+        except subprocess.CalledProcessError as e:
+            print(f"    ✗ submission failed: {e.stderr}")
 
     print(f"\nSubmitted {len(submitted)}  |  skipped (done) {len(skipped)}")
 
@@ -305,83 +308,54 @@ def test_mode(
     force: bool,
     do_cleanup: bool,
 ):
-    """Pick best adapter per (teacher, student, condition) by OOD val F1 and submit test eval."""
+    """Pick the single adapter with the highest OOD val F1 and submit one test eval."""
     print(f"\nConfig: {eval_config}")
-    print("Selecting best adapter per combination by OOD val F1 (falls back to W&B val F1) ...")
+    print("Selecting single best adapter across all combinations by OOD val F1 ...")
 
     print("\nFetching all adapters from W&B ...")
     all_adapters = fetch_all_distillation_adapters(traces_version)
     print(f"Found {len(all_adapters)} (teacher, student, condition) groups.\n")
 
-    n_done = sum(
-        1
-        for (teacher_slug, student_slug, condition) in all_adapters
-        if _is_done(
-            f"data/safety_experiment/distillation/{teacher_slug}/{student_slug}/{condition}",
-            check_datasets,
-        )
-    )
-    print(f"Already fully evaluated: {n_done}/{len(all_adapters)} combinations ({check_datasets})\n")
-
     if not dry_run:
         create_logs_dir()
 
-    submitted = []
-    not_found = []
-    skipped   = []
-    best_adapters: set[Path] = set()
-
+    # Score every adapter that has OOD val results; rank globally.
+    candidates: list[tuple[float, str, str, str, Path, float]] = []
+    no_ood: list[str] = []
     for (teacher_slug, student_slug, condition), adapters in sorted(all_adapters.items()):
-        student_hf = next(hf for hf, slug in STUDENT_MODELS if slug == student_slug)
-        label = f"{teacher_slug}/{student_slug}/{condition}"
-        print(f"\n  [{label}]")
-
-        # Try to pick best by OOD val F1
-        best_adapter: Path | None = None
-        best_f1: float | None = None
-        used_ood = False
-
         for adapter_path, wandb_f1 in adapters:
             ood_output_dir = OOD_VAL_BASE_DIR / teacher_slug / student_slug / condition / adapter_path.name
             ood_f1 = compute_ood_val_f1(ood_output_dir)
             if ood_f1 is not None:
-                print(f"    {adapter_path.name}: ood_f1={ood_f1:.4f}  wandb_f1={wandb_f1:.4f}")
-                if best_f1 is None or ood_f1 > best_f1:
-                    best_adapter, best_f1, used_ood = adapter_path, ood_f1, True
+                candidates.append((ood_f1, teacher_slug, student_slug, condition, adapter_path, wandb_f1))
             else:
-                print(f"    {adapter_path.name}: no OOD val results  wandb_f1={wandb_f1:.4f}")
+                no_ood.append(f"{teacher_slug}/{student_slug}/{condition}/{adapter_path.name}")
 
-        # Fall back to W&B val F1 if no OOD results exist
-        if best_adapter is None:
-            print(f"    [warn] No OOD val results — falling back to W&B val_harm_f1")
-            if adapters:
-                best_adapter, best_f1 = max(adapters, key=lambda x: x[1])
-                used_ood = False
-            else:
-                print(f"    [skip] No qualifying run found in W&B")
-                not_found.append(label)
-                continue
+    if not candidates:
+        print("  [error] No adapters have OOD val results. Run --mode ood-val first.")
+        return
 
-        best_adapters.add(best_adapter)
-        eval_condition = CONDITION_TO_EVAL[condition]
-        output_dir = (
-            f"data/safety_experiment/distillation"
-            f"/{teacher_slug}/{student_slug}/{condition}"
-        )
-        run_label = f"distill--{teacher_slug}--{student_slug}--{condition}"
-        f1_label = "ood" if used_ood else "wandb"
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    print(f"Adapters scored on OOD val: {len(candidates)} (skipped {len(no_ood)} without OOD results)")
+    print("Top 5 by OOD val F1:")
+    for ood_f1, t, s, c, a, w in candidates[:5]:
+        print(f"  {ood_f1:.4f}  {t}/{s}/{c}/{a.name}  (wandb_f1={w:.4f})")
 
-        print(f"    => best: {best_adapter.name}  {f1_label}_f1={best_f1:.4f}")
+    best_ood_f1, teacher_slug, student_slug, condition, best_adapter, _ = candidates[0]
+    student_hf = next(hf for hf, slug in STUDENT_MODELS if slug == student_slug)
+    eval_condition = CONDITION_TO_EVAL[condition]
+    label = f"{teacher_slug}/{student_slug}/{condition}"
+    output_dir = f"data/safety_experiment/distillation/{teacher_slug}/{student_slug}/{condition}"
+    run_label = f"distill--{teacher_slug}--{student_slug}--{condition}"
 
-        if not force and _is_done(output_dir, check_datasets):
-            print(f"    [done] Output files present — skipping (--force to re-run)")
-            skipped.append(label)
-            continue
+    print(f"\n  => selected: {label}/{best_adapter.name}  ood_f1={best_ood_f1:.4f}")
 
-        if dry_run:
-            print(f"    [dry-run] would submit eval job")
-            continue
-
+    submitted = False
+    if not force and _is_done(output_dir, check_datasets):
+        print("  [done] Output files present — skipping (--force to re-run)")
+    elif dry_run:
+        print("  [dry-run] would submit eval job")
+    else:
         export_vars = {
             "STUDENT_MODEL":  student_hf,
             "ADAPTER_PATH":   str(best_adapter),
@@ -392,28 +366,19 @@ def test_mode(
         }
         try:
             job_id = submit_sbatch(TEST_EVAL_TEMPLATE, export_vars)
-            print(f"    ✓ submitted job {job_id}")
-            submitted.append((label, job_id))
+            print(f"  ✓ submitted job {job_id}")
+            submitted = True
         except subprocess.CalledProcessError as e:
-            print(f"    ✗ submission failed: {e.stderr}")
-
-    print("\n" + "=" * 60)
-    if dry_run:
-        print(f"Dry run: {len(all_adapters) - len(not_found)} adapters found, {len(skipped)} already done.")
-    else:
-        print(f"Submitted {len(submitted)}  |  skipped (done) {len(skipped)}  |  not found {len(not_found)}")
-    if not_found:
-        print(f"Not found ({len(not_found)}):  " + "  ".join(not_found))
-    if skipped:
-        print(f"Already done ({len(skipped)}):  " + "  ".join(skipped))
-    print("=" * 60)
+            print(f"  ✗ submission failed: {e.stderr}")
 
     if do_cleanup:
         print("\n── Adapter cleanup ──")
-        if not best_adapters and not dry_run:
-            print("  No best adapters identified — aborting cleanup to avoid data loss.")
-        else:
-            cleanup_suboptimal(best_adapters, dry_run=dry_run)
+        cleanup_suboptimal({best_adapter}, dry_run=dry_run)
+
+    print("\n" + "=" * 60)
+    print(f"Best adapter: {label}/{best_adapter.name}  ood_f1={best_ood_f1:.4f}")
+    print(f"Submitted: {'yes' if submitted else 'no'}")
+    print("=" * 60)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
