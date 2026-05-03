@@ -162,7 +162,7 @@ def get_hardcoded_results() -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict
             "toxic_chat": 0.516,
             "openai_moderation": 0.761,
         },
-        "GPT-OSS 120B (CoT)": {
+        "GPT-OSS 120B": {
             "wildguardmix": 0.884,
             "xstest": 0.911,
             "aegis": 0.806,
