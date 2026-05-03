@@ -103,7 +103,7 @@ datasets:
     output_dir: "${paths.output_dir}/openai_moderation"
 
 generation:
-  max_new_tokens: 2048
+  max_new_tokens: 1024
   temperature: 0.0
   top_p: 1.0
   top_k: -1

@@ -499,6 +499,11 @@ def main(cfg: DictConfig):
         top_p=gen_cfg.get("top_p", 1.0),
         top_k=gen_cfg.get("top_k", -1),
         skip_special_tokens=True,
+        # Stop on chat-format markers from any model family. The trained format ends
+        # with `Prompt harm: harmful|safe`; if the model continues past that into a new
+        # turn, it's gone off-script and we want to truncate. These strings never appear
+        # inside a valid structured output, so this is a no-op for well-behaved students.
+        stop=["<|eot_id|>", "<|end_header_id|>", "<|start_header_id|>", "[INST]", "[/INST]"],
     )
 
     # Run main-model conditions on each dataset

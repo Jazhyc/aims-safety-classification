@@ -128,9 +128,13 @@ def compute_ood_val_f1(output_dir: Path) -> float | None:
         tp = fp = tn = fn = 0
         for r in records:
             true_harm = (r.get("true_harm_binary") or r.get("true_harm") or "").lower()
-            pred_harm = (r.get("predicted_harm") or "").lower()
-            if not true_harm or not pred_harm:
+            if not true_harm:
                 continue
+            # Parse failures (no predicted_harm) are treated as "safe" — the
+            # safety classifier failed to flag, which is the relevant failure
+            # mode for downstream use. This penalises models that ramble past
+            # max_new_tokens without producing a harm label.
+            pred_harm = (r.get("predicted_harm") or "safe").lower()
             if true_harm == "harmful" and pred_harm == "harmful":
                 tp += 1
             elif true_harm == "safe" and pred_harm == "harmful":
