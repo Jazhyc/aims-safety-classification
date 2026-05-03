@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
 """
-Select best distillation adapters from W&B and submit eval jobs.
+Select best distillation adapters by reading val_metrics.json from disk and submit eval jobs.
 
 Two modes (--mode):
   ood-val  (default)
       For every (teacher × student × condition) combination, pick the adapter
-      with the highest W&B val_harm_f1 across the LR sweep and submit one OOD
-      validation job for it. OOD datasets are ToxicChat (train) and Aegis
-      (validation). Already-evaluated adapters are skipped unless --force is
-      given.
+      with the highest training-time val_harm_f1 across the LR sweep and submit
+      one OOD validation job for it. OOD datasets are ToxicChat (train) and
+      Aegis (validation). Already-evaluated adapters are skipped unless --force
+      is given.
 
   test
-      Read OOD val results from disk, pick the single adapter with the highest
-      average F1 across all (teacher × student × condition) combinations, and
-      submit one full test-set eval job for it. Requires OOD val to have been
-      run first.
+      Read OOD val results from disk and select via marginal means (more robust
+      than picking the single global-best cell, which can be a lucky outlier):
+        1. Pick the teacher with the highest mean OOD F1 averaged across
+           (student × condition).
+        2. Pick the student with the highest mean OOD F1 averaged across
+           (teacher × condition).
+        3. Pick the condition that maximises the average of the chosen teacher's
+           per-condition marginal across students and the chosen student's
+           per-condition marginal across teachers — matches the per-condition
+           bars in the notebook plots.
+      Submit one full test-set eval job for that adapter. Requires OOD val to
+      have been run first.
 
 --cleanup removes every adapter in models/distillation-sweep/ that was not
 selected as best in test mode. Combine with --dry-run to preview deletions.
@@ -42,11 +50,6 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
-
-import wandb
-from dotenv import load_dotenv
-
-load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from slurm_utils import create_logs_dir, submit_sbatch, print_header
@@ -150,82 +153,68 @@ def compute_ood_val_f1(output_dir: Path) -> float | None:
     return sum(f1_scores) / len(f1_scores) if f1_scores else None
 
 
-# ── W&B query ─────────────────────────────────────────────────────────────────
+# ── Adapter discovery ─────────────────────────────────────────────────────────
 
 def fetch_all_distillation_adapters(
     traces_version: str,
 ) -> dict[tuple[str, str, str], list[tuple[Path, float]]]:
     """
-    Fetch all finished distillation sweep runs across every (teacher × student) W&B project.
-    Returns a mapping of
+    Enumerate adapter directories under DISTILLATION_SWEEP_DIR and read each
+    adapter's val_metrics.json (written by causal.py after training) to recover
+    val_harm_f1. Returns a mapping of
         (teacher_slug, student_slug, condition) -> [(adapter_path, val_harm_f1), ...]
-    listing every qualifying adapter (all LRs), deduplicated by adapter path
-    (most recently created run per path kept, since it overwrites disk weights).
+    listing every qualifying adapter (all LRs).
+
+    Adapter directory naming:
+        {teacher_slug}--{student_slug}--{cond_slug}--lr{lr}--{version}_adapter
     """
-    api = wandb.Api()
+    known_teachers = {slug for _, slug in TEACHER_MODELS}
+    known_students = {slug for _, slug in STUDENT_MODELS}
+    suffix = f"--{traces_version}_adapter"
+
     result: dict[tuple, list[tuple[Path, float]]] = defaultdict(list)
+    if not DISTILLATION_SWEEP_DIR.exists():
+        return result
 
-    for _, teacher_slug in TEACHER_MODELS:
-        for _, student_slug in STUDENT_MODELS:
-            project = f"distillation-sweep-{student_slug}--{teacher_slug}"
-            print(f"  Querying W&B: {project} ...", end=" ", flush=True)
-            try:
-                runs = api.runs(path=project, filters={"state": "finished"})
-            except Exception as e:
-                print(f"[warn] {e}")
-                continue
+    counts: dict[tuple[str, str], int] = defaultdict(int)
+    for adapter_path in sorted(DISTILLATION_SWEEP_DIR.iterdir()):
+        if not adapter_path.is_dir() or not adapter_path.name.endswith(suffix):
+            continue
+        stem = adapter_path.name[: -len(suffix)]
+        parts = stem.split("--")
+        if len(parts) != 4:
+            continue
+        teacher_slug, student_slug, cond_slug, _lr_part = parts
+        if teacher_slug not in known_teachers or student_slug not in known_students:
+            continue
+        condition = cond_slug.replace("-", "_")
+        if condition not in CONDITIONS:
+            continue
 
-            candidates: dict[Path, tuple] = {}  # adapter_path -> (condition, f1, created_at)
-            for run in runs:
-                run_condition = (
-                    run.summary.get("reasoning_traces_condition")
-                    or run.config.get("data", {}).get("reasoning_traces_condition")
-                )
-                if run_condition not in CONDITIONS:
-                    continue
+        metrics_path = adapter_path / "val_metrics.json"
+        if not metrics_path.exists():
+            continue
+        try:
+            metrics = json.loads(metrics_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        f1 = metrics.get("val_harm_f1")
+        if f1 is None:
+            continue
 
-                run_version = run.config.get("data", {}).get("traces_version")
-                if run_version is not None:
-                    if run_version != traces_version:
-                        continue
-                elif not run.name.endswith(f"--{traces_version}"):
-                    continue
+        result[(teacher_slug, student_slug, condition)].append((adapter_path, float(f1)))
+        counts[(teacher_slug, student_slug)] += 1
 
-                f1 = run.summary.get("val_harm_f1")
-                if f1 is None:
-                    continue
-
-                adapter_path_str = run.summary.get("adapter_path")
-                if not adapter_path_str:
-                    model_save_dir = run.config.get("paths", {}).get("model_save_dir")
-                    if not model_save_dir:
-                        continue
-                    adapter_path_str = model_save_dir + "_adapter"
-
-                adapter_path = Path(adapter_path_str)
-                if not adapter_path.is_absolute():
-                    adapter_path = PROJECT_ROOT / adapter_path
-                if not adapter_path.exists():
-                    continue
-
-                created_at = getattr(run, "created_at", "")
-                existing = candidates.get(adapter_path)
-                if existing is None or created_at > existing[2]:
-                    candidates[adapter_path] = (run_condition, float(f1), created_at)
-
-            for adapter_path, (run_condition, f1, _) in candidates.items():
-                key = (teacher_slug, student_slug, run_condition)
-                result[key].append((adapter_path, f1))
-
-            print(f"{len(candidates)} qualifying runs")
+    for (t, s), n in sorted(counts.items()):
+        print(f"  {t} / {s}: {n} adapter(s) with val_metrics.json")
 
     return result
 
 
-def fetch_best_by_wandb_f1(
+def fetch_best_by_val_f1(
     all_adapters: dict[tuple, list[tuple[Path, float]]]
 ) -> dict[tuple[str, str, str], tuple[Path, float]]:
-    """Select the adapter with the highest W&B val_harm_f1 per (teacher, student, condition)."""
+    """Select the adapter with the highest training val_harm_f1 per (teacher, student, condition)."""
     best = {}
     for key, adapters in all_adapters.items():
         if adapters:
@@ -258,17 +247,17 @@ def ood_val_mode(traces_version: str, dry_run: bool, force: bool):
     print(f"\nOOD datasets: ToxicChat (train split) + Aegis (validation split)")
     print(f"Output base:  {OOD_VAL_BASE_DIR}")
 
-    print("\nFetching all adapters from W&B ...")
+    print("\nEnumerating adapters from disk ...")
     all_adapters = fetch_all_distillation_adapters(traces_version)
     total = sum(len(v) for v in all_adapters.values())
     print(f"Found {total} adapter(s) across {len(all_adapters)} (teacher, student, condition) groups.")
 
-    best_adapters = fetch_best_by_wandb_f1(all_adapters)
-    print(f"Selected best LR per combination by W&B val_harm_f1: {len(best_adapters)} adapter(s).\n")
+    best_adapters = fetch_best_by_val_f1(all_adapters)
+    print(f"Selected best LR per combination by training val_harm_f1: {len(best_adapters)} adapter(s).\n")
 
     submitted, skipped = [], []
 
-    for (teacher_slug, student_slug, condition), (adapter_path, wandb_f1) in sorted(best_adapters.items()):
+    for (teacher_slug, student_slug, condition), (adapter_path, val_f1) in sorted(best_adapters.items()):
         student_hf = next(hf for hf, slug in STUDENT_MODELS if slug == student_slug)
         eval_condition = CONDITION_TO_EVAL[condition]
 
@@ -282,7 +271,7 @@ def ood_val_mode(traces_version: str, dry_run: bool, force: bool):
 
         run_label = f"distill-ood-val--{teacher_slug}--{student_slug}--{condition}--{adapter_path.name}"
         print(f"  {'[dry-run] ' if dry_run else ''}submit {adapter_path.name}  "
-              f"(wandb_f1={wandb_f1:.4f})")
+              f"(val_f1={val_f1:.4f})")
 
         if dry_run:
             continue
@@ -312,40 +301,104 @@ def test_mode(
     force: bool,
     do_cleanup: bool,
 ):
-    """Pick the single adapter with the highest OOD val F1 and submit one test eval."""
-    print(f"\nConfig: {eval_config}")
-    print("Selecting single best adapter across all combinations by OOD val F1 ...")
+    """Pick a teacher × student × condition via marginal means and submit one test eval.
 
-    print("\nFetching all adapters from W&B ...")
+    Selection procedure (more robust than picking the single global-best cell, which
+    can be a lucky outlier):
+      1. For each (teacher × student × condition) combo, take the best LR by OOD F1.
+      2. Pick the teacher with the highest mean OOD F1 across all (student, condition) cells.
+      3. Pick the student with the highest mean OOD F1 across all (teacher, condition) cells.
+      4. For the resulting (teacher, student) pair, pick the condition with the highest OOD F1.
+    """
+    print(f"\nConfig: {eval_config}")
+    print("Selecting (teacher, student) by marginal means, then best condition for the pair ...")
+
+    print("\nEnumerating adapters from disk ...")
     all_adapters = fetch_all_distillation_adapters(traces_version)
     print(f"Found {len(all_adapters)} (teacher, student, condition) groups.\n")
 
     if not dry_run:
         create_logs_dir()
 
-    # Score every adapter that has OOD val results; rank globally.
-    candidates: list[tuple[float, str, str, str, Path, float]] = []
+    # Step 1 — best LR per (teacher, student, condition) by OOD F1.
+    best_per_combo: dict[tuple[str, str, str], tuple[Path, float, float]] = {}
     no_ood: list[str] = []
-    for (teacher_slug, student_slug, condition), adapters in sorted(all_adapters.items()):
-        for adapter_path, wandb_f1 in adapters:
-            ood_output_dir = OOD_VAL_BASE_DIR / teacher_slug / student_slug / condition / adapter_path.name
-            ood_f1 = compute_ood_val_f1(ood_output_dir)
-            if ood_f1 is not None:
-                candidates.append((ood_f1, teacher_slug, student_slug, condition, adapter_path, wandb_f1))
-            else:
+    for (teacher_slug, student_slug, condition), adapters in all_adapters.items():
+        best = None
+        for adapter_path, val_f1 in adapters:
+            ood_dir = OOD_VAL_BASE_DIR / teacher_slug / student_slug / condition / adapter_path.name
+            ood_f1 = compute_ood_val_f1(ood_dir)
+            if ood_f1 is None:
                 no_ood.append(f"{teacher_slug}/{student_slug}/{condition}/{adapter_path.name}")
+                continue
+            if best is None or ood_f1 > best[1]:
+                best = (adapter_path, ood_f1, val_f1)
+        if best is not None:
+            best_per_combo[(teacher_slug, student_slug, condition)] = best
 
-    if not candidates:
+    if not best_per_combo:
         print("  [error] No adapters have OOD val results. Run --mode ood-val first.")
         return
 
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    print(f"Adapters scored on OOD val: {len(candidates)} (skipped {len(no_ood)} without OOD results)")
-    print("Top 5 by OOD val F1:")
-    for ood_f1, t, s, c, a, w in candidates[:5]:
-        print(f"  {ood_f1:.4f}  {t}/{s}/{c}/{a.name}  (wandb_f1={w:.4f})")
+    print(f"Combos with OOD val results: {len(best_per_combo)} (skipped {len(no_ood)} adapters without OOD results)")
 
-    best_ood_f1, teacher_slug, student_slug, condition, best_adapter, _ = candidates[0]
+    # Step 2 — marginal teacher means across (student, condition).
+    teacher_scores: dict[str, list[float]] = defaultdict(list)
+    student_scores: dict[str, list[float]] = defaultdict(list)
+    for (t, s, c), (_, ood_f1, _) in best_per_combo.items():
+        teacher_scores[t].append(ood_f1)
+        student_scores[s].append(ood_f1)
+    teacher_means = {t: sum(v) / len(v) for t, v in teacher_scores.items()}
+    student_means = {s: sum(v) / len(v) for s, v in student_scores.items()}
+
+    print("\nMarginal teacher means (across students × conditions):")
+    for t, m in sorted(teacher_means.items(), key=lambda x: -x[1]):
+        print(f"  {m:.4f}  {t}  (n={len(teacher_scores[t])})")
+    print("\nMarginal student means (across teachers × conditions):")
+    for s, m in sorted(student_means.items(), key=lambda x: -x[1]):
+        print(f"  {m:.4f}  {s}  (n={len(student_scores[s])})")
+
+    best_teacher = max(teacher_means, key=teacher_means.get)
+    best_student = max(student_means, key=student_means.get)
+
+    # Step 3 — best condition for the chosen pair, decided via marginals (matches
+    # the notebook plots): for each condition, take the mean of
+    #   - the teacher's marginal across students for that condition, and
+    #   - the student's marginal across teachers for that condition.
+    teacher_cond_marginal: dict[str, list[float]] = defaultdict(list)
+    student_cond_marginal: dict[str, list[float]] = defaultdict(list)
+    for (t, s, c), (_, ood_f1, _) in best_per_combo.items():
+        if t == best_teacher:
+            teacher_cond_marginal[c].append(ood_f1)
+        if s == best_student:
+            student_cond_marginal[c].append(ood_f1)
+
+    cond_blend: dict[str, float] = {}
+    for c in CONDITIONS:
+        t_marg = sum(teacher_cond_marginal[c]) / len(teacher_cond_marginal[c]) if teacher_cond_marginal[c] else None
+        s_marg = sum(student_cond_marginal[c]) / len(student_cond_marginal[c]) if student_cond_marginal[c] else None
+        if t_marg is None or s_marg is None:
+            continue
+        cond_blend[c] = (t_marg + s_marg) / 2
+
+    if not cond_blend:
+        print(f"  [error] No OOD val data for either marginal of {best_teacher}/{best_student}.")
+        return
+
+    print(f"\nSelected pair: {best_teacher} / {best_student}")
+    print("Conditions ranked by mean(teacher_marginal, student_marginal):")
+    for c in sorted(cond_blend, key=lambda x: -cond_blend[x]):
+        t_m = sum(teacher_cond_marginal[c]) / len(teacher_cond_marginal[c])
+        s_m = sum(student_cond_marginal[c]) / len(student_cond_marginal[c])
+        print(f"  blend={cond_blend[c]:.4f}  (teacher_marg={t_m:.4f}, student_marg={s_m:.4f})  {c}")
+
+    condition = max(cond_blend, key=cond_blend.get)
+    teacher_slug, student_slug = best_teacher, best_student
+    if (teacher_slug, student_slug, condition) not in best_per_combo:
+        print(f"  [error] Selected condition {condition} has no OOD val data for "
+              f"the {best_teacher}/{best_student} pair specifically.")
+        return
+    best_adapter, best_ood_f1, _ = best_per_combo[(teacher_slug, student_slug, condition)]
     student_hf = next(hf for hf, slug in STUDENT_MODELS if slug == student_slug)
     eval_condition = CONDITION_TO_EVAL[condition]
     label = f"{teacher_slug}/{student_slug}/{condition}"

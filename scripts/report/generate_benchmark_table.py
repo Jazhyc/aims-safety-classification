@@ -140,13 +140,13 @@ def fetch_wandb_results(
     return results
 
 
-def get_hardcoded_results() -> Dict[str, Dict[str, float]]:
+def get_hardcoded_results() -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, float]]]:
     """
-    Return hardcoded benchmark results.
-    Users can update these values from W&B or compute them directly.
+    Return hardcoded benchmark results as (baselines, our_methods) — display order
+    follows dict insertion order. The split removes the need for a separate
+    baseline_names list to classify and order rows.
     """
-    return {
-        # Baselines (from baselines_results.ipynb plot)
+    baselines = {
         "GPT-OSS-Safeguard 120B": {
             "wildguardmix": 0.871,
             "xstest": 0.944,
@@ -189,7 +189,8 @@ def get_hardcoded_results() -> Dict[str, Dict[str, float]]:
             "toxic_chat": 0.7333,
             "openai_moderation": 0.7472,
         },
-        # SFT Generation (from baselines_results.ipynb plot)
+    }
+    our_methods = {
         "SFT Generation": {
             "wildguardmix": 0.856,
             "xstest": 0.908,
@@ -197,15 +198,17 @@ def get_hardcoded_results() -> Dict[str, Dict[str, float]]:
             "toxic_chat": 0.664,
             "openai_moderation": 0.728,
         },
-        # Best Distillation: Gemma-3-12B (student) with GPT-OSS-120B (teacher)
+        # Best Distillation: GPT-OSS-120B (teacher) → Gemma-3-12B (student) / Human Intent.
+        # Selected by submit_distillation_eval.py --mode test using marginal-mean selection.
         "Distillation": {
-            "wildguardmix": 0.879,
-            "xstest": 0.923,
-            "aegis": 0.817,
-            "toxic_chat": 0.681,
-            "openai_moderation": 0.796,
+            "wildguardmix": 0.871,
+            "xstest": 0.934,
+            "aegis": 0.804,
+            "toxic_chat": 0.687,
+            "openai_moderation": 0.791,
         },
     }
+    return baselines, our_methods
 
 
 def rank_models_per_dataset(models: List[ModelResult]) -> Dict[str, List[tuple]]:
@@ -360,49 +363,32 @@ def main():
 
     args = parser.parse_args()
 
-    # Load results
+    # Load results — accept either the new (baselines, our_methods) shape or, for
+    # backward compatibility with --results-file, a flat dict + "_baselines" key.
     if args.results_file and args.results_file.exists():
         print(f"Loading results from {args.results_file}")
         with open(args.results_file, 'r') as f:
-            all_results = json.load(f)
-    elif args.use_wandb:
-        print("Fetching results from W&B...")
-        all_results = {}
-
-        # Fetch from different W&B projects
-        # TODO: Implement W&B fetching for baselines, sft, and distillation projects
-        # For now, fall back to hardcoded results
-        print("Using hardcoded benchmark results as fallback")
-        all_results = get_hardcoded_results()
+            payload = json.load(f)
+        baselines = payload.get("baselines", {})
+        our_methods = payload.get("our_methods", {})
+        if not baselines and not our_methods:
+            raise ValueError(
+                f"{args.results_file} must contain top-level 'baselines' and "
+                "'our_methods' dicts (each mapping model name → scores)."
+            )
     else:
-        print("Using hardcoded benchmark results")
-        all_results = get_hardcoded_results()
+        if args.use_wandb:
+            # TODO: Implement W&B fetching for baselines, sft, and distillation projects.
+            print("W&B fetching not implemented yet — using hardcoded benchmark results")
+        else:
+            print("Using hardcoded benchmark results")
+        baselines, our_methods = get_hardcoded_results()
 
-    # Parse dataset names
     datasets = [d.strip() for d in args.datasets.split(",")]
-    baseline_names = ["GPT-OSS-Safeguard 120B", "WildGuard", "LlamaGuard 4", "GuardReasoner 8B", "ShieldGemma 27B", "Nemotron Safety 4B"]
 
-    # Build model list
-    models = []
-
-    # Add baselines first (in order)
-    for name in baseline_names:
-        if name in all_results:
-            models.append(ModelResult(
-                name=name,
-                is_baseline=True,
-                scores=all_results[name],
-            ))
-
-    # Add our results in specific order: SFT Generation, Distillation
-    our_results_order = ["SFT Generation", "Distillation"]
-    for name in our_results_order:
-        if name in all_results:
-            models.append(ModelResult(
-                name=name,
-                is_baseline=False,
-                scores=all_results[name],
-            ))
+    # Build model list — order follows dict insertion order; baselines first.
+    models = [ModelResult(name=n, is_baseline=True,  scores=s) for n, s in baselines.items()]
+    models += [ModelResult(name=n, is_baseline=False, scores=s) for n, s in our_methods.items()]
 
     # Generate LaTeX
     latex_code = generate_latex_table(models, datasets)
