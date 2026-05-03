@@ -235,12 +235,21 @@ def get_hardcoded_results() -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict
         },
     }
     our_methods = {
-        "SFT Generation": {
+        "Llama 3.1 8B SFT Generation": {
             "wildguardmix": 0.856,
             "xstest": 0.908,
             "aegis": 0.803,
             "toxic_chat": 0.664,
             "openai_moderation": 0.728,
+        },
+        # Gemma 3 12B SFT generation — selected by OOD val F1 via submit_sft_eval.py
+        # --project sft-hyperparam-sweep-gemma --mode test.
+        "Gemma 3 12B SFT Generation": {
+            "wildguardmix": 0.857,
+            "xstest": 0.884,
+            "aegis": 0.811,
+            "toxic_chat": 0.727,
+            "openai_moderation": 0.761,
         },
         # Best Distillation: GPT-OSS-120B (teacher) → Gemma-3-12B (student) / Human Intent.
         # Selected by submit_distillation_eval.py --mode test using marginal-mean selection.

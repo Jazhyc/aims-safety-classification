@@ -10,10 +10,10 @@ model:
 
 training:
   epochs: 5
-  batch_size: 32
+  batch_size: 8
   learning_rate: 2e-4
   weight_decay: 0.00
-  gradient_accumulation: 1
+  gradient_accumulation: 4
   bf16: true
   torch_compile: false
   gradient_checkpointing: false

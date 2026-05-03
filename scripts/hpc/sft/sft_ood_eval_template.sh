@@ -19,9 +19,20 @@ source .venv/bin/activate
 #   EVAL_CONDITION          — finetuned_generation or finetuned_classification
 #   OUTPUT_DIR              — per-adapter output directory
 #   WANDB_RUN_NAME          — W&B run name
+#   BASE_MODEL              — (optional) HF model name override; defaults to the
+#                             eval config (Llama 3.1 8B). Set this to evaluate
+#                             adapters trained on a different base, e.g.
+#                             BASE_MODEL=google/gemma-3-12b-it for the Gemma sweep.
+
+# Build optional model.name override only when BASE_MODEL is set.
+MODEL_OVERRIDE=()
+if [ -n "${BASE_MODEL:-}" ]; then
+    MODEL_OVERRIDE=("model.name=${BASE_MODEL}")
+fi
 
 python scripts/eval_safety_classifier.py \
     --config-name=eval_ood_validation \
+    "${MODEL_OVERRIDE[@]}" \
     "finetuned.generation_adapter=${GENERATION_ADAPTER}" \
     "finetuned.classification_adapter=${CLASSIFICATION_ADAPTER}" \
     "experiment.conditions=[${EVAL_CONDITION}]" \

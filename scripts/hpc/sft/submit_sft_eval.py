@@ -14,13 +14,28 @@ Two modes (--mode):
       average F1 per mode (generation / classification), and submit a single
       full test-set eval job using the eval_sft_baselines config.
       Requires OOD val to have been run first.
+      If only one mode (e.g. only generation) has adapters, the test job is
+      submitted with `experiment.conditions` restricted to that mode so it
+      doesn't try to load a missing adapter.
 
 Usage:
-    python scripts/hpc/submit_sft_eval.py                      # OOD val (all adapters)
-    python scripts/hpc/submit_sft_eval.py --dry-run
-    python scripts/hpc/submit_sft_eval.py --mode test           # test eval (best by OOD F1)
-    python scripts/hpc/submit_sft_eval.py --mode test --dry-run
-    python scripts/hpc/submit_sft_eval.py --use-merged          # test mode with merged weights
+    python scripts/hpc/sft/submit_sft_eval.py                      # OOD val (all Llama adapters)
+    python scripts/hpc/sft/submit_sft_eval.py --dry-run
+    python scripts/hpc/sft/submit_sft_eval.py --mode test           # test eval (best by OOD F1)
+    python scripts/hpc/sft/submit_sft_eval.py --mode test --dry-run
+    python scripts/hpc/sft/submit_sft_eval.py --use-merged          # test mode with merged weights
+
+    # Gemma 3 12B sweep (generation-only). The project + base-model flags route
+    # the W&B query and the eval-job model.name override to Gemma. The script
+    # auto-detects that no classification adapters exist for that project and
+    # restricts the test job to `finetuned_generation`.
+    python scripts/hpc/sft/submit_sft_eval.py \\
+        --project sft-hyperparam-sweep-gemma \\
+        --base-model google/gemma-3-12b-it
+    python scripts/hpc/sft/submit_sft_eval.py \\
+        --project sft-hyperparam-sweep-gemma \\
+        --base-model google/gemma-3-12b-it \\
+        --mode test
 """
 
 import argparse
@@ -176,10 +191,12 @@ def _merged_path_for(adapter_path: str) -> str:
 
 # ── Mode implementations ──────────────────────────────────────────────────────
 
-def ood_val_mode(project: str, dry_run: bool, force: bool):
+def ood_val_mode(project: str, dry_run: bool, force: bool, base_model: str | None):
     """Submit one OOD validation job per adapter (all LRs × both modes)."""
     print(f"\nOOD datasets: ToxicChat (train split) + Aegis (validation split)")
     print(f"Output base:  {OOD_VAL_BASE_DIR}")
+    if base_model:
+        print(f"Base model override: {base_model}")
 
     submitted, skipped = [], []
 
@@ -209,6 +226,8 @@ def ood_val_mode(project: str, dry_run: bool, force: bool):
                 "OUTPUT_DIR":             str(output_dir),
                 "WANDB_RUN_NAME":         f"sft-ood-val--{mode_label}--{adapter_name}",
             }
+            if base_model:
+                export_vars["BASE_MODEL"] = base_model
             try:
                 job_id = submit_sbatch(OOD_VAL_TEMPLATE, export_vars)
                 print(f"    ✓ job {job_id}  (logs/slurm/sft_ood_eval-{job_id}.out)")
@@ -219,9 +238,17 @@ def ood_val_mode(project: str, dry_run: bool, force: bool):
     print(f"\nSubmitted {len(submitted)}  |  skipped (done) {len(skipped)}")
 
 
-def test_mode(project: str, config_name: str, use_merged: bool, dry_run: bool):
-    """Pick best adapter per mode by OOD val F1 and submit full test-set eval."""
+def test_mode(project: str, config_name: str, use_merged: bool, dry_run: bool, base_model: str | None):
+    """Pick best adapter per mode by OOD val F1 and submit full test-set eval.
+
+    If only one mode (generation or classification) has adapters in the project,
+    the test job is restricted to that condition via `experiment.conditions=[...]`
+    so the eval doesn't try to load a missing adapter. This is what enables the
+    Gemma 3 12B sweep (generation-only) to reuse this script — see module docstring.
+    """
     print(f"\nConfig: {config_name}")
+    if base_model:
+        print(f"Base model override: {base_model}")
     print("Selecting best adapter per mode by average OOD val F1 ...")
 
     best: dict[str, tuple[str, float]] = {}  # mode_label -> (adapter_path, ood_f1)
@@ -295,14 +322,31 @@ def test_mode(project: str, config_name: str, use_merged: bool, dry_run: bool):
             except subprocess.CalledProcessError as e:
                 print(f"✗ Submission failed for {label}: {e.stderr}")
     else:
+        # Restrict experiment.conditions to whichever modes actually have an adapter.
+        # Without this, the eval would try to load adapter "MISSING" for the
+        # absent mode and crash. Required for the generation-only Gemma sweep.
+        # NOTE: sbatch --export uses comma as the variable separator, so we can
+        # only safely pass EXPERIMENT_CONDITIONS when it's a single value. When
+        # both modes have adapters we omit it and the config default runs both.
+        active_conditions = []
+        if gen_adapter:
+            active_conditions.append("finetuned_generation")
+        if clf_adapter:
+            active_conditions.append("finetuned_classification")
+
         export_vars = {
             "GENERATION_ADAPTER":     gen_adapter or "MISSING",
             "CLASSIFICATION_ADAPTER": clf_adapter or "MISSING",
             "CONFIG_NAME":            config_name,
         }
+        if len(active_conditions) == 1:
+            export_vars["EXPERIMENT_CONDITIONS"] = active_conditions[0]
+        if base_model:
+            export_vars["BASE_MODEL"] = base_model
         try:
             job_id = submit_sbatch(TEST_EVAL_TEMPLATE, export_vars)
             print(f"\n✓ Submitted test eval job: {job_id}")
+            print(f"  Conditions: {','.join(active_conditions)}")
             print(f"  Monitor: squeue -j {job_id}")
             print(f"  Logs:    logs/slurm/sft_eval-{job_id}.out")
         except subprocess.CalledProcessError as e:
@@ -338,12 +382,24 @@ def main():
             "Run scripts/dpo/merge_adapter.py first."
         ),
     )
+    parser.add_argument(
+        "--base-model", type=str, default=None,
+        help=(
+            "HF model name override forwarded to eval jobs as a Hydra "
+            "`model.name=...` override. Required when the adapters being "
+            "evaluated were trained on a base other than the eval config "
+            "default (Llama 3.1 8B). For the Gemma sweep, pass "
+            "`--base-model google/gemma-3-12b-it` together with "
+            "`--project sft-hyperparam-sweep-gemma`."
+        ),
+    )
     args = parser.parse_args()
 
     print_header(
         "SFT Eval",
         f"mode={args.mode}  project={args.project}"
         + (f"  config={args.config_name}" if args.mode == "test" else "")
+        + (f"  base_model={args.base_model}" if args.base_model else "")
         + (" [merged]" if args.use_merged else "")
         + (" [DRY RUN]" if args.dry_run else ""),
     )
@@ -352,9 +408,9 @@ def main():
         create_logs_dir()
 
     if args.mode == "ood-val":
-        ood_val_mode(args.project, args.dry_run, args.force)
+        ood_val_mode(args.project, args.dry_run, args.force, args.base_model)
     else:
-        test_mode(args.project, args.config_name, args.use_merged, args.dry_run)
+        test_mode(args.project, args.config_name, args.use_merged, args.dry_run, args.base_model)
 
 
 if __name__ == "__main__":
