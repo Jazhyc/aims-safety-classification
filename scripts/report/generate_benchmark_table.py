@@ -162,12 +162,33 @@ def get_hardcoded_results() -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict
             "toxic_chat": 0.516,
             "openai_moderation": 0.761,
         },
+        "Gemma 3 12B Generation": {
+            "wildguardmix": 0.853,
+            "xstest": 0.902,
+            "aegis": 0.820,
+            "toxic_chat": 0.644,
+            "openai_moderation": 0.793,
+        },
         "GPT-OSS 120B": {
             "wildguardmix": 0.884,
             "xstest": 0.911,
             "aegis": 0.806,
             "toxic_chat": 0.641,
             "openai_moderation": 0.775,
+        },
+        "GPT-5.4": {
+            "wildguardmix": 0.880,
+            "xstest": 0.920,
+            "aegis": 0.809,
+            "toxic_chat": 0.676,
+            "openai_moderation": 0.791,
+        },
+        "Claude Sonnet 4.6": {
+            "wildguardmix": 0.838,
+            "xstest": 0.860,
+            "aegis": 0.762,
+            "toxic_chat": 0.667,
+            "openai_moderation": 0.785,
         },
         # ── Specialised safety models ────────────────────────────────────────
         "GPT-OSS-Safeguard 120B": {

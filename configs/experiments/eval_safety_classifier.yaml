@@ -105,6 +105,23 @@ nemotron:
   name: "nvidia/Nemotron-Content-Safety-Reasoning-4B"
   thinking: true  # /think mode; set false for /no_think (faster, no reasoning trace)
 
+# OpenRouter closed-source baselines (vanilla_generation only, to keep cost down).
+# Requires OPENROUTER_API_KEY in env. Runs after the main vLLM phase; no GPU needed.
+# Set enabled: false to skip. Each model runs vanilla_generation across all `datasets`.
+openrouter:
+  enabled: false
+  models:
+    - "openai/gpt-5.4"
+    - "anthropic/claude-sonnet-4.6"
+  conditions:
+    - "vanilla_generation"
+  max_workers: 8
+  max_retries: 3
+  max_tokens: 2048   # falls back to generation.max_new_tokens
+  temperature: 0.0
+  site_url: null     # optional; set to your project URL for OpenRouter app analytics
+  app_name: null     # optional; X-Title header
+
 # Dataset configurations - cycles through all datasets
 datasets:
   - name: "annotated-intents"

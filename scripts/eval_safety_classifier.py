@@ -69,8 +69,19 @@ from intention_jailbreak.model_generation.safety_classifier import (
     run_guardreasoner_classification,
     run_shieldgemma_classification,
     run_nemotron_classification,
+    run_vanilla_generation_openrouter,
     run_condition_on_dataset,
 )
+
+
+PRIOR_WORK_CONDITIONS = {
+    "llamaguard_classification",
+    "wildguard_classification",
+    "safeguard_classification",
+    "guardreasoner_classification",
+    "shieldgemma_classification",
+    "nemotron_classification",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +401,22 @@ def main(cfg: DictConfig):
     needs_guardreasoner = "guardreasoner_classification" in conditions
     needs_shieldgemma = "shieldgemma_classification" in conditions
     needs_nemotron = "nemotron_classification" in conditions
+    needs_main_model = bool(set(conditions) - PRIOR_WORK_CONDITIONS)
+    needs_prior_work = (
+        needs_llamaguard or needs_wildguard or needs_safeguard
+        or needs_guardreasoner or needs_shieldgemma or needs_nemotron
+    )
+
+    openrouter_cfg = config.get("openrouter", {}) or {}
+    openrouter_models = openrouter_cfg.get("models", []) if openrouter_cfg.get("enabled", False) else []
+    openrouter_conditions = openrouter_cfg.get("conditions", ["vanilla_generation"])
+    if isinstance(openrouter_conditions, str):
+        openrouter_conditions = [openrouter_conditions]
+    for cond in openrouter_conditions:
+        if cond != "vanilla_generation":
+            raise ValueError(
+                f"OpenRouter backend currently only supports 'vanilla_generation', got: {cond}"
+            )
 
     llamaguard_model = llamaguard_cfg.get("name", "meta-llama/Llama-Guard-4-12B")
     wildguard_model = wildguard_cfg.get("name", "allenai/wildguard")
@@ -462,37 +489,9 @@ def main(cfg: DictConfig):
             config=config,
         )
 
-    # Load main model
-    print(f"\n=== Loading Model: {model_cfg['name']} ===")
-    if use_merged:
-        print("Merged model mode: LoRA disabled (weights already baked in)")
-    llm_extra: Dict[str, Any] = {"limit_mm_per_prompt": {"image": 0}}
-    if needs_finetuned_lora:
-        llm_extra["enable_lora"] = True
-        llm_extra["max_lora_rank"] = lora_cfg.get("rank", 16)
-        llm_extra["max_loras"] = 4
-        print("LoRA enabled for fine-tuned conditions")
-    llm = _load_vllm(model_cfg["name"], vllm_cfg, **llm_extra)
-
-    (
-        generation_lora_request,
-        classification_lora_request,
-        reasoning_classification_lora_request,
-        reasoning_human_intent_lora_request,
-        reasoning_synthetic_lora_request,
-    ) = _setup_lora_requests(finetuned_cfg) if not use_merged else (None, None, None, None, None)
-
-    if use_merged:
-        tokenizer_path = model_cfg["name"]
-    else:
-        generation_adapter = finetuned_cfg.get("generation_adapter")
-        tokenizer_path = (
-            generation_adapter
-            if generation_adapter and os.path.exists(generation_adapter)
-            else model_cfg["name"]
-        )
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-
+    # Shared state across main / prior-work / OpenRouter phases
+    all_metrics: Dict[str, dict] = {}
+    result_files_written: List[Path] = []
     sampling_params = SamplingParams(
         max_tokens=gen_cfg.get("max_new_tokens", 64),
         temperature=gen_cfg.get("temperature", 0.0),
@@ -506,74 +505,113 @@ def main(cfg: DictConfig):
         stop=["<|eot_id|>", "<|end_header_id|>", "<|start_header_id|>", "[INST]", "[/INST]"],
     )
 
-    # Run main-model conditions on each dataset
-    all_metrics: Dict[str, dict] = {}
-    result_files_written: List[Path] = []
+    llm = None
+    tokenizer = None
+    generation_lora_request = None
+    classification_lora_request = None
+    reasoning_classification_lora_request = None
+    reasoning_human_intent_lora_request = None
+    reasoning_synthetic_lora_request = None
     model_slug = model_cfg["name"].replace("/", "_")
 
-    for dataset_idx, data_cfg in enumerate(datasets_cfg):
-        dataset_name = data_cfg.get("name", f"dataset_{dataset_idx}")
-        print(f"\n{'='*80}")
-        print(f"=== Dataset: {dataset_name} ===")
-        print(f"{'='*80}")
+    if needs_main_model:
+        # Load main model
+        print(f"\n=== Loading Model: {model_cfg['name']} ===")
+        if use_merged:
+            print("Merged model mode: LoRA disabled (weights already baked in)")
+        llm_extra: Dict[str, Any] = {"limit_mm_per_prompt": {"image": 0}}
+        if needs_finetuned_lora:
+            llm_extra["enable_lora"] = True
+            llm_extra["max_lora_rank"] = lora_cfg.get("rank", 16)
+            llm_extra["max_loras"] = 4
+            print("LoRA enabled for fine-tuned conditions")
+        llm = _load_vllm(model_cfg["name"], vllm_cfg, **llm_extra)
 
-        test_dataset, harm_column, has_intent = load_test_dataset(data_cfg)
+        (
+            generation_lora_request,
+            classification_lora_request,
+            reasoning_classification_lora_request,
+            reasoning_human_intent_lora_request,
+            reasoning_synthetic_lora_request,
+        ) = _setup_lora_requests(finetuned_cfg) if not use_merged else (None, None, None, None, None)
 
-        model_intents = None
-        if "vanilla_with_model_intent" in conditions and generation_lora_request is not None:
-            model_intents = generate_model_intents(llm, generation_lora_request, test_dataset, sampling_params)
-
-        for condition in conditions:
-            print(f"\n--- Condition: {condition} ---")
-
-            if condition == "finetuned_generation" and generation_lora_request is None and not use_merged:
-                print(f"  Skipping {condition} (no generation adapter)")
-                continue
-            if condition == "finetuned_classification" and classification_lora_request is None and not use_merged:
-                print(f"  Skipping {condition} (no classification adapter)")
-                continue
-            if condition == "finetuned_reasoning_classification" and reasoning_classification_lora_request is None and not use_merged:
-                print(f"  Skipping {condition} (no reasoning classification adapter)")
-                continue
-            if condition == "finetuned_reasoning_human_intent" and reasoning_human_intent_lora_request is None and not use_merged:
-                print(f"  Skipping {condition} (no reasoning human intent adapter)")
-                continue
-            if condition == "finetuned_reasoning_synthetic_intent" and reasoning_synthetic_lora_request is None and not use_merged:
-                print(f"  Skipping {condition} (no reasoning synthetic adapter)")
-                continue
-            if condition in ("vanilla_with_human_intent", "zeroshot_cot_classification_with_intent") and not has_intent:
-                print(f"  Skipping {condition} (no intent column)")
-                continue
-            if condition == "vanilla_with_model_intent" and model_intents is None:
-                print(f"  Skipping {condition} (no model intents)")
-                continue
-
-            t0 = time.monotonic()
-            results = run_condition_on_dataset(
-                condition=condition,
-                llm=llm,
-                tokenizer=tokenizer,
-                test_dataset=test_dataset,
-                sampling_params=sampling_params,
-                harm_column=harm_column,
-                has_intent=has_intent,
-                model_intents=model_intents,
-                generation_lora_request=generation_lora_request,
-                classification_lora_request=classification_lora_request,
-                reasoning_classification_lora_request=reasoning_classification_lora_request,
-                reasoning_human_intent_lora_request=reasoning_human_intent_lora_request,
-                reasoning_synthetic_lora_request=reasoning_synthetic_lora_request,
+        if use_merged:
+            tokenizer_path = model_cfg["name"]
+        else:
+            generation_adapter = finetuned_cfg.get("generation_adapter")
+            tokenizer_path = (
+                generation_adapter
+                if generation_adapter and os.path.exists(generation_adapter)
+                else model_cfg["name"]
             )
-            elapsed_s = time.monotonic() - t0
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+    else:
+        print("\n=== Skipping main model load (no main-model conditions requested) ===")
 
-            _process_results(
-                results, condition, dataset_name, data_cfg, paths_cfg,
-                model_slug, wandb_run, all_metrics, result_files_written,
-                elapsed_s=elapsed_s,
-            )
+    if needs_main_model:
+        for dataset_idx, data_cfg in enumerate(datasets_cfg):
+            dataset_name = data_cfg.get("name", f"dataset_{dataset_idx}")
+            print(f"\n{'='*80}")
+            print(f"=== Dataset: {dataset_name} ===")
+            print(f"{'='*80}")
+
+            test_dataset, harm_column, has_intent = load_test_dataset(data_cfg)
+
+            model_intents = None
+            if "vanilla_with_model_intent" in conditions and generation_lora_request is not None:
+                model_intents = generate_model_intents(llm, generation_lora_request, test_dataset, sampling_params)
+
+            for condition in conditions:
+                print(f"\n--- Condition: {condition} ---")
+
+                if condition == "finetuned_generation" and generation_lora_request is None and not use_merged:
+                    print(f"  Skipping {condition} (no generation adapter)")
+                    continue
+                if condition == "finetuned_classification" and classification_lora_request is None and not use_merged:
+                    print(f"  Skipping {condition} (no classification adapter)")
+                    continue
+                if condition == "finetuned_reasoning_classification" and reasoning_classification_lora_request is None and not use_merged:
+                    print(f"  Skipping {condition} (no reasoning classification adapter)")
+                    continue
+                if condition == "finetuned_reasoning_human_intent" and reasoning_human_intent_lora_request is None and not use_merged:
+                    print(f"  Skipping {condition} (no reasoning human intent adapter)")
+                    continue
+                if condition == "finetuned_reasoning_synthetic_intent" and reasoning_synthetic_lora_request is None and not use_merged:
+                    print(f"  Skipping {condition} (no reasoning synthetic adapter)")
+                    continue
+                if condition in ("vanilla_with_human_intent", "zeroshot_cot_classification_with_intent") and not has_intent:
+                    print(f"  Skipping {condition} (no intent column)")
+                    continue
+                if condition == "vanilla_with_model_intent" and model_intents is None:
+                    print(f"  Skipping {condition} (no model intents)")
+                    continue
+
+                t0 = time.monotonic()
+                results = run_condition_on_dataset(
+                    condition=condition,
+                    llm=llm,
+                    tokenizer=tokenizer,
+                    test_dataset=test_dataset,
+                    sampling_params=sampling_params,
+                    harm_column=harm_column,
+                    has_intent=has_intent,
+                    model_intents=model_intents,
+                    generation_lora_request=generation_lora_request,
+                    classification_lora_request=classification_lora_request,
+                    reasoning_classification_lora_request=reasoning_classification_lora_request,
+                    reasoning_human_intent_lora_request=reasoning_human_intent_lora_request,
+                    reasoning_synthetic_lora_request=reasoning_synthetic_lora_request,
+                )
+                elapsed_s = time.monotonic() - t0
+
+                _process_results(
+                    results, condition, dataset_name, data_cfg, paths_cfg,
+                    model_slug, wandb_run, all_metrics, result_files_written,
+                    elapsed_s=elapsed_s,
+                )
 
     # Free the main model before loading any prior-work baseline
-    if needs_llamaguard or needs_wildguard or needs_safeguard or needs_guardreasoner or needs_shieldgemma or needs_nemotron:
+    if needs_main_model and needs_prior_work:
         print(f"\n{'='*60}")
         print("Cleaning up main model before loading baseline models...")
         print(f"{'='*60}")
@@ -686,6 +724,45 @@ def main(cfg: DictConfig):
         )
         del nemotron_llm
         _free_vllm()
+
+    # OpenRouter closed-source baselines (vanilla_generation only) — no GPU usage
+    if openrouter_models:
+        or_max_tokens = openrouter_cfg.get("max_tokens", gen_cfg.get("max_new_tokens", 2048))
+        or_temperature = openrouter_cfg.get("temperature", gen_cfg.get("temperature", 0.0))
+        or_max_workers = openrouter_cfg.get("max_workers", 8)
+        or_max_retries = openrouter_cfg.get("max_retries", 3)
+        or_site_url = openrouter_cfg.get("site_url")
+        or_app_name = openrouter_cfg.get("app_name")
+
+        print(f"\n{'='*60}")
+        print(f"OpenRouter baselines: {len(openrouter_models)} model(s) × "
+              f"{len(openrouter_conditions)} condition(s)")
+        print(f"{'='*60}")
+
+        for or_model in openrouter_models:
+            print(f"\n=== OpenRouter model: {or_model} ===")
+            for condition in openrouter_conditions:
+                _run_baseline_on_datasets(
+                    run_fn=lambda ds, sp, hc, _m=or_model: run_vanilla_generation_openrouter(
+                        model_name=_m,
+                        test_dataset=ds,
+                        harm_column=hc,
+                        max_tokens=or_max_tokens,
+                        temperature=or_temperature,
+                        max_workers=or_max_workers,
+                        max_retries=or_max_retries,
+                        site_url=or_site_url,
+                        app_name=or_app_name,
+                    ),
+                    condition=condition,
+                    model_slug=or_model.replace("/", "_"),
+                    datasets_cfg=datasets_cfg,
+                    sampling_params=sampling_params,
+                    paths_cfg=paths_cfg,
+                    wandb_run=wandb_run,
+                    all_metrics=all_metrics,
+                    result_files_written=result_files_written,
+                )
 
     # Upload results artifact if configured
     results_name = artifacts_cfg.get("results_name")

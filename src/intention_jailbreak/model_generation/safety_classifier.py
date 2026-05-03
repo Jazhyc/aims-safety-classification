@@ -7,9 +7,13 @@ All functions accept a vLLM LLM instance and return a list of result dicts with 
 """
 
 import json
+import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Tuple
 
+from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 from vllm.sampling_params import StructuredOutputsParams as GuidedDecodingParams
@@ -410,6 +414,128 @@ def run_vanilla_generation(
             "condition": "vanilla_generation",
         })
     return results
+
+
+def run_vanilla_generation_openrouter(
+    model_name: str,
+    test_dataset,
+    harm_column: str,
+    max_tokens: int = 2048,
+    temperature: float = 0.0,
+    max_workers: int = 8,
+    max_retries: int = 3,
+    site_url: Optional[str] = None,
+    app_name: Optional[str] = None,
+) -> List[dict]:
+    """
+    Vanilla generation via OpenRouter: prompt -> intent + harm (JSON).
+
+    Mirrors `run_vanilla_generation` but uses OpenRouter's OpenAI-compatible API
+    instead of vLLM. JSON output is requested via `response_format={"type":"json_object"}`;
+    parsing falls back to regex on malformed output (same behavior as the vLLM path).
+
+    Requires the `OPENROUTER_API_KEY` environment variable.
+    """
+    from openai import OpenAI
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "OPENROUTER_API_KEY is not set. Export it in your shell or add it to your .env file."
+        )
+
+    extra_headers: dict = {}
+    if site_url:
+        extra_headers["HTTP-Referer"] = site_url
+    if app_name:
+        extra_headers["X-Title"] = app_name
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key,
+        **({"default_headers": extra_headers} if extra_headers else {}),
+    )
+
+    examples = list(test_dataset)
+    print(f"\n=== Running: Vanilla Generation via OpenRouter ({model_name}, {len(examples)} prompts) ===")
+    print(f"  max_workers={max_workers}  max_retries={max_retries}  max_tokens={max_tokens}")
+
+    def call_api(idx: int, ex: dict):
+        messages = [
+            {"role": "system", "content": GENERATION_JSON_SYSTEM_PROMPT},
+            {"role": "user", "content": ex["prompt"]},
+        ]
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    response_format={"type": "json_object"},
+                )
+                content = response.choices[0].message.content or ""
+                completion_tokens = 0
+                if response.usage and getattr(response.usage, "completion_tokens", None):
+                    completion_tokens = response.usage.completion_tokens
+                return idx, content, completion_tokens
+            except Exception as e:
+                last_exc = e
+                if attempt < max_retries - 1:
+                    wait = 2 ** attempt
+                    print(f"  [retry {attempt + 1}/{max_retries}] idx={idx}: {e} — {wait}s")
+                    time.sleep(wait)
+        raise RuntimeError(f"All {max_retries} attempts failed for idx={idx}") from last_exc
+
+    results: List[Optional[dict]] = [None] * len(examples)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(call_api, i, ex): i for i, ex in enumerate(examples)}
+        with tqdm(total=len(examples), desc=f"OpenRouter [{model_name}]", unit="req") as pbar:
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    idx, content, num_tokens = future.result()
+                except Exception as e:
+                    print(f"  FAILED idx={idx}: {e}")
+                    content, num_tokens = "", 0
+
+                ex = examples[idx]
+                predicted_intent = predicted_harm = None
+                try:
+                    parsed = json.loads(content)
+                    predicted_intent = parsed.get("intent")
+                    harm_value = (parsed.get("harm") or "").lower()
+                    predicted_harm = harm_value if harm_value in BINARY_LABELS else None
+                except (json.JSONDecodeError, AttributeError):
+                    m = re.search(r'"intent"\s*:\s*"([^"]*)', content)
+                    if m:
+                        predicted_intent = m.group(1)
+                    m = re.search(r'"harm"\s*:\s*"(harmful|safe)"', content, re.IGNORECASE)
+                    if m:
+                        predicted_harm = m.group(1).lower()
+                    else:
+                        _, predicted_harm = extract_intent_and_harm(content)
+                        if predicted_harm is None:
+                            predicted_harm = extract_harm_label(content)
+
+                true_harm = ex.get(harm_column)
+                results[idx] = {
+                    "id": ex.get("id", ""),
+                    "prompt": ex["prompt"],
+                    "true_intent": ex.get("intent"),
+                    "generated_intent": predicted_intent,
+                    "true_harm": true_harm,
+                    "true_harm_binary": map_harm_to_binary(true_harm),
+                    "predicted_harm": predicted_harm,
+                    "raw_generation": content,
+                    "num_tokens": num_tokens,
+                    "condition": "vanilla_generation",
+                    "openrouter_model": model_name,
+                }
+                pbar.update(1)
+
+    return [r for r in results if r is not None]
 
 
 def run_vanilla_classification_with_intent(
