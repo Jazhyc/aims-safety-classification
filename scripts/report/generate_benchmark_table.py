@@ -147,6 +147,29 @@ def get_hardcoded_results() -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict
     baseline_names list to classify and order rows.
     """
     baselines = {
+        # ── Prompting baselines (no training) ────────────────────────────────
+        "Llama 3.1 8B CoT Classification": {
+            "wildguardmix": 0.803,
+            "xstest": 0.876,
+            "aegis": 0.801,
+            "toxic_chat": 0.492,
+            "openai_moderation": 0.740,
+        },
+        "Llama 3.1 8B CoT Generation": {
+            "wildguardmix": 0.762,
+            "xstest": 0.904,
+            "aegis": 0.800,
+            "toxic_chat": 0.516,
+            "openai_moderation": 0.761,
+        },
+        "GPT-OSS 120B (CoT)": {
+            "wildguardmix": 0.884,
+            "xstest": 0.911,
+            "aegis": 0.806,
+            "toxic_chat": 0.641,
+            "openai_moderation": 0.775,
+        },
+        # ── Specialised safety models ────────────────────────────────────────
         "GPT-OSS-Safeguard 120B": {
             "wildguardmix": 0.871,
             "xstest": 0.944,
