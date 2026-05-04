@@ -47,6 +47,10 @@ dataset:
     harm_column: "Annotator Harm"
   num_samples: null
   seed: 42
+  # Optional: path to a pre-built JSON list of sample dicts (keys: prompt,
+  # prompt_harm_label, split, ...). When set, bypasses Hub loading entirely.
+  # See scripts/hpc/ablations/prepare_ablation_samples.py for an example.
+  samples_json: null
 
 generation:
   max_new_tokens: 16384

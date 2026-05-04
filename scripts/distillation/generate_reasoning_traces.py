@@ -190,34 +190,34 @@ def parse_model_output(
     Returns:
         dict with keys: prompt_intent, prompt_harm, reasoning, thinking_trace.
     """
-    # Handle pre-extracted thinking (e.g., from vLLM's reasoning_content field)
-    if pre_extracted_thinking is not None:
-        # Remove the thinking block from raw_text before parsing to avoid matching
-        # placeholder text or echoed template instructions from the thinking phase.
-        # (Models with native thinking often emit "Reasoning: ..." templates during
-        # reasoning that get mixed into the output; removing thinking gives us clean output.)
-        remaining_text = raw_text.replace(pre_extracted_thinking, "", 1).strip()
-        parsed = _parse_content_fields(remaining_text)
-        parsed["thinking_trace"] = pre_extracted_thinking.strip()
-        return parsed
+    # Resolve the thinking block, then parse the post-thinking text with
+    # _parse_content_fields (LAST-match, IGNORECASE — robust against residual
+    # "Intent:"/"Reasoning:" markers that the model may emit during its
+    # thinking phase, e.g. gpt-oss harmony "analysis...assistantfinal..." traces).
+    #
+    # We deliberately do NOT use tokenizer.parse_response here: HF's schema
+    # parser matches FIRST occurrence per regex and applies no IGNORECASE flag,
+    # which causes "Intent:" markers inside residual thinking to be picked up
+    # as the prompt_intent field and reasoning to over-capture.
+    if pre_extracted_thinking is None:
+        # Auto-detect thinking as everything before the first "Reasoning:" marker.
+        # Works for gpt-oss harmony format (analysis section terminated by
+        # assistantfinal then "Reasoning:") and for non-thinking models (no
+        # leading content → empty thinking, identical to the fallback path).
+        m = re.search(r'Reasoning:', raw_text, re.IGNORECASE)
+        if m and m.start() > 0:
+            thinking = raw_text[:m.start()]
+            content = raw_text[m.start():]
+        else:
+            thinking = ""
+            content = raw_text
+    else:
+        thinking = pre_extracted_thinking
+        content = raw_text.replace(pre_extracted_thinking, "", 1).strip()
 
-    # Use tokenizer's schema-based parser if available (HF transformers ≥ 5.5.0)
-    if tokenizer is not None and hasattr(tokenizer, "parse_response"):
-        try:
-            parsed_dict = tokenizer.parse_response(raw_text)
-            return {
-                "prompt_intent": parsed_dict.get("prompt_intent", "").strip() or None,
-                "prompt_harm": _normalize_harm_label(parsed_dict.get("prompt_harm", "")),
-                "reasoning": parsed_dict.get("reasoning", "").strip(),
-                "thinking_trace": parsed_dict.get("thinking", "").strip(),
-            }
-        except Exception as e:
-            # Fall back to manual parsing if schema parsing fails
-            print(f"  Warning: schema-based parsing failed ({e}), falling back to regex")
-            return _parse_content_fields(raw_text)
-
-    # Fallback: manual regex-based parsing
-    return _parse_content_fields(raw_text)
+    parsed = _parse_content_fields(content)
+    parsed["thinking_trace"] = thinking.strip()
+    return parsed
 
 
 def _parse_content_fields(text: str) -> dict:
@@ -723,8 +723,22 @@ def main(cfg: DictConfig):
     print(f"\nConditions : {conditions}")
     print(f"Backend    : {backend}")
 
-    print("\n=== Loading samples from all splits ===")
-    samples = load_all_samples(dataset_cfg)
+    samples_json = dataset_cfg.get("samples_json")
+    if samples_json:
+        print(f"\n=== Loading samples from {samples_json} (overrides Hub loading) ===")
+        with open(samples_json) as f:
+            samples = json.load(f)
+        print(f"  Loaded {len(samples)} samples")
+        if samples:
+            missing = [k for k in ("prompt", "prompt_harm_label", "split") if k not in samples[0]]
+            if missing:
+                raise ValueError(
+                    f"samples_json records are missing required keys: {missing}. "
+                    f"Found keys: {list(samples[0].keys())}"
+                )
+    else:
+        print("\n=== Loading samples from all splits ===")
+        samples = load_all_samples(dataset_cfg)
     if not samples:
         print("No samples loaded. Exiting.")
         return

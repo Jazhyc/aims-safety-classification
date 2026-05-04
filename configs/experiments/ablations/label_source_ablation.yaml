@@ -1,0 +1,107 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Label-source ablation
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Goal: isolate (a) the contribution of human relabeling and (b) the
+# contribution of training on the *hard* uncertainty-filtered subset, by
+# comparing three conditions on the same distillation pipeline:
+#
+#   hard_human       (existing main result, NOT re-run by this config)
+#       Hard subset prompts + 5-level human-relabeled "Annotator Harm" labels.
+#
+#   hard_original    (this config)
+#       Hard subset prompts (deduped to one row per Prompt) +
+#       original WildGuardMix `prompt_harm_label` (binary harmful/unharmful)
+#       sourced via the annotated dataset's `Dataset Harm` column.
+#
+#   random_original  (this config)
+#       Random sample from `allenai/wildguardmix` (wildguardtrain),
+#       size-matched to hard_original, excluding any prompt that appears in
+#       the annotated-intents train split, stratified on
+#       (prompt_harm_label, adversarial), seed 42.
+#
+# Pipeline: synthetic_intent distillation. Teacher feeds the binary WG label
+# to the student via the existing teacher_ground_truth template; teacher and
+# student outputs remain in the binary format the rest of the pipeline expects
+# (see prompt_templates.py and causal._normalise_harm).
+#
+# Why the disagreement filter is OFF: empirically the gpt-oss-120b teacher
+# matches the human label on ~5/1300 examples in the hard subset, so the
+# label-source change between hard_human and hard_original primarily affects
+# the teacher's reasoning text via the ground-truth template substitution
+# rather than via dataset filtering.
+#
+# Held-out signal during training: existing v7 val/test traces under
+# data/reasoning_traces_v7/openai-gpt-oss-120b/{validation,test}/parsed_results.json
+# are reused as the early-stopping signal for both new conditions. Justification:
+# val/test in distillation is just a loss/F1 monitor, and teacher-vs-GT
+# disagreement on the held-out splits is small enough that re-generating those
+# traces with binary labels would not meaningfully shift the early-stopping
+# point. Saves ~2x trace-gen compute.
+# ─────────────────────────────────────────────────────────────────────────────
+
+ablation_name: "label_source"
+
+# Single (teacher, student, condition, lr) point — no hyperparameter sweep.
+teacher:
+  hf_id: "openai/gpt-oss-120b"
+  slug:  "openai-gpt-oss-120b"
+
+student:
+  hf_id: "google/gemma-3-12b-it"
+  slug:  "gemma-3-12b"
+
+# Distillation condition. Only synthetic_intent is varied here.
+condition: "synthetic_intent"
+
+# Best LR for (gpt-oss-120b, gemma-3-12b, synthetic_intent) from the v7
+# hyperparameter sweep, selected by W&B val_harm_f1 in
+# scripts/hpc/distillation/submit_distillation_eval.py (the only LR that
+# survived the per-combo W&B-best filter for OOD eval).
+learning_rate: 2.0e-5
+
+# Single seed: variance across seeds is expected to be small relative to the
+# label-source / data-selection effect being measured.
+seed: 42
+
+# Conditions (data sources) submitted by this ablation.
+data_conditions:
+  - name: "hard_original"
+    samples_json: "data/reasoning_traces_v7_ablations/samples/hard_original_train_samples.json"
+  - name: "random_original"
+    samples_json: "data/reasoning_traces_v7_ablations/samples/random_original_train_samples.json"
+
+# Existing main-sweep adapters that should also be test-evaluated as the
+# `hard_human` comparator. They were never picked by the main test-mode
+# selector (synthetic_intent lost to human_intent for this teacher/student
+# pair), so test results don't exist on disk yet. `--mode test` submits a
+# job for each entry; `--mode samples/traces/train/ood-val` ignore them.
+baselines:
+  - name: "hard_human"
+    adapter_path: "models/distillation-sweep/openai-gpt-oss-120b--gemma-3-12b--synthetic-intent--lr2e-05--v7_adapter"
+    # Canonical main-pipeline test output dir, so the result sits next to the
+    # existing human_intent test eval and notebooks discover it automatically.
+    test_output_dir: "data/safety_experiment/distillation/openai-gpt-oss-120b/gemma-3-12b/synthetic_intent"
+
+# Where outputs live (kept disjoint from the main sweep so eval submitters
+# don't accidentally pick up these adapters).
+paths:
+  traces_base_dir:    "data/reasoning_traces_v7_ablations"
+  samples_dir:        "data/reasoning_traces_v7_ablations/samples"
+  adapters_base_dir:  "models/distillation-ablations"
+  train_results_dir:  "data/train_results/distillation-ablations"
+  predictions_dir:    "data/predictions/distillation-ablations"
+  ood_val_base_dir:   "data/safety_experiment/ood_validation/distillation-ablations"
+  test_eval_base_dir: "data/safety_experiment/distillation-ablations"
+
+# Reused val/test traces (binary teacher matches human ~99% on held-out splits).
+shared_traces:
+  validation_path: "data/reasoning_traces_v7/openai-gpt-oss-120b/validation/parsed_results.json"
+  test_path:       "data/reasoning_traces_v7/openai-gpt-oss-120b/test/parsed_results.json"
+
+wandb:
+  project: "distillation-ablation-label-source"
+
+# Version stamp on adapter directory names. Intentionally distinct from the
+# main sweep's "v7" so the two are never confused.
+run_version: "v7-ablation"

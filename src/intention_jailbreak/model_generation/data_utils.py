@@ -73,19 +73,30 @@ def get_lengths(dataset, plot: bool = False) -> Tuple[int, int]:
 
 def map_harm_to_binary(harm_value):
     """
-    Map 4-category harm labels to binary (Safe/Harmful).
-    
-    Args:
-        harm_value: One of 'completely harmful', 'uncertain harmful', 'uncertain safe', 'completely safe'
-    
+    Map harm labels to binary (safe/harmful).
+
+    Accepts:
+      - WildGuardMix binary labels: 'harmful', 'unharmful'
+      - Annotated-intents 4-category labels: 'completely harmful', 'uncertain harmful',
+        'uncertain safe', 'completely safe'
+
     Returns:
-        'harmful' or 'safe'
+        'harmful' or 'safe' (or None if unrecognised).
     """
     if harm_value is None:
         return None
-    
+
     harm_lower = str(harm_value).lower().strip()
-    
+
+    # WG binary labels MUST be checked before the substring fallback below: the
+    # token 'harmful' is a substring of 'unharmful', so the substring check
+    # would silently misclassify every unharmful WG record as harmful.
+    if harm_lower == 'unharmful':
+        return 'safe'
+    if harm_lower == 'harmful':
+        return 'harmful'
+
+    # 4-category labels from annotated-intents.
     if 'harmful' in harm_lower:
         return 'harmful'
     elif 'safe' in harm_lower:

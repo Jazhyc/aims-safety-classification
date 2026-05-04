@@ -55,6 +55,7 @@ intention-jailbreak/
 | `scripts/dataset_generation/` | ModernBERT classifier used to generate the annotation set via uncertainty filtering | `train.py`, `evaluate_test.py`, `plot_calibration.py` |
 | `scripts/dataset_analysis/` | One-off scripts for analysing the annotated dataset | `generate_harm_labels.py`, `synthetic_comparison.py`, `evaluate_harm_predictions.py` |
 | `scripts/hpc/` | SLURM submission + shell wrappers (keep as-is) | `submit_*.py`, `slurm_utils.py`, `*.sh` |
+| `scripts/hpc/ablations/` | Ablation experiments (label-source, etc.) | `submit_label_source_ablation.py`, `prepare_ablation_samples.py` |
 | `scripts/report/` | One-off figure generation for the paper | `plot_gemma_prompt_format.py`, `plot_qwen32b_reasoning_mode.py` |
 
 ## Notebook Categories
@@ -74,6 +75,7 @@ Human-annotated intents for ~1.7K WildGuardMix prompts. Loaded via HuggingFace `
 **Key properties:**
 - Three splits on HuggingFace: `train`, `validation`, `test`
 - Harm labels: 5-level (`Completely Harmful`, `Uncertain Harmful`, `Uncertain Safe`, `Completely Safe`, `Flag for Removal`)
+- The `Dataset Harm` column ("Harmful"/"Safe") is the **original WildGuardMix** `prompt_harm_label` for that prompt — useful when you want the un-relabeled binary label without joining back to `allenai/wildguardmix`.
 
 **Split policy (8-1-1):**
 - All entries sharing a prompt with any duplicate (detected by prompt text, not `Duplicate ID` which only tags the 2nd+ occurrence) go into **train only**
@@ -112,6 +114,8 @@ data/reasoning_traces/<model-slug>/
 ```
 
 `scripts/distillation/run_distillation_pipeline.py` passes both `train/parsed_results.json` and `validation/parsed_results.json` to `scripts/baselines/train_generator.py` → `causal.py` for clean train/val separation.
+
+**Custom sample sources:** `generate_reasoning_traces.py` accepts an optional `dataset.samples_json` override that bypasses Hub loading. Records must include `prompt`, `prompt_harm_label`, and `split` keys; results are written to the split named in each record (typically all "train"). Used by the label-source ablation to feed deduped/random subsets through the same teacher pipeline.
 
 ### Reasoning Trace Conditions
 
@@ -193,6 +197,7 @@ python scripts/hpc/submit_distillation_eval.py --mode test
 | SFT hyperparam sweep (`submit_hyperparam_sweep.py`) | 🔄 In progress | Llama 3.1 8B; W&B project: `sft-hyperparam-sweep`; model selected by OOD val F1 |
 | Distillation teacher traces | ⬜ Pending | |
 | Distillation student SFT | ⬜ Pending | |
+| Label-source ablation (gpt-oss-120b → gemma-3-12b synthetic_intent) | ⬜ Pending | Compares `hard_human` (existing) vs `hard_original` (WG labels on hard subset) vs `random_original` (random WG sample). Config: `configs/experiments/ablations/label_source_ablation.yaml` |
 
 **Sweep model selection policy:** rank by **OOD val F1** (average across ToxicChat train + Aegis val) via the two-stage eval pipeline above. W&B `val_harm_f1` (training val) is only a fallback.
 
@@ -230,6 +235,7 @@ To bump to v8, update the version constant in all submission scripts and the pip
 - **Validation set**: Training uses **val + test combined** (346 examples) as the early-stopping signal for both SFT and distillation paths. Neither split is held out during training; use external evaluation for unbiased final numbers.
 - **Local metrics**: After every `run_causal_flow` call, `val_metrics.json` is written alongside the adapter (keys: `val_harm_f1`, `val_harm_precision`, `val_harm_recall`, `val_semantic_sim`, `val_eval_loss`, `model`, `condition`, `learning_rate`). Use this to compare runs without W&B.
 - **`max_length_causal`**: Controls total token budget (prompt + completion) for SFT training truncation. The system message alone is ~300–400 tokens; 512 is too small for most examples.
+- **Ablation adapters**: trained adapters from `scripts/hpc/ablations/` go to `models/distillation-ablations/` (NOT `models/distillation-sweep/`) so the main distillation eval submitter doesn't pick them up. Each ablation has its own `submit_*.py` orchestrator with `samples | traces | train | ood-val | test` modes.
 
 ## Tests
 
@@ -252,3 +258,19 @@ But vLLM serves the full `*ForConditionalGeneration` model, where the same modul
 **Do NOT** set `enable_tower_connector_lora=True` in vLLM as a workaround — that flag is for applying LoRA to vision tower weights (which our text-only adapters don't have) and it crashes when combined with `limit_mm_per_prompt={"image": 0}`.
 
 **Affected students**: `google/gemma-3-12b-it`, `mistralai/Ministral-3-14B-Instruct-2512-BF16`. Llama 3.1 8B and `Qwen/Qwen3-8B` are pure CausalLMs and are unaffected.
+
+### `map_harm_to_binary` substring trap on WildGuardMix labels
+
+WildGuardMix's `prompt_harm_label` is `harmful` / `unharmful`. A naïve substring check (`if 'harmful' in harm_lower`) silently misclassifies `unharmful` as `harmful` because `'harmful'` is a substring of `'unharmful'`. Both `data_utils.py:map_harm_to_binary` and `safety_classifier.py:map_harm_to_binary` MUST handle the WG binary tokens with explicit equality checks BEFORE falling back to substring matching for the 4-category annotated-intents labels.
+
+Symptom in the distillation pipeline: with `filter_teacher_disagreements=True`, the trainer reports something like `Filtered (harm disagreement): 491 / 932` for traces whose ground-truth labels are WG binary — every `unharmful` record is dropped, the surviving train set is all-harmful with `harm_label='harmful'`, and the student degenerates to predicting `harmful` for everything. Step counts in the SLURM log will roughly match the harmful-class count rather than the full train size.
+
+The 4-category labels (`Completely Safe`, `Uncertain Harmful`, etc.) do not trigger this because none contain `'unharmful'` as a substring; the bug only surfaces when consumers feed raw WG labels through (e.g. the label-source ablation, or any future ablation that uses `Dataset Harm` / `prompt_harm_label` directly).
+
+### Reasoning-trace parser path (do not reintroduce schema parser)
+
+`parse_model_output` in `scripts/distillation/generate_reasoning_traces.py` must always route to `_parse_content_fields` (LAST-match per regex, `re.IGNORECASE | re.DOTALL`). Do NOT add back a `tokenizer.parse_response`-based path: HF's schema parser matches FIRST occurrence and does not apply `IGNORECASE`, so the reasoning regex's `(?:Prompt )?intent:` lookahead silently fails to match `Intent:` (capital I) and the reasoning capture extends to `Prompt harm:`, sweeping the polished `Intent:` text into reasoning. The intent regex then captures FIRST `Intent:`, which lands inside any residual thinking content (gpt-oss harmony emits `Intent:` markers in its `analysis`/`assistantfinal` thinking section).
+
+Symptom: `reasoning` strings contain `Intent:` substrings, `predicted.prompt_intent` values are >400 chars and look like the teacher's CoT thinking instead of the polished intent. Quick check: `grep -c '"Intent:' parsed_results.json` should be 0.
+
+If a regression slips through, raw_outputs.json is sufficient to re-parse in place — see the inline reparser pattern used in the label-source ablation (`scripts/hpc/ablations/submit_label_source_ablation.py` history). `scripts/distillation/reparse_traces.py` is stale (imports `parse_response` / `_extract_fields`, neither of which exist anymore) — fix or replace it before relying on it.
