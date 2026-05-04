@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Data-scaling experiment — teacher trace generation
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Motivated by the label-source ablation: at n=932, a random WG sample beat
+# the human-curated hard subset on held-out test F1, suggesting the student
+# is undertrained rather than starved of "good" data. This experiment
+# generates teacher traces for the entire WildGuardMix `wildguardtrain` split
+# (excluding annotated-intents prompts) so we can later distill at multiple
+# training-set sizes and trace out the data-scaling curve.
+#
+# This config covers ONLY the trace generation step. Subsampling and
+# distillation training will be added in subsequent configs once the trace
+# corpus is available.
+# ─────────────────────────────────────────────────────────────────────────────
+
+experiment_name: "data_scaling"
+
+teacher:
+  hf_id: "openai/gpt-oss-120b"
+  slug:  "openai-gpt-oss-120b"
+
+# Only synthetic_intent traces are generated; matches the label-source
+# ablation and the headline distillation pipeline.
+condition: "synthetic_intent"
+
+# RNG seed used by prepare_scaling_samples.py (only affects record order).
+seed: 42
+
+# Single sample-source entry. Kept as a list so the orchestrator's plumbing
+# matches the ablation orchestrator's `data_conditions` shape.
+data_conditions:
+  - name: "full_wg"
+    samples_json: "data/reasoning_traces_scaling/samples/full_wg_train_samples.json"
+
+paths:
+  traces_base_dir: "data/reasoning_traces_scaling"
+  samples_dir:     "data/reasoning_traces_scaling/samples"
