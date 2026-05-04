@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=scaling-test-eval
-#SBATCH --time=04:00:00
+#SBATCH --time=00:30:00
 #SBATCH --mem=32GB
-#SBATCH --partition=gpumedium
+#SBATCH --partition=gpu
 #SBATCH --gpus-per-node=rtx_pro_6000:1
 #SBATCH --cpus-per-task=1
 #SBATCH --output=logs/slurm/%x-%j.out

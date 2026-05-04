@@ -252,13 +252,23 @@ def get_hardcoded_results() -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict
             "openai_moderation": 0.761,
         },
         # Best Distillation: GPT-OSS-120B (teacher) → Gemma-3-12B (student) / Human Intent.
+        # Trained on the annotated-intents dataset (~745 train ex, uncertainty-filtered).
         # Selected by submit_distillation_eval.py --mode test using marginal-mean selection.
-        "Distillation": {
+        "Distillation (Annotated Intents)": {
             "wildguardmix": 0.871,
             "xstest": 0.934,
             "aegis": 0.804,
             "toxic_chat": 0.687,
             "openai_moderation": 0.791,
+        },
+        # Scaling: GPT-OSS-120B → Gemma-3-12B / Synthetic Intent, trained on the full
+        # WildGuardMix corpus (~86.7k ex, 1 epoch, lr=2e-5). See submit_scaling.py.
+        "Distillation (WildGuardMix)": {
+            "wildguardmix": 0.8947,
+            "xstest": 0.9510,
+            "aegis": 0.8321,
+            "toxic_chat": 0.7108,
+            "openai_moderation": 0.7412,
         },
     }
     return baselines, our_methods
