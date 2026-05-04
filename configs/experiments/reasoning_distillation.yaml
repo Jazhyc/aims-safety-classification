@@ -36,6 +36,11 @@ training:
   gradient_checkpointing: true
   torch_compile: false
   padding_free: true
+  # Sequence packing via TRL (uses flash-attn varlen so packed examples don't
+  # cross-attend). Off by default to match the historical config; toggle on
+  # per-run for the data-scaling experiment after running
+  # scripts/hpc/scaling/verify_packing.py.
+  packing: false
   skip_vllm_eval: false  # run post-training vLLM eval on validation set to get harm F1
 
 data:

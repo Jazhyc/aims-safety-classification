@@ -33,6 +33,37 @@ data_conditions:
   - name: "full_wg"
     samples_json: "data/reasoning_traces_scaling/samples/full_wg_train_samples.json"
 
+student:
+  hf_id: "google/gemma-3-12b-it"
+  slug:  "gemma-3-12b"
+
+# Same per-combo best LR as the label-source ablation. No HP sweep; one seed.
+training:
+  learning_rate: 2.0e-5
+  # Single pass over the full corpus is ~8 h on one rtx_pro_6000; well under
+  # the 24 h SLURM cap. With ~86k examples, one epoch is already 92× the data
+  # the 5-epoch ablation runs saw — early stopping is therefore not needed and
+  # remains inert (only one eval, nothing to compare against).
+  epochs: 1
+
+# Reused from the headline distillation pipeline so eval signal is consistent
+# with the ablation runs. With epochs=1 the val signal is informational only
+# (no model selection happens here).
+shared_traces:
+  validation_path: "data/reasoning_traces_v7/openai-gpt-oss-120b/validation/parsed_results.json"
+  test_path:       "data/reasoning_traces_v7/openai-gpt-oss-120b/test/parsed_results.json"
+
 paths:
-  traces_base_dir: "data/reasoning_traces_scaling"
-  samples_dir:     "data/reasoning_traces_scaling/samples"
+  traces_base_dir:    "data/reasoning_traces_scaling"
+  samples_dir:        "data/reasoning_traces_scaling/samples"
+  adapters_base_dir:  "models/distillation-scaling"
+  train_results_dir:  "data/train_results/distillation-scaling"
+  predictions_dir:    "data/predictions/distillation-scaling"
+  test_eval_base_dir: "data/safety_experiment/distillation-scaling"
+
+wandb:
+  project: "distillation-scaling"
+
+# Adapter directory suffix; intentionally distinct from the v7 sweep / ablation
+# tags so the existing distillation eval submitter never picks these up.
+run_version: "scaling-v1"

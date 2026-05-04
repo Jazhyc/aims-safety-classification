@@ -56,6 +56,7 @@ intention-jailbreak/
 | `scripts/dataset_analysis/` | One-off scripts for analysing the annotated dataset | `generate_harm_labels.py`, `synthetic_comparison.py`, `evaluate_harm_predictions.py` |
 | `scripts/hpc/` | SLURM submission + shell wrappers (keep as-is) | `submit_*.py`, `slurm_utils.py`, `*.sh` |
 | `scripts/hpc/ablations/` | Ablation experiments (label-source, etc.) | `submit_label_source_ablation.py`, `prepare_ablation_samples.py` |
+| `scripts/hpc/scaling/` | Data-scaling experiment (full WildGuardMix → gemma-3-12b distillation) | `submit_scaling.py`, `prepare_scaling_samples.py`, `verify_packing.py` |
 | `scripts/report/` | One-off figure generation for the paper | `plot_gemma_prompt_format.py`, `plot_qwen32b_reasoning_mode.py` |
 
 ## Notebook Categories
@@ -198,6 +199,7 @@ python scripts/hpc/submit_distillation_eval.py --mode test
 | Distillation teacher traces | ⬜ Pending | |
 | Distillation student SFT | ⬜ Pending | |
 | Label-source ablation (gpt-oss-120b → gemma-3-12b synthetic_intent) | ⬜ Pending | Compares `hard_human` (existing) vs `hard_original` (WG labels on hard subset) vs `random_original` (random WG sample). Config: `configs/experiments/ablations/label_source_ablation.yaml` |
+| Data-scaling experiment (gpt-oss-120b → gemma-3-12b synthetic_intent on full WildGuardMix ~86.7k) | ⬜ Pending | Motivated by label-source ablation result that random_original (n=932) beat hard_human, suggesting the student is undertrained. 1 epoch on the full corpus, same per-combo best LR (2e-5), no HP sweep / val-set selection. Config: `configs/experiments/scaling/data_scaling.yaml` |
 
 **Sweep model selection policy:** rank by **OOD val F1** (average across ToxicChat train + Aegis val) via the two-stage eval pipeline above. W&B `val_harm_f1` (training val) is only a fallback.
 
@@ -236,6 +238,7 @@ To bump to v8, update the version constant in all submission scripts and the pip
 - **Local metrics**: After every `run_causal_flow` call, `val_metrics.json` is written alongside the adapter (keys: `val_harm_f1`, `val_harm_precision`, `val_harm_recall`, `val_semantic_sim`, `val_eval_loss`, `model`, `condition`, `learning_rate`). Use this to compare runs without W&B.
 - **`max_length_causal`**: Controls total token budget (prompt + completion) for SFT training truncation. The system message alone is ~300–400 tokens; 512 is too small for most examples.
 - **Ablation adapters**: trained adapters from `scripts/hpc/ablations/` go to `models/distillation-ablations/` (NOT `models/distillation-sweep/`) so the main distillation eval submitter doesn't pick them up. Each ablation has its own `submit_*.py` orchestrator with `samples | traces | train | ood-val | test` modes.
+- **Scaling adapters**: same pattern — `scripts/hpc/scaling/` writes to `models/distillation-scaling/` and traces to `data/reasoning_traces_scaling/`. Modes: `samples | traces | train | test` (no `ood-val` since there's only one adapter — nothing to select between). Single-shot experiment: 1 epoch, no HP sweep, val set is informational only. The same-named `verify_packing.py` script runs an interactive comparison of `padding_free=True` with/without TRL `packing=True` to gate whether to enable the packing flag for the scaling run.
 
 ## Tests
 
@@ -258,6 +261,14 @@ But vLLM serves the full `*ForConditionalGeneration` model, where the same modul
 **Do NOT** set `enable_tower_connector_lora=True` in vLLM as a workaround — that flag is for applying LoRA to vision tower weights (which our text-only adapters don't have) and it crashes when combined with `limit_mm_per_prompt={"image": 0}`.
 
 **Affected students**: `google/gemma-3-12b-it`, `mistralai/Ministral-3-14B-Instruct-2512-BF16`. Llama 3.1 8B and `Qwen/Qwen3-8B` are pure CausalLMs and are unaffected.
+
+### TRL sequence packing breaks for tower-extracted multimodal students
+
+`training.packing=true` in `causal.py` (passed through to TRL's `SFTConfig`) causes a ~27% spike in eval_loss on the gemma-3-12b student vs the unpacked baseline at identical effective batch and data — verified by `scripts/hpc/scaling/verify_packing.py`. Symptom is consistent with cross-example attention contamination: the trainer is concatenating examples without resetting attention/position boundaries via flash-attn varlen, so packed examples cross-attend within the same sequence. Likely root cause is the same wrapping that motivates the vLLM LoRA-key fix — `_load_causal_lm` extracts the language tower from `*ForConditionalGeneration` into a `CausalLM` shell, and the resulting model probably doesn't expose the cumulative-seqlen attention path TRL needs.
+
+**Rule**: do NOT enable `training.packing=true` for any of the multimodal-tower students (gemma-3-12b, ministral-3-14b). For pure-CausalLM students (Llama 3.1 8B, Qwen3-8B), re-run `verify_packing.py` first to confirm the loss matches the unpacked baseline before relying on the speedup. Note also that on small step counts the wall-clock comparison is uninformative (dominated by setup); compare on at least a few hundred steps.
+
+Separately, `packing=true` blows up GPU memory because each packed sequence fills `max_length` tokens and the cross_entropy logits tensor (`batch × seq × vocab × 4B`) balloons. `verify_packing.py` works around this by lowering `per_device_train_batch_size` to 2 and bumping `gradient_accumulation` to 16 to keep the effective batch at 32.
 
 ### `map_harm_to_binary` substring trap on WildGuardMix labels
 

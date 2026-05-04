@@ -18,9 +18,6 @@ student is undertrained rather than starved of high-quality data. This
 experiment builds the full trace corpus so we can later distill at multiple
 sample sizes and trace out the data-scaling curve.
 
-This README covers only the trace-generation stage. Subsampling, training,
-and eval will be added once the trace corpus is on disk.
-
 ## Pipeline
 
 ```bash
@@ -31,10 +28,31 @@ python scripts/hpc/scaling/submit_scaling.py --mode samples
 
 # 2. Submit the SLURM trace-gen job (24h budget, ~6h expected at observed throughput)
 python scripts/hpc/scaling/submit_scaling.py --mode traces
+
+# 3. After traces finish, submit the SLURM training job
+#    (24h budget, 1 epoch ≈ 8h on rtx_pro_6000, no early stopping needed at this scale)
+python scripts/hpc/scaling/submit_scaling.py --mode train
+
+# 4. After training, submit the test eval (all 6 EVAL_DATASET_DIRS)
+python scripts/hpc/scaling/submit_scaling.py --mode test
 ```
 
-Both modes accept `--dry-run` (preview) and `--force` (re-run even when
+All modes accept `--dry-run` (preview) and `--force` (re-run even when
 outputs exist).
+
+### Training notes
+
+- **One epoch** at 86k records is already 92× the data the 5-epoch ablation
+  runs saw. Early stopping is left enabled by the underlying training script
+  but is inert with `epochs=1` (a single eval cannot trigger it).
+- **No HP sweep**, no model selection — same per-combo best LR (2e-5) as the
+  label-source ablation.
+- **Sequence packing is NOT enabled** in this template. Speed-test packing
+  on an interactive node first; if cleanly supported by the trainer's
+  flash-attn varlen path, flipping it on can give roughly a 6× wall-clock
+  speedup at the cost of needing to re-validate the loss curve matches the
+  unpacked baseline.
+
 
 ## Outputs
 

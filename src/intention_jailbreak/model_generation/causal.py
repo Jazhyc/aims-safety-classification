@@ -716,6 +716,12 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
     lr_scheduler_type = train_cfg.get("lr_scheduler_type", "cosine")
     warmup_ratio = train_cfg.get("warmup_ratio", 0.1)
     padding_free = train_cfg.get("padding_free", False)
+    # TRL sequence packing — combined with padding_free, flash-attn varlen is
+    # used so packed examples do not cross-attend (each gets its own causal
+    # block via cumulative seqlens). Off by default to match the production
+    # configs; flip on per-run for the data-scaling experiment after verifying
+    # via scripts/hpc/scaling/verify_packing.py.
+    packing = train_cfg.get("packing", False)
     max_length = model_cfg.get("max_length_causal", 512)
     
     wandb_cfg = config.get("wandb", {})
@@ -748,6 +754,7 @@ def prepare_training_arguments(config, is_peft=False, num_train_samples=None):
         "report_to": report_to,
         "run_name": run_name,
         "padding_free": padding_free,
+        "packing": packing,
         "completion_only_loss": True,
         "remove_unused_columns": False,
         "max_length": max_length,
