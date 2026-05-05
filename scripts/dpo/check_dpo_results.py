@@ -44,6 +44,17 @@ CONDITIONS = {
     "gptoss-dpo":                 "dpo-judge-gptoss",
     # Union (gemma + gptoss)
     "union-gemma-gptoss":         "dpo-judge-union",
+    # Ratio sweep (hard + X% judge pairs)
+    "ratio-0.00":                 "dpo-ratio-0.00",
+    "ratio-0.25":                 "dpo-ratio-0.25",
+    "ratio-0.50":                 "dpo-ratio-0.50",
+    "ratio-0.75":                 "dpo-ratio-0.75",
+    "ratio-1.00":                 "dpo-ratio-1.00",
+    # Curriculum (hard → judge sequential)
+    "curriculum":                 "dpo-curriculum",
+    "curriculum-phase1":          "dpo-curriculum-phase1",
+    # Gemma 3 12B DPO (Jeremias's SFT model)
+    "gemma12b-hard":              "dpo-gemma-hard",
 }
 
 DATASET_ORDER = [
@@ -70,17 +81,24 @@ SHORT_NAMES = {
 }
 
 MODEL_SLUG = "meta-llama_Llama-3.1-8B-Instruct_finetuned_generation.jsonl"
+GEMMA_MODEL_SLUG = "google_gemma-3-12b-it_finetuned_generation.jsonl"
 
 
-def find_pred_file(pred_dir: Path, ds_key: str) -> Path | None:
-    """Find prediction file, tolerating hyphen/underscore variants in dir name."""
+def find_pred_file(pred_dir: Path, ds_key: str,
+                   extra_slugs: list[str] | None = None) -> Path | None:
+    """Find prediction file, tolerating hyphen/underscore variants in dir name.
+
+    Checks MODEL_SLUG (Llama) first, then GEMMA_MODEL_SLUG, then any extra_slugs.
+    """
     if not pred_dir.exists():
         return None
+    slugs = [MODEL_SLUG, GEMMA_MODEL_SLUG] + (extra_slugs or [])
     for variant in [ds_key, ds_key.replace("_", "-")]:
-        p = pred_dir / variant / MODEL_SLUG
-        if p.exists():
-            return p
-    # Fallback: glob for any subdir containing the file
+        for slug in slugs:
+            p = pred_dir / variant / slug
+            if p.exists():
+                return p
+    # Fallback: glob for any subdir containing the file (Llama slug only for backward compat)
     for p in pred_dir.glob(f"*/{MODEL_SLUG}"):
         stem = p.parent.name.replace("-", "_")
         if stem == ds_key:

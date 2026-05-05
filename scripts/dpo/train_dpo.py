@@ -91,6 +91,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from intention_jailbreak.training import set_all_seeds, print_gpu_info
 from intention_jailbreak.model_generation.parsing import extract_intent_and_harm
 from intention_jailbreak.model_generation.prompt_templates import GENERATION_SYSTEM_PROMPT
+from intention_jailbreak.model_generation.causal import _load_causal_lm, _fix_lora_keys_for_vllm
 
 
 # ---------------------------------------------------------------------------
@@ -227,32 +228,62 @@ def _load_base_tokenizer(base_model: str):
     return tokenizer
 
 
-def load_policy_model(base_model: str, adapter_path: str, attn_implementation: str):
-    """Load base model in 4-bit and attach the SFT LoRA adapter (trainable)."""
-    model = AutoModelForCausalLM.from_pretrained(
-        base_model,
+def _load_base_model(base_model: str, attn_implementation: str):
+    """Load base model in 4-bit, routing multimodal architectures via _load_causal_lm."""
+    kwargs = dict(
         quantization_config=_bnb_config(),
         device_map="auto",
         attn_implementation=attn_implementation,
     )
+    return _load_causal_lm(base_model, **kwargs)
+
+
+def load_policy_model(base_model: str, adapter_path: str | None, attn_implementation: str,
+                      init_new_lora: bool = False, lora_r: int = 16,
+                      lora_alpha: int = 32, lora_dropout: float = 0.05):
+    """Load base model in 4-bit and attach a LoRA adapter for training.
+
+    When adapter_path is provided, loads the existing LoRA checkpoint (standard
+    DPO or curriculum phase-2 policy init). When init_new_lora is True, creates
+    a fresh LoRA adapter instead — used when the base model is already a merged
+    SFT checkpoint with no separate LoRA to load.
+    """
+    from peft import LoraConfig, get_peft_model
+    model = _load_base_model(base_model, attn_implementation)
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
     model = prepare_model_for_kbit_training(model)
-    model = PeftModel.from_pretrained(model, adapter_path, is_trainable=True)
-    print(f"Policy model loaded. Trainable params: "
-          f"{sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+    if init_new_lora:
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+                          "gate_proj", "up_proj", "down_proj"]
+        lora_config = LoraConfig(
+            r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            target_modules=target_modules,
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
+        model = get_peft_model(model, lora_config)
+        print(f"Policy model loaded with fresh LoRA (r={lora_r}, alpha={lora_alpha}).")
+    else:
+        model = PeftModel.from_pretrained(model, adapter_path, is_trainable=True)
+        print(f"Policy model loaded from {adapter_path}.")
+    print(f"  Trainable params: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     return model
 
 
-def load_ref_model(base_model: str, adapter_path: str, attn_implementation: str):
-    """Load base model in 4-bit and attach the SFT LoRA adapter (frozen)."""
-    ref = AutoModelForCausalLM.from_pretrained(
-        base_model,
-        quantization_config=_bnb_config(),
-        device_map="auto",
-        attn_implementation=attn_implementation,
-    )
-    ref = PeftModel.from_pretrained(ref, adapter_path, is_trainable=False)
+def load_ref_model(base_model: str, adapter_path: str | None, attn_implementation: str,
+                   init_new_lora: bool = False):
+    """Load base model in 4-bit as the frozen DPO reference.
+
+    When adapter_path is provided, attaches the LoRA adapter frozen. When
+    init_new_lora is True (merged-SFT mode), the base model itself is the
+    reference — no adapter is needed.
+    """
+    ref = _load_base_model(base_model, attn_implementation)
+    if not init_new_lora and adapter_path:
+        ref = PeftModel.from_pretrained(ref, adapter_path, is_trainable=False)
     ref.eval()
     print("Reference model loaded (frozen).")
     return ref
@@ -265,28 +296,42 @@ def load_ref_model(base_model: str, adapter_path: str, attn_implementation: str)
 def train(args):
     set_all_seeds(args.seed)
     print_gpu_info()
-    local_adapter = _resolve_local_adapter_path(args.adapter_path, args.adapter_revision)
+
+    # Resolve adapter paths (reference always from --adapter-path; policy from
+    # --policy-adapter if set, otherwise same as reference).
+    local_ref_adapter = (
+        _resolve_local_adapter_path(args.adapter_path, args.adapter_revision)
+        if args.adapter_path and not args.init_new_lora
+        else None
+    )
+    if args.policy_adapter:
+        local_policy_adapter = _resolve_local_adapter_path(args.policy_adapter)
+    elif args.init_new_lora:
+        local_policy_adapter = None
+    else:
+        local_policy_adapter = local_ref_adapter
 
     # ── Weights & Biases ──────────────────────────────────────────────────
     wandb.init(
         project=args.wandb_project,
         name=args.wandb_run,
         config={
-            "base_model":    args.base_model,
-            "adapter_path":  args.adapter_path,
+            "base_model":      args.base_model,
+            "adapter_path":    args.adapter_path,
             "adapter_revision": args.adapter_revision,
-            "adapter_path_resolved": local_adapter,
-            "pairs_path":    args.pairs_path,
-            "beta":          args.beta,
-            "loss_type":     args.loss_type,
+            "policy_adapter":  args.policy_adapter,
+            "init_new_lora":   args.init_new_lora,
+            "pairs_path":      args.pairs_path,
+            "beta":            args.beta,
+            "loss_type":       args.loss_type,
             "label_smoothing": args.label_smoothing,
-            "epochs":        args.epochs,
-            "learning_rate": args.learning_rate,
-            "batch_size":    args.batch_size,
+            "epochs":          args.epochs,
+            "learning_rate":   args.learning_rate,
+            "batch_size":      args.batch_size,
             "gradient_accumulation": args.gradient_accumulation,
-            "max_length":    args.max_length,
-            "seed":          args.seed,
-            "harmful_weight":args.harmful_weight,
+            "max_length":      args.max_length,
+            "seed":            args.seed,
+            "harmful_weight":  args.harmful_weight,
         },
     )
 
@@ -299,8 +344,15 @@ def train(args):
     print(f"Train: {len(train_dataset)} pairs")
 
     # ── Models ────────────────────────────────────────────────────────────
-    policy_model = load_policy_model(args.base_model, local_adapter, args.attn_implementation)
-    ref_model    = load_ref_model(args.base_model, local_adapter, args.attn_implementation)
+    policy_model = load_policy_model(
+        args.base_model, local_policy_adapter, args.attn_implementation,
+        init_new_lora=args.init_new_lora,
+        lora_r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
+    )
+    ref_model = load_ref_model(
+        args.base_model, local_ref_adapter, args.attn_implementation,
+        init_new_lora=args.init_new_lora,
+    )
 
     # ── DPO config ────────────────────────────────────────────────────────
     output_dir = Path(args.output_dir)
@@ -362,21 +414,25 @@ def train(args):
     os.makedirs(adapter_save_dir, exist_ok=True)
     trainer.model.save_pretrained(adapter_save_dir)
     tokenizer.save_pretrained(adapter_save_dir)
+    # Fix LoRA keys for vLLM when training on multimodal base models (Gemma3, etc.)
+    # so the saved adapter paths match what vLLM expects for ForConditionalGeneration.
+    _fix_lora_keys_for_vllm(adapter_save_dir, trainer.model)
     print(f"DPO adapter saved to {adapter_save_dir}")
 
     # Save config summary
     summary = {
-        "base_model":    args.base_model,
-        "sft_adapter":   args.adapter_path,
+        "base_model":      args.base_model,
+        "sft_adapter":     args.adapter_path,
         "sft_adapter_revision": args.adapter_revision,
-        "sft_adapter_resolved": local_adapter,
-        "dpo_adapter":   adapter_save_dir,
-        "pairs_path":    args.pairs_path,
-        "beta":          args.beta,
-        "epochs":        args.epochs,
-        "learning_rate": args.learning_rate,
-        "n_train":       len(train_dataset),
-        "harmful_weight":args.harmful_weight,
+        "policy_adapter":  args.policy_adapter,
+        "init_new_lora":   args.init_new_lora,
+        "dpo_adapter":     adapter_save_dir,
+        "pairs_path":      args.pairs_path,
+        "beta":            args.beta,
+        "epochs":          args.epochs,
+        "learning_rate":   args.learning_rate,
+        "n_train":         len(train_dataset),
+        "harmful_weight":  args.harmful_weight,
     }
     with open(output_dir / "training_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
@@ -486,10 +542,29 @@ def parse_args():
                    default="data/dpo_pairs/train_t0.8/dpo_pairs.jsonl")
 
     # Model
-    p.add_argument("--adapter-path", type=str,
-                   default=DEFAULT_SFT_ADAPTER)
+    p.add_argument("--adapter-path", type=str, default=DEFAULT_SFT_ADAPTER,
+                   help="SFT LoRA adapter used as the *reference* model (frozen). "
+                        "Also used as the policy starting point unless --policy-adapter "
+                        "or --init-new-lora is set. Set to None with --init-new-lora "
+                        "when the base model is already a merged SFT checkpoint.")
     p.add_argument("--adapter-revision", type=str, default=None,
                    help="Optional HF revision (branch/tag/commit) for --adapter-path.")
+    p.add_argument("--policy-adapter", type=str, default=None,
+                   help="Override the *policy* starting adapter independently of the "
+                        "reference (--adapter-path). Useful for curriculum training: "
+                        "phase 2 sets --adapter-path=SFT and --policy-adapter=phase1_DPO "
+                        "so the reference stays at SFT while the policy starts warm.")
+    p.add_argument("--init-new-lora", action="store_true", default=False,
+                   help="Initialize a fresh LoRA adapter instead of loading an existing "
+                        "one. Use when --base-model is already a merged SFT checkpoint "
+                        "(e.g. Gemma-based DPO where the SFT is a full HF model). "
+                        "--adapter-path is ignored for model loading when this is set.")
+    p.add_argument("--lora-r",       type=int,   default=16,
+                   help="LoRA rank when --init-new-lora is used.")
+    p.add_argument("--lora-alpha",   type=int,   default=32,
+                   help="LoRA alpha when --init-new-lora is used.")
+    p.add_argument("--lora-dropout", type=float, default=0.05,
+                   help="LoRA dropout when --init-new-lora is used.")
     p.add_argument("--base-model",   type=str,
                    default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument(

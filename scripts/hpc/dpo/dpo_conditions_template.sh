@@ -27,7 +27,7 @@ export HF_HUB_CACHE="${HF_HUB_CACHE:-/scratch/${USER}/huggingface_cache}"
 STAGE="${STAGE:-}"
 if [ -z "${STAGE}" ]; then
   echo "ERROR: STAGE is required."
-  echo "Valid STAGE values: canonical | hard_dpo | judge_dpo | judge_gptoss | judge_standalone_dpo | judge_gptoss_standalone_dpo | judge_decent_dpo | union_decent_dpo | judge_union_dpo | ood_eval"
+  echo "Valid STAGE values: canonical | hard_dpo | judge_dpo | judge_gptoss | judge_standalone_dpo | judge_gptoss_standalone_dpo | judge_decent_dpo | union_decent_dpo | judge_union_dpo | ood_eval | ratio_dpo | curriculum_dpo | gemma_canonical | gemma_hard_dpo"
   exit 1
 fi
 
@@ -109,6 +109,44 @@ JUDGE_GPTOSS_PAIRS_DIR="${JUDGE_GPTOSS_PAIRS_DIR:-data/dpo_pairs/judge_gptoss}"
 JUDGE_UNION_PAIRS_DIR="${JUDGE_UNION_PAIRS_DIR:-data/dpo_pairs/judge_union}"
 JUDGE_UNION_BALANCED_DIR="${JUDGE_UNION_BALANCED_DIR:-data/dpo_pairs/judge_union_balanced}"
 JUDGE_UNION_DPO_OUTPUT="${JUDGE_UNION_DPO_OUTPUT:-trained_models/causal/dpo-judge-union}"
+
+# ---------------------------------------------------------------------------
+# Ratio sweep variables
+# ---------------------------------------------------------------------------
+# RATIO: fraction of judge pairs added on top of all hard pairs (0.0–1.0).
+# Set per-job via sbatch --export. HARD_PAIRS_FILE and JUDGE_PAIRS_FILE must
+# point to the pair sets produced by the canonical hard/judge stages.
+RATIO="${RATIO:-0.5}"
+RATIO_TAG="${RATIO_TAG:-${RATIO}}"   # e.g. "0.50" for directory names
+RATIO_PAIRS_DIR="${RATIO_PAIRS_DIR:-data/dpo_pairs/ratio_${RATIO_TAG}}"
+RATIO_BALANCED_DIR="${RATIO_BALANCED_DIR:-data/dpo_pairs/ratio_${RATIO_TAG}_balanced}"
+RATIO_DPO_OUTPUT="${RATIO_DPO_OUTPUT:-trained_models/causal/dpo-ratio-${RATIO_TAG}}"
+# Pair source files (defaults point to canonical hard/judge pair sets)
+HARD_PAIRS_FILE="${HARD_PAIRS_FILE:-${HARD_PAIRS_DIR}/pairs_wrong_only.jsonl}"
+JUDGE_PAIRS_FILE="${JUDGE_PAIRS_FILE:-${JUDGE_PAIRS_DIR}/pairs_judge_bad_only.jsonl}"
+
+# ---------------------------------------------------------------------------
+# Curriculum training variables
+# ---------------------------------------------------------------------------
+# Phase 1: train on hard balanced pairs.
+# Phase 2: continue from phase-1 adapter on judge balanced pairs (reference = SFT).
+PHASE1_EPOCHS="${PHASE1_EPOCHS:-2}"
+PHASE2_EPOCHS="${PHASE2_EPOCHS:-1}"
+CURRICULUM_PHASE1_OUTPUT="${CURRICULUM_PHASE1_OUTPUT:-trained_models/causal/dpo-curriculum-phase1}"
+CURRICULUM_OUTPUT="${CURRICULUM_OUTPUT:-trained_models/causal/dpo-curriculum}"
+
+# ---------------------------------------------------------------------------
+# Gemma DPO variables
+# ---------------------------------------------------------------------------
+GEMMA_BASE_MODEL="${GEMMA_BASE_MODEL:-google/gemma-3-12b-it}"
+# Set to the merged SFT model HF ID (full weights) or a LoRA adapter ID.
+# If GEMMA_NO_LORA=1 the pair generation step loads the model directly without LoRA.
+GEMMA_SFT_ADAPTER="${GEMMA_SFT_ADAPTER:-Jazhyc/gemma-3-12b-intent-jailbreak-classifier-sft}"
+GEMMA_NO_LORA="${GEMMA_NO_LORA:-0}"
+GEMMA_CANONICAL_SAMPLES="${GEMMA_CANONICAL_SAMPLES:-data/dpo_pairs/gemma_train_t0.8/parsed_samples.jsonl}"
+GEMMA_HARD_PAIRS_DIR="${GEMMA_HARD_PAIRS_DIR:-data/dpo_pairs/gemma_hard}"
+GEMMA_HARD_BALANCED_DIR="${GEMMA_HARD_BALANCED_DIR:-data/dpo_pairs/gemma_hard_balanced}"
+GEMMA_HARD_DPO_OUTPUT="${GEMMA_HARD_DPO_OUTPUT:-trained_models/causal/dpo-gemma-hard}"
 
 echo "======================================================================"
 echo " Preference Condition Stage"
@@ -456,6 +494,190 @@ print('Prerequisite check passed.')
       "paths.output_dir=${OOD_EVAL_OUTPUT}/${ADAPTER_SLUG}" \
       "wandb.run_name=ood-val-${ADAPTER_SLUG}" \
       "model.name=${BASE_MODEL}"
+    ;;
+
+  ratio_dpo)
+    # Additive ratio sweep: all hard pairs + RATIO fraction of judge pairs.
+    # Prerequisites: HARD_PAIRS_FILE and JUDGE_PAIRS_FILE must already exist
+    # (run canonical + hard_dpo + judge_dpo stages first).
+    if [ ! -f "${HARD_PAIRS_FILE}" ]; then
+      echo "ERROR: ${HARD_PAIRS_FILE} not found. Run hard_dpo stage first."
+      exit 1
+    fi
+    if [ ! -f "${JUDGE_PAIRS_FILE}" ]; then
+      echo "ERROR: ${JUDGE_PAIRS_FILE} not found. Run judge_dpo/judge_standalone_dpo stage first."
+      exit 1
+    fi
+
+    RATIO_MIXED="${RATIO_PAIRS_DIR}/dpo_pairs.jsonl"
+    RATIO_BALANCED="${RATIO_BALANCED_DIR}/dpo_pairs.jsonl"
+
+    python scripts/dpo/mix_dpo_pairs.py \
+      --hard-pairs  "${HARD_PAIRS_FILE}" \
+      --judge-pairs "${JUDGE_PAIRS_FILE}" \
+      --ratio       "${RATIO}" \
+      --output      "${RATIO_MIXED}" \
+      --seed        "${SEED}"
+
+    python scripts/dpo/balance_dpo_pairs.py \
+      --input  "${RATIO_MIXED}" \
+      --output "${RATIO_BALANCED}" \
+      --seed   "${SEED}"
+
+    python scripts/dpo/train_dpo.py \
+      --pairs-path   "${RATIO_BALANCED}" \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model   "${BASE_MODEL}" \
+      --output-dir   "${RATIO_DPO_OUTPUT}" \
+      --epochs       "${EPOCHS}" \
+      --learning-rate "${LEARNING_RATE}" \
+      --batch-size   "${BATCH_SIZE}" \
+      --gradient-accumulation "${GRAD_ACCUM}" \
+      --beta         "${DPO_BETA}" \
+      --attn-implementation "${ATTN_IMPL}" \
+      --seed         "${SEED}" \
+      --wandb-project "${WANDB_PROJECT}" \
+      --wandb-run    "ratio-dpo-${RATIO_TAG}-beta${DPO_BETA}-seed${SEED}"
+    ;;
+
+  curriculum_dpo)
+    # Two-phase curriculum: train on hard pairs first, then continue on judge pairs.
+    # The reference model is always the SFT adapter; only the policy starting point
+    # changes between phases (SFT for phase 1, phase-1 DPO for phase 2).
+    # Prerequisites: both balanced pair dirs must exist.
+    HARD_BALANCED="${HARD_BALANCED_DIR}/dpo_pairs.jsonl"
+    JUDGE_BALANCED="${JUDGE_BALANCED_DIR}/dpo_pairs.jsonl"
+
+    if [ ! -f "${HARD_BALANCED}" ]; then
+      echo "ERROR: ${HARD_BALANCED} not found. Run hard_dpo stage first."
+      exit 1
+    fi
+    if [ ! -f "${JUDGE_BALANCED}" ]; then
+      echo "ERROR: ${JUDGE_BALANCED} not found. Run judge_dpo stage first."
+      exit 1
+    fi
+
+    CURRICULUM_PHASE1_ADAPTER="${CURRICULUM_PHASE1_OUTPUT}_adapter"
+
+    echo "[curriculum_dpo] Phase 1: hard pairs, ${PHASE1_EPOCHS} epoch(s)"
+    python scripts/dpo/train_dpo.py \
+      --pairs-path   "${HARD_BALANCED}" \
+      --adapter-path "${BASE_SFT_ADAPTER}" \
+      --base-model   "${BASE_MODEL}" \
+      --output-dir   "${CURRICULUM_PHASE1_OUTPUT}" \
+      --epochs       "${PHASE1_EPOCHS}" \
+      --learning-rate "${LEARNING_RATE}" \
+      --batch-size   "${BATCH_SIZE}" \
+      --gradient-accumulation "${GRAD_ACCUM}" \
+      --beta         "${DPO_BETA}" \
+      --attn-implementation "${ATTN_IMPL}" \
+      --seed         "${SEED}" \
+      --skip-eval \
+      --wandb-project "${WANDB_PROJECT}" \
+      --wandb-run    "curriculum-phase1-beta${DPO_BETA}-seed${SEED}"
+
+    echo "[curriculum_dpo] Phase 2: judge pairs (policy from phase-1), ${PHASE2_EPOCHS} epoch(s)"
+    python scripts/dpo/train_dpo.py \
+      --pairs-path     "${JUDGE_BALANCED}" \
+      --adapter-path   "${BASE_SFT_ADAPTER}" \
+      --policy-adapter "${CURRICULUM_PHASE1_ADAPTER}" \
+      --base-model     "${BASE_MODEL}" \
+      --output-dir     "${CURRICULUM_OUTPUT}" \
+      --epochs         "${PHASE2_EPOCHS}" \
+      --learning-rate  "${LEARNING_RATE}" \
+      --batch-size     "${BATCH_SIZE}" \
+      --gradient-accumulation "${GRAD_ACCUM}" \
+      --beta           "${DPO_BETA}" \
+      --attn-implementation "${ATTN_IMPL}" \
+      --seed           "${SEED}" \
+      --wandb-project  "${WANDB_PROJECT}" \
+      --wandb-run      "curriculum-phase2-beta${DPO_BETA}-seed${SEED}"
+    ;;
+
+  gemma_canonical)
+    # Generate shared T=0.8 samples from Jeremias's Gemma SFT model.
+    # Set GEMMA_NO_LORA=1 if GEMMA_SFT_ADAPTER is a merged model (full weights),
+    # or leave at 0 if it is a LoRA adapter on top of GEMMA_BASE_MODEL.
+    if [ -f "${GEMMA_CANONICAL_SAMPLES}" ]; then
+      echo "[SKIP] Gemma canonical samples already exist at ${GEMMA_CANONICAL_SAMPLES}"
+      exit 0
+    fi
+    GEMMA_CANONICAL_OUT_DIR="$(dirname "${GEMMA_CANONICAL_SAMPLES}")"
+    GEMMA_NO_LORA_FLAG=""
+    if [ "${GEMMA_NO_LORA}" = "1" ]; then
+      GEMMA_NO_LORA_FLAG="--no-lora"
+      echo "[gemma_canonical] Merged model mode: loading ${GEMMA_SFT_ADAPTER} directly."
+      GEMMA_GEN_BASE="${GEMMA_SFT_ADAPTER}"
+    else
+      echo "[gemma_canonical] LoRA mode: base=${GEMMA_BASE_MODEL}, adapter=${GEMMA_SFT_ADAPTER}."
+      GEMMA_GEN_BASE="${GEMMA_BASE_MODEL}"
+    fi
+
+    python scripts/dpo/generate_dpo_pairs.py \
+      --base-model  "${GEMMA_GEN_BASE}" \
+      --adapter-path "${GEMMA_SFT_ADAPTER}" \
+      --output-dir  "${GEMMA_CANONICAL_OUT_DIR}" \
+      --num-samples "${K_SAMPLES}" \
+      --temperature "${TEMPERATURE}" \
+      --max-model-len "${MAX_MODEL_LEN}" \
+      --seed        "${SEED}" \
+      ${GEMMA_NO_LORA_FLAG}
+    ;;
+
+  gemma_hard_dpo)
+    # Hard-mislabel DPO on Jeremias's Gemma 3 12B SFT model.
+    # Uses _load_causal_lm for training (language tower extraction) and
+    # --init-new-lora since the SFT adapter may be a merged model.
+    # Adjust GEMMA_INIT_NEW_LORA=0 if GEMMA_SFT_ADAPTER is a raw LoRA adapter.
+    GEMMA_INIT_NEW_LORA="${GEMMA_INIT_NEW_LORA:-1}"
+    GEMMA_INIT_NEW_LORA_FLAG=""
+    if [ "${GEMMA_INIT_NEW_LORA}" = "1" ]; then
+      GEMMA_INIT_NEW_LORA_FLAG="--init-new-lora"
+      GEMMA_TRAIN_BASE="${GEMMA_SFT_ADAPTER}"
+      GEMMA_REF_ADAPTER_FLAG=""
+    else
+      GEMMA_TRAIN_BASE="${GEMMA_BASE_MODEL}"
+      GEMMA_REF_ADAPTER_FLAG="--adapter-path ${GEMMA_SFT_ADAPTER}"
+    fi
+
+    GEMMA_HARD_PAIRS_FILE="${GEMMA_HARD_PAIRS_DIR}/pairs_wrong_only.jsonl"
+    GEMMA_HARD_BALANCED="${GEMMA_HARD_BALANCED_DIR}/dpo_pairs.jsonl"
+
+    if [ ! -f "${GEMMA_HARD_PAIRS_FILE}" ]; then
+      # Build hard pairs from Gemma canonical samples
+      if [ ! -f "${GEMMA_CANONICAL_SAMPLES}" ]; then
+        echo "ERROR: ${GEMMA_CANONICAL_SAMPLES} not found. Run gemma_canonical first."
+        exit 1
+      fi
+      python scripts/dpo/generate_dpo_pairs.py \
+        --from-samples "${GEMMA_CANONICAL_SAMPLES}" \
+        --base-model   "${GEMMA_GEN_BASE:-${GEMMA_BASE_MODEL}}" \
+        --adapter-path "${GEMMA_SFT_ADAPTER}" \
+        --output-dir   "${GEMMA_HARD_PAIRS_DIR}" \
+        --max-model-len "${MAX_MODEL_LEN}"
+    fi
+
+    python scripts/dpo/balance_dpo_pairs.py \
+      --input  "${GEMMA_HARD_PAIRS_FILE}" \
+      --output "${GEMMA_HARD_BALANCED}" \
+      --seed   "${SEED}"
+
+    # shellcheck disable=SC2086
+    python scripts/dpo/train_dpo.py \
+      --pairs-path   "${GEMMA_HARD_BALANCED}" \
+      --base-model   "${GEMMA_TRAIN_BASE}" \
+      ${GEMMA_REF_ADAPTER_FLAG} \
+      ${GEMMA_INIT_NEW_LORA_FLAG} \
+      --output-dir   "${GEMMA_HARD_DPO_OUTPUT}" \
+      --epochs       "${EPOCHS}" \
+      --learning-rate "${LEARNING_RATE}" \
+      --batch-size   "${BATCH_SIZE}" \
+      --gradient-accumulation "${GRAD_ACCUM}" \
+      --beta         "${DPO_BETA}" \
+      --attn-implementation "${ATTN_IMPL}" \
+      --seed         "${SEED}" \
+      --wandb-project "${WANDB_PROJECT}" \
+      --wandb-run    "gemma-hard-dpo-beta${DPO_BETA}-seed${SEED}"
     ;;
 
   *)

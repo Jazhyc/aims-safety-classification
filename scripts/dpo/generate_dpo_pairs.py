@@ -353,26 +353,39 @@ def _load_models(args, all_parsed: Optional[list]):
 
     llm = lora_request = sft_tokenizer = None
     if need_sft:
-        local_adapter = _resolve_local_adapter_path(args.adapter_path, args.adapter_revision)
         local_base = _resolve_local_model_path(args.base_model)
         print(f"\n=== Loading SFT model ===")
         print(f"  Base model   : {args.base_model}")
         print(f"  Local path   : {local_base}")
-        print(f"  LoRA adapter : {args.adapter_path}")
-        print(f"  Local adapter: {local_adapter}")
-        llm = LLM(
-            model=local_base,
-            tokenizer=local_base,
-            enable_lora=True,
-            max_lora_rank=64,
-            max_loras=1,
-            limit_mm_per_prompt={"image": 0},
-            gpu_memory_utilization=0.90,
-            max_model_len=args.max_model_len,
-            dtype="bfloat16",
-            enforce_eager=True,
-        )
-        lora_request = LoRARequest("sft_lora", 1, local_adapter)
+        if getattr(args, "no_lora", False):
+            print(f"  LoRA adapter : (none — merged model mode)")
+            llm = LLM(
+                model=local_base,
+                tokenizer=local_base,
+                limit_mm_per_prompt={"image": 0},
+                gpu_memory_utilization=0.90,
+                max_model_len=args.max_model_len,
+                dtype="bfloat16",
+                enforce_eager=True,
+            )
+            lora_request = None
+        else:
+            local_adapter = _resolve_local_adapter_path(args.adapter_path, args.adapter_revision)
+            print(f"  LoRA adapter : {args.adapter_path}")
+            print(f"  Local adapter: {local_adapter}")
+            llm = LLM(
+                model=local_base,
+                tokenizer=local_base,
+                enable_lora=True,
+                max_lora_rank=64,
+                max_loras=1,
+                limit_mm_per_prompt={"image": 0},
+                gpu_memory_utilization=0.90,
+                max_model_len=args.max_model_len,
+                dtype="bfloat16",
+                enforce_eager=True,
+            )
+            lora_request = LoRARequest("sft_lora", 1, local_adapter)
         sft_tokenizer = AutoTokenizer.from_pretrained(local_base)
 
     judge_llm = judge_tokenizer = None
@@ -1184,6 +1197,12 @@ def parse_args():
         "--judge-tensor-parallel", type=int, default=1,
         help="Number of GPUs for tensor-parallel inference of the judge model. "
              "Set to 2 for 27B models on 40 GB A100s (fits in bfloat16 across 2 GPUs).",
+    )
+    p.add_argument(
+        "--no-lora", action="store_true", default=False,
+        help="Load the SFT model directly (no LoRA adapter). Use when --base-model "
+             "already points to a merged SFT checkpoint rather than the raw base model. "
+             "In this mode --adapter-path is ignored for generation.",
     )
 
     # Output
