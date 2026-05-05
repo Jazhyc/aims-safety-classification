@@ -231,16 +231,12 @@ def _load_base_tokenizer(base_model: str):
 def _adapter_uses_conditional_gen_keys(adapter_path: str | None) -> bool:
     """Return True if the adapter was trained on a ForConditionalGeneration model.
 
-    ForConditionalGeneration adapters have 'language_model.' in their key names
-    (e.g. 'base_model.model.language_model.model.layers.0...').
-    Language-tower adapters (from _load_causal_lm) have 'base_model.model.model.layers.0...'.
-    When ForConditionalGeneration keys are detected, we must NOT use _load_causal_lm
-    (tower extraction would cause a key mismatch) and must NOT apply _fix_lora_keys_for_vllm
-    (keys are already in the correct format for vLLM).
+    Such adapters have 'language_model.' in their key names, e.g.
+    'base_model.model.language_model.model.layers.0...'.
+    Language-tower adapters (from _load_causal_lm) use 'base_model.model.model.layers.0...'.
     """
     if not adapter_path:
         return False
-    import os
     adapter_file = os.path.join(adapter_path, "adapter_model.safetensors")
     if not os.path.exists(adapter_file):
         return False
@@ -253,30 +249,51 @@ def _adapter_uses_conditional_gen_keys(adapter_path: str | None) -> bool:
         return False
 
 
-def _load_base_model(base_model: str, attn_implementation: str,
-                     use_lm_wrapper: bool = True):
-    """Load base model in 4-bit.
+def _translate_adapter_keys_to_language_tower(src_path: str) -> str:
+    """Create a temp copy of a ForConditionalGeneration adapter with keys translated
+    to the language-tower format expected by _load_causal_lm.
 
-    use_lm_wrapper=True  : use _load_causal_lm (tower extraction for new LoRAs on
-                           ForConditionalGeneration models like Gemma3).
-    use_lm_wrapper=False : load with AutoModelForCausalLM directly — required when
-                           the adapter was already trained on ForConditionalGeneration
-                           keys (language_model. prefix) so PEFT key matching works.
+    Renames 'base_model.model.language_model.' → 'base_model.model.' so the adapter
+    matches the CausalLM wrapper that _load_causal_lm produces from the language tower.
+    The original adapter is not modified. The caller is responsible for cleanup.
     """
-    kwargs = dict(
+    import shutil
+    import tempfile
+    from safetensors.torch import load_file, save_file
+
+    tmp = tempfile.mkdtemp(prefix="dpo_adapter_translated_")
+    src = Path(src_path)
+    for f in src.iterdir():
+        if f.name != "adapter_model.safetensors" and f.is_file():
+            shutil.copy2(f, Path(tmp) / f.name)
+
+    prefix_old = "base_model.model.language_model."
+    prefix_new = "base_model.model."
+    tensors = load_file(str(src / "adapter_model.safetensors"))
+    translated = {
+        (prefix_new + k[len(prefix_old):] if k.startswith(prefix_old) else k): v
+        for k, v in tensors.items()
+    }
+    save_file(translated, str(Path(tmp) / "adapter_model.safetensors"))
+    n_translated = sum(1 for k in tensors if k.startswith(prefix_old))
+    print(f"[key translation] Translated {n_translated}/{len(tensors)} keys "
+          f"from ForConditionalGeneration → language-tower format in {tmp}")
+    return tmp
+
+
+def _load_base_model(base_model: str, attn_implementation: str):
+    """Load base model in 4-bit via _load_causal_lm (handles tower extraction)."""
+    return _load_causal_lm(
+        base_model,
         quantization_config=_bnb_config(),
         device_map="auto",
         attn_implementation=attn_implementation,
     )
-    if use_lm_wrapper:
-        return _load_causal_lm(base_model, **kwargs)
-    return AutoModelForCausalLM.from_pretrained(base_model, **kwargs)
 
 
 def load_policy_model(base_model: str, adapter_path: str | None, attn_implementation: str,
                       init_new_lora: bool = False, lora_r: int = 16,
-                      lora_alpha: int = 32, lora_dropout: float = 0.05,
-                      use_lm_wrapper: bool = True):
+                      lora_alpha: int = 32, lora_dropout: float = 0.05):
     """Load base model in 4-bit and attach a LoRA adapter for training.
 
     When adapter_path is provided, loads the existing LoRA checkpoint (standard
@@ -285,7 +302,7 @@ def load_policy_model(base_model: str, adapter_path: str | None, attn_implementa
     SFT checkpoint with no separate LoRA to load.
     """
     from peft import LoraConfig, get_peft_model
-    model = _load_base_model(base_model, attn_implementation, use_lm_wrapper=use_lm_wrapper)
+    model = _load_base_model(base_model, attn_implementation)
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
     model = prepare_model_for_kbit_training(model)
@@ -310,14 +327,14 @@ def load_policy_model(base_model: str, adapter_path: str | None, attn_implementa
 
 
 def load_ref_model(base_model: str, adapter_path: str | None, attn_implementation: str,
-                   init_new_lora: bool = False, use_lm_wrapper: bool = True):
+                   init_new_lora: bool = False):
     """Load base model in 4-bit as the frozen DPO reference.
 
     When adapter_path is provided, attaches the LoRA adapter frozen. When
     init_new_lora is True (merged-SFT mode), the base model itself is the
     reference — no adapter is needed.
     """
-    ref = _load_base_model(base_model, attn_implementation, use_lm_wrapper=use_lm_wrapper)
+    ref = _load_base_model(base_model, attn_implementation)
     if not init_new_lora and adapter_path:
         ref = PeftModel.from_pretrained(ref, adapter_path, is_trainable=False)
     ref.eval()
@@ -380,26 +397,34 @@ def train(args):
     print(f"Train: {len(train_dataset)} pairs")
 
     # ── Models ────────────────────────────────────────────────────────────
-    # Detect key format: if the adapter uses ForConditionalGeneration keys
-    # (language_model. prefix), bypass _load_causal_lm — tower extraction would
-    # cause a key mismatch and silently initialize random weights instead of
-    # loading the adapter's trained weights.
+    # If either adapter was trained on a ForConditionalGeneration model (keys have
+    # 'language_model.' prefix), translate keys to language-tower format so PEFT
+    # can load them into the CausalLM wrapper produced by _load_causal_lm.
+    # _fix_lora_keys_for_vllm restores the language_model. prefix after training.
+    _tmp_dirs: list[str] = []
     adapter_for_detection = local_policy_adapter or local_ref_adapter
-    use_lm_wrapper = not _adapter_uses_conditional_gen_keys(adapter_for_detection)
-    if not use_lm_wrapper:
-        print("[model loading] Detected ForConditionalGeneration adapter keys — "
-              "bypassing _load_causal_lm tower extraction.")
+    if _adapter_uses_conditional_gen_keys(adapter_for_detection):
+        print("[model loading] ForConditionalGeneration adapter keys detected — "
+              "translating to language-tower format for _load_causal_lm.")
+        orig_ref    = local_ref_adapter
+        orig_policy = local_policy_adapter
+        translated: dict[str, str] = {}  # original path → translated tmp path
+        for orig in {orig_ref, orig_policy} - {None}:
+            translated[orig] = _translate_adapter_keys_to_language_tower(orig)
+            _tmp_dirs.append(translated[orig])
+        if orig_ref:
+            local_ref_adapter = translated[orig_ref]
+        if orig_policy:
+            local_policy_adapter = translated[orig_policy]
 
     policy_model = load_policy_model(
         args.base_model, local_policy_adapter, args.attn_implementation,
         init_new_lora=args.init_new_lora,
         lora_r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
-        use_lm_wrapper=use_lm_wrapper,
     )
     ref_model = load_ref_model(
         args.base_model, local_ref_adapter, args.attn_implementation,
         init_new_lora=args.init_new_lora,
-        use_lm_wrapper=use_lm_wrapper,
     )
 
     # ── DPO config ────────────────────────────────────────────────────────
@@ -462,12 +487,17 @@ def train(args):
     os.makedirs(adapter_save_dir, exist_ok=True)
     trainer.model.save_pretrained(adapter_save_dir)
     tokenizer.save_pretrained(adapter_save_dir)
-    # Fix LoRA keys for vLLM only when using the language-tower path (_load_causal_lm).
-    # When the adapter already uses ForConditionalGeneration keys (language_model. prefix),
-    # the saved keys are already correct for vLLM — applying the fix would double-prefix them.
-    if use_lm_wrapper:
-        _fix_lora_keys_for_vllm(adapter_save_dir, trainer.model)
+    # Rename language-tower keys back to language_model. prefix for vLLM.
+    # _fix_lora_keys_for_vllm is a no-op for models without _vllm_lora_prefix (e.g. Llama).
+    _fix_lora_keys_for_vllm(adapter_save_dir, trainer.model)
     print(f"DPO adapter saved to {adapter_save_dir}")
+
+    # Clean up translated adapter temp dirs
+    if _tmp_dirs:
+        import shutil
+        for tmp in _tmp_dirs:
+            shutil.rmtree(tmp, ignore_errors=True)
+        print(f"Cleaned up {len(_tmp_dirs)} temporary translated adapter dir(s).")
 
     # Save config summary
     summary = {
