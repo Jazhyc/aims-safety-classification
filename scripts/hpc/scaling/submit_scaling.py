@@ -20,6 +20,10 @@ Usage:
     python scripts/hpc/scaling/submit_scaling.py --mode test
 
 All modes accept --dry-run and --force.
+
+--student / --student-slug override the student defined in the YAML.
+The slug feeds into adapter run names, so different students get distinct
+adapter dirs / W&B run names automatically.
 """
 
 import argparse
@@ -276,13 +280,28 @@ def main():
                         help="Re-run even when outputs already exist on disk.")
     parser.add_argument("--eval-config", default="eval_distillation",
                         help="(test mode) Hydra config name for test eval (default: eval_distillation).")
+    parser.add_argument("--student", default=None,
+                        help="HF id of the student model (overrides config). "
+                             "e.g. google/gemma-3-4b-it")
+    parser.add_argument("--student-slug", default=None,
+                        help="Filesystem-safe slug for the student (overrides config). "
+                             "If --student is given without --student-slug, the slug is "
+                             "derived from the HF id's last path component.")
     args = parser.parse_args()
 
     cfg = load_config()
 
+    if args.student is not None:
+        cfg["student"]["hf_id"] = args.student
+        if args.student_slug is None:
+            cfg["student"]["slug"] = args.student.split("/")[-1].lower()
+    if args.student_slug is not None:
+        cfg["student"]["slug"] = args.student_slug
+
     print_header(
         f"Data-scaling experiment — mode={args.mode}",
-        f"teacher={cfg['teacher']['slug']}  condition={cfg['condition']}  seed={cfg['seed']}"
+        f"teacher={cfg['teacher']['slug']}  student={cfg['student']['slug']}  "
+        f"condition={cfg['condition']}  seed={cfg['seed']}"
         + ("  [DRY RUN]" if args.dry_run else "")
         + ("  [FORCE]" if args.force else ""),
     )
