@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
 
     # Training
     p.add_argument("--seed", type=int, default=22)
-    p.add_argument("--dpo-beta", type=float, default=0.5)
+    p.add_argument("--dpo-beta", type=float, default=0.3)
     p.add_argument("--epochs", type=int, default=2)
 
     # SLURM — generation stage needs GPU for vLLM; training needs A100
@@ -103,15 +103,17 @@ def main() -> None:
     if not args.dry_run:
         create_logs_dir()
 
+    beta_tag = f"beta{args.dpo_beta}"
     export_vars = {
-        "PROJECT_ROOT":        str(Path.cwd()),
-        "GEMMA_BASE_MODEL":    args.gemma_base_model,
-        "GEMMA_SFT_ADAPTER":   args.gemma_sft_adapter,
-        "GEMMA_NO_LORA":       "1" if args.no_lora else "0",
-        "GEMMA_INIT_NEW_LORA": "1" if args.no_lora else "0",
-        "SEED":                str(args.seed),
-        "DPO_BETA":            str(args.dpo_beta),
-        "EPOCHS":              str(args.epochs),
+        "PROJECT_ROOT":          str(Path.cwd()),
+        "GEMMA_BASE_MODEL":      args.gemma_base_model,
+        "GEMMA_SFT_ADAPTER":     args.gemma_sft_adapter,
+        "GEMMA_NO_LORA":         "1" if args.no_lora else "0",
+        "GEMMA_INIT_NEW_LORA":   "1" if args.no_lora else "0",
+        "SEED":                  str(args.seed),
+        "DPO_BETA":              str(args.dpo_beta),
+        "EPOCHS":                str(args.epochs),
+        "GEMMA_HARD_DPO_OUTPUT": f"trained_models/causal/dpo-gemma-hard-{beta_tag}",
     }
 
     def sbatch_opts(stage: str) -> list[str]:

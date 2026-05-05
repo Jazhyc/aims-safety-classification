@@ -44,17 +44,28 @@ CONDITIONS = {
     "gptoss-dpo":                 "dpo-judge-gptoss",
     # Union (gemma + gptoss)
     "union-gemma-gptoss":         "dpo-judge-union",
-    # Ratio sweep (hard + X% judge pairs)
-    "ratio-0.00":                 "dpo-ratio-0.00",
-    "ratio-0.25":                 "dpo-ratio-0.25",
-    "ratio-0.50":                 "dpo-ratio-0.50",
-    "ratio-0.75":                 "dpo-ratio-0.75",
-    "ratio-1.00":                 "dpo-ratio-1.00",
-    # Curriculum (hard → judge sequential)
-    "curriculum":                 "dpo-curriculum",
-    "curriculum-phase1":          "dpo-curriculum-phase1",
-    # Gemma 3 12B DPO (Jeremias's SFT model)
-    "gemma12b-hard":              "dpo-gemma-hard",
+    # Ratio sweep (hard + X% judge pairs) — beta=0.3
+    "ratio-0.00":                 "dpo-ratio-0.00-beta0.3",
+    "ratio-0.25":                 "dpo-ratio-0.25-beta0.3",
+    "ratio-0.50":                 "dpo-ratio-0.50-beta0.3",
+    "ratio-0.75":                 "dpo-ratio-0.75-beta0.3",
+    "ratio-1.00":                 "dpo-ratio-1.00-beta0.3",
+    # beta=0.5 pilot runs (kept for reference)
+    "ratio-0.00-b0.5":            "dpo-ratio-0.00",
+    "ratio-0.25-b0.5":            "dpo-ratio-0.25",
+    "ratio-0.50-b0.5":            "dpo-ratio-0.50",
+    "ratio-0.75-b0.5":            "dpo-ratio-0.75",
+    "ratio-1.00-b0.5":            "dpo-ratio-1.00",
+    # Curriculum (hard → judge sequential) — beta=0.3
+    "curriculum":                 "dpo-curriculum-beta0.3",
+    "curriculum-phase1":          "dpo-curriculum-phase1-beta0.3",
+    # beta=0.5 pilot runs (kept for reference)
+    "curriculum-b0.5":            "dpo-curriculum",
+    "curriculum-phase1-b0.5":     "dpo-curriculum-phase1",
+    # Gemma 3 12B DPO (Jeremias's SFT model) — beta=0.3
+    "gemma12b-hard":              "dpo-gemma-hard-beta0.3",
+    # beta=0.5 pilot run (kept for reference)
+    "gemma12b-hard-b0.5":         "dpo-gemma-hard",
 }
 
 DATASET_ORDER = [

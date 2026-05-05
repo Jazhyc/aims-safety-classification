@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--base-sft-adapter", default="Jazhyc/llama-3.1-8b-sft-generation")
     p.add_argument("--seed", type=int, default=22)
-    p.add_argument("--dpo-beta", type=float, default=0.5)
+    p.add_argument("--dpo-beta", type=float, default=0.3)
     p.add_argument("--epochs", type=int, default=2)
 
     # SLURM
@@ -92,20 +92,23 @@ def main() -> None:
         f"--gpus-per-node={args.gpu_type}:1",
     ]
 
+    beta_tag = f"beta{args.dpo_beta}"
+
     jobs: list[tuple[str, str]] = []
     for ratio in args.ratios:
         ratio_tag = f"{ratio:.2f}"
         export_vars = {
-            "PROJECT_ROOT":    str(Path.cwd()),
-            "BASE_MODEL":      args.base_model,
-            "BASE_SFT_ADAPTER": args.base_sft_adapter,
-            "RATIO":           str(ratio),
-            "RATIO_TAG":       ratio_tag,
-            "HARD_PAIRS_FILE": hard_pairs_file,
-            "JUDGE_PAIRS_FILE": judge_pairs_file,
-            "SEED":            str(args.seed),
-            "DPO_BETA":        str(args.dpo_beta),
-            "EPOCHS":          str(args.epochs),
+            "PROJECT_ROOT":      str(Path.cwd()),
+            "BASE_MODEL":        args.base_model,
+            "BASE_SFT_ADAPTER":  args.base_sft_adapter,
+            "RATIO":             str(ratio),
+            "RATIO_TAG":         ratio_tag,
+            "HARD_PAIRS_FILE":   hard_pairs_file,
+            "JUDGE_PAIRS_FILE":  judge_pairs_file,
+            "SEED":              str(args.seed),
+            "DPO_BETA":          str(args.dpo_beta),
+            "EPOCHS":            str(args.epochs),
+            "RATIO_DPO_OUTPUT":  f"trained_models/causal/dpo-ratio-{ratio_tag}-{beta_tag}",
         }
         job_id = submit_stage(export_vars, sbatch_opts, dry_run=args.dry_run)
         jobs.append((f"ratio={ratio_tag}", job_id))

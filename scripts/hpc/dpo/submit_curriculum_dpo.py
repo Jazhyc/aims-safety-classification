@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--base-sft-adapter", default="Jazhyc/llama-3.1-8b-sft-generation")
     p.add_argument("--seed", type=int, default=22)
-    p.add_argument("--dpo-beta", type=float, default=0.5)
+    p.add_argument("--dpo-beta", type=float, default=0.3)
 
     # Curriculum epochs
     p.add_argument("--phase1-epochs", type=int, default=2,
@@ -62,11 +62,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--phase2-epochs", type=int, default=1,
                    help="Epochs for phase 2 (judge pairs, policy = phase-1 DPO).")
 
-    # Output paths
-    p.add_argument("--phase1-output", default="trained_models/causal/dpo-curriculum-phase1",
-                   help="Output directory for phase-1 adapter.")
-    p.add_argument("--curriculum-output", default="trained_models/causal/dpo-curriculum",
-                   help="Final output directory for phase-2 (curriculum) adapter.")
+    # Output paths — beta is included in the name so reruns with different beta don't clobber.
+    p.add_argument("--phase1-output", default=None,
+                   help="Output directory for phase-1 adapter "
+                        "(default: trained_models/causal/dpo-curriculum-phase1-beta{beta}).")
+    p.add_argument("--curriculum-output", default=None,
+                   help="Final output directory for phase-2 (curriculum) adapter "
+                        "(default: trained_models/causal/dpo-curriculum-beta{beta}).")
 
     # SLURM — two full training runs in one job, allow extra time
     p.add_argument("--partition", default="gpumedium")
@@ -89,6 +91,10 @@ def main() -> None:
     if not args.dry_run:
         create_logs_dir()
 
+    beta_tag = f"beta{args.dpo_beta}"
+    phase1_output = args.phase1_output or f"trained_models/causal/dpo-curriculum-phase1-{beta_tag}"
+    curriculum_output = args.curriculum_output or f"trained_models/causal/dpo-curriculum-{beta_tag}"
+
     export_vars = {
         "PROJECT_ROOT":              str(Path.cwd()),
         "BASE_MODEL":                args.base_model,
@@ -99,8 +105,8 @@ def main() -> None:
         "DPO_BETA":                  str(args.dpo_beta),
         "PHASE1_EPOCHS":             str(args.phase1_epochs),
         "PHASE2_EPOCHS":             str(args.phase2_epochs),
-        "CURRICULUM_PHASE1_OUTPUT":  args.phase1_output,
-        "CURRICULUM_OUTPUT":         args.curriculum_output,
+        "CURRICULUM_PHASE1_OUTPUT":  phase1_output,
+        "CURRICULUM_OUTPUT":         curriculum_output,
     }
 
     sbatch_opts = [
