@@ -476,7 +476,7 @@ def _run_vllm_eval(args, adapter_save_dir: str, tokenizer):
         max_lora_rank=64,
         max_loras=1,
         limit_mm_per_prompt={"image": 0},
-        gpu_memory_utilization=0.90,
+        gpu_memory_utilization=0.75,
         max_model_len=2048,
         dtype="bfloat16",
         enforce_eager=True,
