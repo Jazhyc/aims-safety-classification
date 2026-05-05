@@ -512,12 +512,22 @@ print('Prerequisite check passed.')
     RATIO_MIXED="${RATIO_PAIRS_DIR}/dpo_pairs.jsonl"
     RATIO_BALANCED="${RATIO_BALANCED_DIR}/dpo_pairs.jsonl"
 
-    python scripts/dpo/mix_dpo_pairs.py \
-      --hard-pairs  "${HARD_PAIRS_FILE}" \
-      --judge-pairs "${JUDGE_PAIRS_FILE}" \
-      --ratio       "${RATIO}" \
-      --output      "${RATIO_MIXED}" \
-      --seed        "${SEED}"
+    # Keep ratio=0.00 exactly comparable to hard_dpo by bypassing the mixer
+    # (which shuffles rows) and balancing the canonical hard pairs directly.
+    case "${RATIO}" in
+      0|0.0|0.00)
+        echo "[ratio_dpo] RATIO=${RATIO} -> using hard pairs directly for exact hard_dpo comparability."
+        RATIO_MIXED="${HARD_PAIRS_FILE}"
+        ;;
+      *)
+        python scripts/dpo/mix_dpo_pairs.py \
+          --hard-pairs  "${HARD_PAIRS_FILE}" \
+          --judge-pairs "${JUDGE_PAIRS_FILE}" \
+          --ratio       "${RATIO}" \
+          --output      "${RATIO_MIXED}" \
+          --seed        "${SEED}"
+        ;;
+    esac
 
     python scripts/dpo/balance_dpo_pairs.py \
       --input  "${RATIO_MIXED}" \
@@ -661,12 +671,19 @@ print('Prerequisite check passed.')
         echo "ERROR: ${GEMMA_CANONICAL_SAMPLES} not found. Run gemma_canonical first."
         exit 1
       fi
+      GEMMA_PAIR_NO_LORA_FLAG=""
+      GEMMA_PAIR_BASE="${GEMMA_BASE_MODEL}"
+      if [ "${GEMMA_NO_LORA}" = "1" ]; then
+        GEMMA_PAIR_NO_LORA_FLAG="--no-lora"
+        GEMMA_PAIR_BASE="${GEMMA_SFT_ADAPTER}"
+      fi
       python scripts/dpo/generate_dpo_pairs.py \
         --from-samples "${GEMMA_CANONICAL_SAMPLES}" \
-        --base-model   "${GEMMA_GEN_BASE:-${GEMMA_BASE_MODEL}}" \
+        --base-model   "${GEMMA_PAIR_BASE}" \
         --adapter-path "${GEMMA_SFT_ADAPTER}" \
         --output-dir   "${GEMMA_HARD_PAIRS_DIR}" \
-        --max-model-len "${MAX_MODEL_LEN}"
+        --max-model-len "${MAX_MODEL_LEN}" \
+        ${GEMMA_PAIR_NO_LORA_FLAG}
     fi
 
     python scripts/dpo/balance_dpo_pairs.py \
@@ -691,11 +708,14 @@ print('Prerequisite check passed.')
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run    "gemma-hard-dpo-beta${DPO_BETA}-seed${SEED}"
 
+    # Evaluate on the same base model that the DPO adapter was trained against.
+    # In merged-SFT mode this is GEMMA_SFT_ADAPTER; in LoRA mode it's GEMMA_BASE_MODEL.
+    GEMMA_EVAL_BASE="${GEMMA_TRAIN_BASE}"
     python scripts/eval_safety_classifier.py \
       --config-name=dpo/eval_dpo_condition \
       "++finetuned.generation_adapter=${GEMMA_HARD_DPO_OUTPUT}_adapter" \
       "++paths.output_dir=${GEMMA_HARD_DPO_OUTPUT}/predictions" \
-      "++model.name=${GEMMA_BASE_MODEL}"
+      "++model.name=${GEMMA_EVAL_BASE}"
     ;;
 
   *)
