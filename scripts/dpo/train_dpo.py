@@ -228,19 +228,55 @@ def _load_base_tokenizer(base_model: str):
     return tokenizer
 
 
-def _load_base_model(base_model: str, attn_implementation: str):
-    """Load base model in 4-bit, routing multimodal architectures via _load_causal_lm."""
+def _adapter_uses_conditional_gen_keys(adapter_path: str | None) -> bool:
+    """Return True if the adapter was trained on a ForConditionalGeneration model.
+
+    ForConditionalGeneration adapters have 'language_model.' in their key names
+    (e.g. 'base_model.model.language_model.model.layers.0...').
+    Language-tower adapters (from _load_causal_lm) have 'base_model.model.model.layers.0...'.
+    When ForConditionalGeneration keys are detected, we must NOT use _load_causal_lm
+    (tower extraction would cause a key mismatch) and must NOT apply _fix_lora_keys_for_vllm
+    (keys are already in the correct format for vLLM).
+    """
+    if not adapter_path:
+        return False
+    import os
+    adapter_file = os.path.join(adapter_path, "adapter_model.safetensors")
+    if not os.path.exists(adapter_file):
+        return False
+    try:
+        from safetensors import safe_open
+        with safe_open(adapter_file, framework="pt") as f:
+            keys = list(f.keys())
+        return bool(keys) and "language_model." in keys[0]
+    except Exception:
+        return False
+
+
+def _load_base_model(base_model: str, attn_implementation: str,
+                     use_lm_wrapper: bool = True):
+    """Load base model in 4-bit.
+
+    use_lm_wrapper=True  : use _load_causal_lm (tower extraction for new LoRAs on
+                           ForConditionalGeneration models like Gemma3).
+    use_lm_wrapper=False : load with AutoModelForCausalLM directly — required when
+                           the adapter was already trained on ForConditionalGeneration
+                           keys (language_model. prefix) so PEFT key matching works.
+    """
     kwargs = dict(
         quantization_config=_bnb_config(),
         device_map="auto",
         attn_implementation=attn_implementation,
     )
-    return _load_causal_lm(base_model, **kwargs)
+    if use_lm_wrapper:
+        return _load_causal_lm(base_model, **kwargs)
+    return AutoModelForCausalLM.from_pretrained(base_model, **kwargs)
 
 
 def load_policy_model(base_model: str, adapter_path: str | None, attn_implementation: str,
                       init_new_lora: bool = False, lora_r: int = 16,
-                      lora_alpha: int = 32, lora_dropout: float = 0.05):
+                      lora_alpha: int = 32, lora_dropout: float = 0.05,
+                      use_lm_wrapper: bool = True):
     """Load base model in 4-bit and attach a LoRA adapter for training.
 
     When adapter_path is provided, loads the existing LoRA checkpoint (standard
@@ -249,7 +285,7 @@ def load_policy_model(base_model: str, adapter_path: str | None, attn_implementa
     SFT checkpoint with no separate LoRA to load.
     """
     from peft import LoraConfig, get_peft_model
-    model = _load_base_model(base_model, attn_implementation)
+    model = _load_base_model(base_model, attn_implementation, use_lm_wrapper=use_lm_wrapper)
     model.config.use_cache = False
     model.gradient_checkpointing_enable()
     model = prepare_model_for_kbit_training(model)
@@ -274,14 +310,14 @@ def load_policy_model(base_model: str, adapter_path: str | None, attn_implementa
 
 
 def load_ref_model(base_model: str, adapter_path: str | None, attn_implementation: str,
-                   init_new_lora: bool = False):
+                   init_new_lora: bool = False, use_lm_wrapper: bool = True):
     """Load base model in 4-bit as the frozen DPO reference.
 
     When adapter_path is provided, attaches the LoRA adapter frozen. When
     init_new_lora is True (merged-SFT mode), the base model itself is the
     reference — no adapter is needed.
     """
-    ref = _load_base_model(base_model, attn_implementation)
+    ref = _load_base_model(base_model, attn_implementation, use_lm_wrapper=use_lm_wrapper)
     if not init_new_lora and adapter_path:
         ref = PeftModel.from_pretrained(ref, adapter_path, is_trainable=False)
     ref.eval()
@@ -344,14 +380,26 @@ def train(args):
     print(f"Train: {len(train_dataset)} pairs")
 
     # ── Models ────────────────────────────────────────────────────────────
+    # Detect key format: if the adapter uses ForConditionalGeneration keys
+    # (language_model. prefix), bypass _load_causal_lm — tower extraction would
+    # cause a key mismatch and silently initialize random weights instead of
+    # loading the adapter's trained weights.
+    adapter_for_detection = local_policy_adapter or local_ref_adapter
+    use_lm_wrapper = not _adapter_uses_conditional_gen_keys(adapter_for_detection)
+    if not use_lm_wrapper:
+        print("[model loading] Detected ForConditionalGeneration adapter keys — "
+              "bypassing _load_causal_lm tower extraction.")
+
     policy_model = load_policy_model(
         args.base_model, local_policy_adapter, args.attn_implementation,
         init_new_lora=args.init_new_lora,
         lora_r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout,
+        use_lm_wrapper=use_lm_wrapper,
     )
     ref_model = load_ref_model(
         args.base_model, local_ref_adapter, args.attn_implementation,
         init_new_lora=args.init_new_lora,
+        use_lm_wrapper=use_lm_wrapper,
     )
 
     # ── DPO config ────────────────────────────────────────────────────────
@@ -414,9 +462,11 @@ def train(args):
     os.makedirs(adapter_save_dir, exist_ok=True)
     trainer.model.save_pretrained(adapter_save_dir)
     tokenizer.save_pretrained(adapter_save_dir)
-    # Fix LoRA keys for vLLM when training on multimodal base models (Gemma3, etc.)
-    # so the saved adapter paths match what vLLM expects for ForConditionalGeneration.
-    _fix_lora_keys_for_vllm(adapter_save_dir, trainer.model)
+    # Fix LoRA keys for vLLM only when using the language-tower path (_load_causal_lm).
+    # When the adapter already uses ForConditionalGeneration keys (language_model. prefix),
+    # the saved keys are already correct for vLLM — applying the fix would double-prefix them.
+    if use_lm_wrapper:
+        _fix_lora_keys_for_vllm(adapter_save_dir, trainer.model)
     print(f"DPO adapter saved to {adapter_save_dir}")
 
     # Save config summary
