@@ -538,6 +538,12 @@ print('Prerequisite check passed.')
       --seed         "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run    "ratio-dpo-${RATIO_TAG}-beta${DPO_BETA}-seed${SEED}"
+
+    python scripts/eval_safety_classifier.py \
+      --config-name=dpo/eval_dpo_condition \
+      "++finetuned.generation_adapter=${RATIO_DPO_OUTPUT}_adapter" \
+      "++paths.output_dir=${RATIO_DPO_OUTPUT}/predictions" \
+      "++model.name=${BASE_MODEL}"
     ;;
 
   curriculum_dpo)
@@ -592,6 +598,12 @@ print('Prerequisite check passed.')
       --seed           "${SEED}" \
       --wandb-project  "${WANDB_PROJECT}" \
       --wandb-run      "curriculum-phase2-beta${DPO_BETA}-seed${SEED}"
+
+    python scripts/eval_safety_classifier.py \
+      --config-name=dpo/eval_dpo_condition \
+      "++finetuned.generation_adapter=${CURRICULUM_OUTPUT}_adapter" \
+      "++paths.output_dir=${CURRICULUM_OUTPUT}/predictions" \
+      "++model.name=${BASE_MODEL}"
     ;;
 
   gemma_canonical)
@@ -678,6 +690,12 @@ print('Prerequisite check passed.')
       --seed         "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run    "gemma-hard-dpo-beta${DPO_BETA}-seed${SEED}"
+
+    python scripts/eval_safety_classifier.py \
+      --config-name=dpo/eval_dpo_condition \
+      "++finetuned.generation_adapter=${GEMMA_HARD_DPO_OUTPUT}_adapter" \
+      "++paths.output_dir=${GEMMA_HARD_DPO_OUTPUT}/predictions" \
+      "++model.name=${GEMMA_BASE_MODEL}"
     ;;
 
   *)
