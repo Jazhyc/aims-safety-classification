@@ -28,6 +28,15 @@ from slurm_utils import create_logs_dir, print_header, print_job_summary
 TEMPLATE = "scripts/hpc/dpo/dpo_conditions_template.sh"
 
 
+def _model_tag(model_id: str) -> str:
+    tag = model_id.split("/")[-1].lower()
+    tag = tag.replace("meta-", "")
+    tag = tag.replace("llama-3.1-8b-instruct", "llama31-8b")
+    tag = tag.replace("llama-3-8b-instruct", "llama3-8b")
+    tag = tag.replace("_", "-")
+    return tag
+
+
 def submit_stage(export_vars: dict, sbatch_opts: list[str],
                  dry_run: bool = False) -> str:
     env = {**export_vars, "STAGE": "curriculum_dpo"}
@@ -55,6 +64,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--base-sft-adapter", default="Jazhyc/llama-3.1-8b-sft-generation")
     p.add_argument("--seed", type=int, default=22)
     p.add_argument("--dpo-beta", type=float, default=0.3)
+    p.add_argument("--name-prefix", default=None,
+                   help="Optional prefix for output dirs. Defaults to a tag derived from --base-model.")
 
     # Curriculum epochs
     p.add_argument("--phase1-epochs", type=int, default=2,
@@ -91,9 +102,13 @@ def main() -> None:
     if not args.dry_run:
         create_logs_dir()
 
-    beta_tag = f"beta{args.dpo_beta}"
-    phase1_output = args.phase1_output or f"trained_models/causal/dpo-curriculum-phase1-{beta_tag}"
-    curriculum_output = args.curriculum_output or f"trained_models/causal/dpo-curriculum-{beta_tag}"
+    model_tag = args.name_prefix or _model_tag(args.base_model)
+    beta_tag = f"b{args.dpo_beta}"
+    seed_tag = f"s{args.seed}"
+    p1_tag = f"p1e{args.phase1_epochs}"
+    p2_tag = f"p2e{args.phase2_epochs}"
+    phase1_output = args.phase1_output or f"trained_models/causal/{model_tag}-curriculum-phase1-{beta_tag}-{p1_tag}-{seed_tag}"
+    curriculum_output = args.curriculum_output or f"trained_models/causal/{model_tag}-curriculum-{beta_tag}-{p1_tag}-{p2_tag}-{seed_tag}"
 
     export_vars = {
         "PROJECT_ROOT":              str(Path.cwd()),

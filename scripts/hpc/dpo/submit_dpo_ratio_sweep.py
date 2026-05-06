@@ -30,6 +30,17 @@ TEMPLATE = "scripts/hpc/dpo/dpo_conditions_template.sh"
 DEFAULT_RATIOS = [0.0, 0.25, 0.50, 0.75, 1.0]
 
 
+def _model_tag(model_id: str) -> str:
+    """Compact stable model tag for output directory names."""
+    tag = model_id.split("/")[-1].lower()
+    tag = tag.replace("meta-", "").replace("google/", "")
+    tag = tag.replace("llama-3.1-8b-instruct", "llama31-8b")
+    tag = tag.replace("llama-3-8b-instruct", "llama3-8b")
+    tag = tag.replace("gemma-3-12b-it", "gemma3-12b")
+    tag = tag.replace("_", "-")
+    return tag
+
+
 def submit_stage(export_vars: dict, sbatch_opts: list[str],
                  dry_run: bool = False) -> str:
     env = {**export_vars, "STAGE": "ratio_dpo"}
@@ -60,6 +71,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=22)
     p.add_argument("--dpo-beta", type=float, default=0.3)
     p.add_argument("--epochs", type=int, default=2)
+    p.add_argument("--name-prefix", default=None,
+                   help="Optional prefix for output/data dirs. Defaults to a tag derived from --base-model.")
 
     # SLURM
     p.add_argument("--partition", default="gpumedium")
@@ -92,7 +105,10 @@ def main() -> None:
         f"--gpus-per-node={args.gpu_type}:1",
     ]
 
-    beta_tag = f"beta{args.dpo_beta}"
+    model_tag = args.name_prefix or _model_tag(args.base_model)
+    beta_tag = f"b{args.dpo_beta}"
+    epoch_tag = f"e{args.epochs}"
+    seed_tag = f"s{args.seed}"
 
     jobs: list[tuple[str, str]] = []
     for ratio in args.ratios:
@@ -108,7 +124,9 @@ def main() -> None:
             "SEED":              str(args.seed),
             "DPO_BETA":          str(args.dpo_beta),
             "EPOCHS":            str(args.epochs),
-            "RATIO_DPO_OUTPUT":  f"trained_models/causal/dpo-ratio-{ratio_tag}-{beta_tag}",
+            "RATIO_PAIRS_DIR":   f"data/dpo_pairs/{model_tag}-ratio-r{ratio_tag}-{beta_tag}-{epoch_tag}-{seed_tag}",
+            "RATIO_BALANCED_DIR": f"data/dpo_pairs/{model_tag}-ratio-r{ratio_tag}-{beta_tag}-{epoch_tag}-{seed_tag}_balanced",
+            "RATIO_DPO_OUTPUT":  f"trained_models/causal/{model_tag}-ratio-r{ratio_tag}-{beta_tag}-{epoch_tag}-{seed_tag}",
         }
         job_id = submit_stage(export_vars, sbatch_opts, dry_run=args.dry_run)
         jobs.append((f"ratio={ratio_tag}", job_id))

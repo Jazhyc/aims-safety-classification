@@ -18,58 +18,42 @@ except ImportError:
 
 
 CONDITIONS = {
-    # Hard mislabel conditions
-    "hard":                       "dpo-hard",
-    "hard-seed42":                "dpo-hard-seed42",
-    "hard-ep1":                   "dpo-hard-ep1",
-    "hard-beta0.1":               "dpo-hard-beta0.1",
-    "hard-beta0.3":               "dpo-hard-beta0.3",
-    "hard-beta0.3-ep1":           "dpo-hard-beta0.3-ep1",
-    # Gemma judge conditions
-    "gemma-standalone":           "dpo-judge-standalone",
-    "gemma-standalone-beta0.1":   "dpo-judge-standalone-beta0.1",
-    "gemma-standalone-beta0.3":   "dpo-judge-standalone-beta0.3",
-    "gemma-standalone-ep1":       "dpo-judge-standalone-ep1",
-    "gemma-dpo":                  "dpo-judge",
-    "gemma-dpo-beta0.1":          "dpo-judge-beta0.1",
-    "gemma-dpo-beta0.3":          "dpo-judge-beta0.3",
-    "gemma-dpo-ep1":              "dpo-judge-ep1",
-    "gemma-decent":               "dpo-judge-decent",
-    "gemma-decent-beta0.1":       "dpo-judge-decent-beta0.1",
-    "gemma-decent-beta0.3":       "dpo-judge-decent-beta0.3",
-    "gemma-decent-ep1":           "dpo-judge-decent-ep1",
-    "gemma-union-decent":         "dpo-union-decent",
-    # GPT-OSS judge conditions
-    "gptoss-standalone":          "dpo-judge-gptoss-standalone",
-    "gptoss-dpo":                 "dpo-judge-gptoss",
-    # Union (gemma + gptoss)
-    "union-gemma-gptoss":         "dpo-judge-union",
-    # Ratio sweep (hard + X% judge pairs) — beta=0.3
-    "ratio-0.00":                 "dpo-ratio-0.00-beta0.3",
-    "ratio-0.25":                 "dpo-ratio-0.25-beta0.3",
-    "ratio-0.50":                 "dpo-ratio-0.50-beta0.3",
-    "ratio-0.75":                 "dpo-ratio-0.75-beta0.3",
-    "ratio-1.00":                 "dpo-ratio-1.00-beta0.3",
-    # beta=0.5 pilot runs (kept for reference)
-    "ratio-0.00-b0.5":            "dpo-ratio-0.00",
-    "ratio-0.25-b0.5":            "dpo-ratio-0.25",
-    "ratio-0.50-b0.5":            "dpo-ratio-0.50",
-    "ratio-0.75-b0.5":            "dpo-ratio-0.75",
-    "ratio-1.00-b0.5":            "dpo-ratio-1.00",
-    # Curriculum (hard → judge sequential) — beta=0.3
-    "curriculum":                 "dpo-curriculum-beta0.3",
-    "curriculum-phase1":          "dpo-curriculum-phase1-beta0.3",
-    # beta=0.5 pilot runs (kept for reference)
-    "curriculum-b0.5":            "dpo-curriculum",
-    "curriculum-phase1-b0.5":     "dpo-curriculum-phase1",
-    # Gemma 3 12B — SFT baseline (Jeremias's model, no DPO)
-    "gemma12b-sft":               "gemma-sft-baseline",
-    # Gemma 3 12B — distilled student baseline (GPT-OSS distilled)
-    "gemma12b-student":           "gemma-student-baseline",
-    # Gemma 3 12B DPO (Jeremias's SFT model) — beta=0.3
-    "gemma12b-hard":              "dpo-gemma-hard-beta0.3",
-    # beta=0.5 pilot run (kept for reference)
-    "gemma12b-hard-b0.5":         "dpo-gemma-hard",
+    # Hard mislabel conditions (Llama-3.1-8B + SFT adapter)
+    "hard (llama8b, b0.5, e2, s22)":          "dpo-hard",
+    "hard (llama8b, b0.5, e1, s22)":          "dpo-hard-ep1",
+    "hard (llama8b, b0.3, e2, s22)":          "dpo-hard-beta0.3",
+    "hard (llama8b, b0.3, e1, s22)":          "dpo-hard-beta0.3-ep1",
+
+    # Judge = Gemma-3-27B
+    "judge=gemma bad-only (llama8b, b0.5, e2)":      "dpo-judge-standalone",
+    "judge=gemma bad-only (llama8b, b0.3, e2)":      "dpo-judge-standalone-beta0.3",
+    "judge=gemma bad-only (llama8b, b0.5, e1)":      "dpo-judge-standalone-ep1",
+    "hard+judge=gemma bad (llama8b, b0.5, e2)":      "dpo-judge",
+    "hard+judge=gemma bad (llama8b, b0.1, e2)":      "dpo-judge-beta0.1",
+    "hard+judge=gemma bad (llama8b, b0.3, e2)":      "dpo-judge-beta0.3",
+    "hard+judge=gemma bad (llama8b, b0.5, e1)":      "dpo-judge-ep1",
+    "judge=gemma bad+decent (llama8b, b0.5, e2)":    "dpo-judge-decent",
+    "judge=gemma bad+decent (llama8b, b0.1, e2)":    "dpo-judge-decent-beta0.1",
+    "judge=gemma bad+decent (llama8b, b0.3, e2)":    "dpo-judge-decent-beta0.3",
+    "judge=gemma bad+decent (llama8b, b0.5, e1)":    "dpo-judge-decent-ep1",
+    "hard+judge=gemma bad+decent (llama8b, b0.5, e2)": "dpo-union-decent",
+
+    # Judge = GPT-OSS
+
+    # Ratio sweep (hard + X% judge bad), beta=0.3 family
+    "ratio=0.00 (llama8b, b0.3, e2)":           "llama31-8b-ratio-r0.00-b0.3-e2-s22",
+    "ratio=0.25 (llama8b, b0.3, e2)":           "llama31-8b-ratio-r0.25-b0.3-e2-s22",
+    "ratio=0.50 (llama8b, b0.3, e2)":           "llama31-8b-ratio-r0.50-b0.3-e2-s22",
+    "ratio=0.75 (llama8b, b0.3, e2)":           "llama31-8b-ratio-r0.75-b0.3-e2-s22",
+    "ratio=1.00 (llama8b, b0.3, e2)":           "llama31-8b-ratio-r1.00-b0.3-e2-s22",
+
+    # Ratio sweep legacy beta=0.5 pilots
+
+    # Curriculum
+    "curriculum p1=hard p2=judge (llama8b, b0.3, e2+e1)": "llama31-8b-curriculum-b0.3-p1e2-p2e1-s22",
+
+    # Gemma 12B baselines / DPO
+    "gemma12b-sft (Jazhyc SFT baseline)":             "gemma-sft-baseline",
 }
 
 DATASET_ORDER = [
@@ -215,7 +199,7 @@ def main():
 
     # ---- OOD validation table ----
     ood_header = f"{'Condition':<{cond_w}}{'toxic-F1':>12}{'aegis-F1':>12}{'avg-OOD':>12}  {'*'}"
-    print("OOD Validation F1  (model selection — do NOT use for reporting)")
+    print("OOD Validation F1")
     print(ood_header)
     print("-" * (cond_w + 38))
 

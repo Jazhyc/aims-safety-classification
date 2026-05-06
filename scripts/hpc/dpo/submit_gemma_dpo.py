@@ -81,6 +81,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--epochs", type=int, default=2)
     p.add_argument("--eval-lora-rank", type=int, default=16,
                    help="LoRA rank passed to eval_safety_classifier (set 32 for rank-32 adapters).")
+    p.add_argument("--name-prefix", default="gemma3-12b",
+                   help="Prefix used in output directory names.")
 
     # SLURM — generation stage needs GPU for vLLM; training needs A100
     p.add_argument("--gen-partition", default="gpushort")
@@ -105,7 +107,9 @@ def main() -> None:
     if not args.dry_run:
         create_logs_dir()
 
-    beta_tag = f"beta{args.dpo_beta}"
+    beta_tag = f"b{args.dpo_beta}"
+    epoch_tag = f"e{args.epochs}"
+    seed_tag = f"s{args.seed}"
     export_vars = {
         "PROJECT_ROOT":          str(Path.cwd()),
         "GEMMA_BASE_MODEL":      args.gemma_base_model,
@@ -116,7 +120,7 @@ def main() -> None:
         "DPO_BETA":              str(args.dpo_beta),
         "EPOCHS":                str(args.epochs),
         "EVAL_LORA_RANK":        str(args.eval_lora_rank),
-        "GEMMA_HARD_DPO_OUTPUT": f"trained_models/causal/dpo-gemma-hard-{beta_tag}",
+        "GEMMA_HARD_DPO_OUTPUT": f"trained_models/causal/{args.name_prefix}-hard-dpo-{beta_tag}-{epoch_tag}-{seed_tag}",
     }
 
     def sbatch_opts(stage: str) -> list[str]:
