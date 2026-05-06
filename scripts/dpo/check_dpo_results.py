@@ -78,6 +78,7 @@ SHORT_NAMES = {
 
 MODEL_SLUG = "meta-llama_Llama-3.1-8B-Instruct_finetuned_generation.jsonl"
 GEMMA_MODEL_SLUG = "google_gemma-3-12b-it_finetuned_generation.jsonl"
+GEMMA_MODEL_SLUG_CLF = "google_gemma-3-12b-it_finetuned_classification.jsonl"
 
 
 def find_pred_file(pred_dir: Path, ds_key: str,
@@ -88,7 +89,7 @@ def find_pred_file(pred_dir: Path, ds_key: str,
     """
     if not pred_dir.exists():
         return None
-    slugs = [MODEL_SLUG, GEMMA_MODEL_SLUG] + (extra_slugs or [])
+    slugs = [MODEL_SLUG, GEMMA_MODEL_SLUG, GEMMA_MODEL_SLUG_CLF] + (extra_slugs or [])
     for variant in [ds_key, ds_key.replace("_", "-")]:
         for slug in slugs:
             p = pred_dir / variant / slug
