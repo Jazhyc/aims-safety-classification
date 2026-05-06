@@ -64,6 +64,8 @@ CONDITIONS = {
     "curriculum-phase1-b0.5":     "dpo-curriculum-phase1",
     # Gemma 3 12B — SFT baseline (Jeremias's model, no DPO)
     "gemma12b-sft":               "gemma-sft-baseline",
+    # Gemma 3 12B — distilled student baseline (GPT-OSS distilled)
+    "gemma12b-student":           "gemma-student-baseline",
     # Gemma 3 12B DPO (Jeremias's SFT model) — beta=0.3
     "gemma12b-hard":              "dpo-gemma-hard-beta0.3",
     # beta=0.5 pilot run (kept for reference)

@@ -79,6 +79,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=22)
     p.add_argument("--dpo-beta", type=float, default=0.3)
     p.add_argument("--epochs", type=int, default=2)
+    p.add_argument("--eval-lora-rank", type=int, default=16,
+                   help="LoRA rank passed to eval_safety_classifier (set 32 for rank-32 adapters).")
 
     # SLURM — generation stage needs GPU for vLLM; training needs A100
     p.add_argument("--gen-partition", default="gpushort")
@@ -113,6 +115,7 @@ def main() -> None:
         "SEED":                  str(args.seed),
         "DPO_BETA":              str(args.dpo_beta),
         "EPOCHS":                str(args.epochs),
+        "EVAL_LORA_RANK":        str(args.eval_lora_rank),
         "GEMMA_HARD_DPO_OUTPUT": f"trained_models/causal/dpo-gemma-hard-{beta_tag}",
     }
 

@@ -55,6 +55,7 @@ UNBALANCED="${UNBALANCED:-0}"
 FORCE="${FORCE:-0}"
 FORCE_FROM="${FORCE_FROM:-}"
 ATTN_IMPL="${ATTN_IMPL:-${ATN_IMPL:-sdpa}}"
+EVAL_LORA_RANK="${EVAL_LORA_RANK:-16}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-intention-jailbreak}"
 # For ood_eval stage: path to the trained DPO adapter to evaluate.
@@ -553,7 +554,8 @@ print('Prerequisite check passed.')
       --config-name=dpo/eval_dpo_condition \
       "++finetuned.generation_adapter=${RATIO_DPO_OUTPUT}_adapter" \
       "++paths.output_dir=${RATIO_DPO_OUTPUT}/predictions" \
-      "++model.name=${BASE_MODEL}"
+      "++model.name=${BASE_MODEL}" \
+      "++lora.rank=${EVAL_LORA_RANK}"
     ;;
 
   curriculum_dpo)
@@ -613,7 +615,8 @@ print('Prerequisite check passed.')
       --config-name=dpo/eval_dpo_condition \
       "++finetuned.generation_adapter=${CURRICULUM_OUTPUT}_adapter" \
       "++paths.output_dir=${CURRICULUM_OUTPUT}/predictions" \
-      "++model.name=${BASE_MODEL}"
+      "++model.name=${BASE_MODEL}" \
+      "++lora.rank=${EVAL_LORA_RANK}"
     ;;
 
   gemma_canonical)
@@ -715,7 +718,8 @@ print('Prerequisite check passed.')
       --config-name=dpo/eval_dpo_condition \
       "++finetuned.generation_adapter=${GEMMA_HARD_DPO_OUTPUT}_adapter" \
       "++paths.output_dir=${GEMMA_HARD_DPO_OUTPUT}/predictions" \
-      "++model.name=${GEMMA_EVAL_BASE}"
+      "++model.name=${GEMMA_EVAL_BASE}" \
+      "++lora.rank=${EVAL_LORA_RANK}"
     ;;
 
   *)

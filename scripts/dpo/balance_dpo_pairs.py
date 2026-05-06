@@ -21,12 +21,28 @@ import random
 from pathlib import Path
 
 
+def _pair_sort_key(p: dict) -> tuple[str, str, str, str, str]:
+    """Stable canonical key so balancing is invariant to input row order."""
+    return (
+        str(p.get("id", "")),
+        str(p.get("prompt", "")),
+        str(p.get("chosen", "")),
+        str(p.get("rejected", "")),
+        str(p.get("rejected_intent", "")),
+    )
+
+
 def main(args):
     with open(args.input, encoding="utf-8") as fh:
         pairs = [json.loads(l) for l in fh if l.strip()]
 
     safe    = [p for p in pairs if p["gold_harm"] == "safe"]
     harmful = [p for p in pairs if p["gold_harm"] == "harmful"]
+
+    # Canonicalize class-internal order so RNG sampling is reproducible even if
+    # upstream pipelines emitted the same rows in a different sequence.
+    safe.sort(key=_pair_sort_key)
+    harmful.sort(key=_pair_sort_key)
 
     print(f"Input:   {len(pairs)} pairs total")
     print(f"  safe:    {len(safe)} ({100*len(safe)/len(pairs):.1f}%)")
