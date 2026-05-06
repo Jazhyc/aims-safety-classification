@@ -19,10 +19,7 @@ except ImportError:
 
 CONDITIONS = {
     # Hard mislabel conditions (Llama-3.1-8B + SFT adapter)
-    "hard (llama8b, b0.5, e2, s22)":          "dpo-hard",
-    "hard (llama8b, b0.5, e1, s22)":          "dpo-hard-ep1",
-    "hard (llama8b, b0.3, e2, s22)":          "dpo-hard-beta0.3",
-    "hard (llama8b, b0.3, e1, s22)":          "dpo-hard-beta0.3-ep1",
+    "hard (llama8b, b0.3, e2, s22)":          "llama31-8b-hard-b0.3-e2-s22",
 
     # Judge = Gemma-3-27B
     "judge=gemma bad-only (llama8b, b0.5, e2)":      "dpo-judge-standalone",
