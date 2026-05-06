@@ -51,6 +51,7 @@ CONDITIONS = {
 
     # Gemma 12B baselines / DPO
     "gemma12b-sft (Jazhyc SFT baseline)":             "gemma-sft-baseline",
+    "gemma12b-student (GPT-OSS distilled baseline)":  "gemma-student-baseline",
 }
 
 DATASET_ORDER = [
