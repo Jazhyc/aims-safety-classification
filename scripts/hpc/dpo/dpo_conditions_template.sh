@@ -23,6 +23,11 @@ fi
 
 export PYTHONUNBUFFERED=1
 export HF_HUB_CACHE="${HF_HUB_CACHE:-/scratch/${USER}/huggingface_cache}"
+# Reproducibility controls (can be overridden via sbatch --export)
+export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
+export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
+export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+export CUDA_LAUNCH_BLOCKING="${CUDA_LAUNCH_BLOCKING:-0}"
 
 STAGE="${STAGE:-}"
 if [ -z "${STAGE}" ]; then

@@ -21,6 +21,16 @@ def set_all_seeds(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    # Enforce deterministic kernels when available.
+    # warn_only keeps runs alive if a specific op has no deterministic variant.
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except TypeError:
+        # Older torch versions may not support warn_only.
+        torch.use_deterministic_algorithms(True)
+    if torch.backends.cudnn.is_available():
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def print_gpu_info():

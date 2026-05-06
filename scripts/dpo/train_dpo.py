@@ -25,6 +25,7 @@ import argparse
 import gc
 import json
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -92,6 +93,26 @@ from intention_jailbreak.training import set_all_seeds, print_gpu_info
 from intention_jailbreak.model_generation.parsing import extract_intent_and_harm
 from intention_jailbreak.model_generation.prompt_templates import GENERATION_SYSTEM_PROMPT
 from intention_jailbreak.model_generation.causal import _load_causal_lm, _fix_lora_keys_for_vllm
+
+
+def _safe_version(pkg_name: str) -> str | None:
+    try:
+        from importlib.metadata import version
+        return version(pkg_name)
+    except Exception:
+        return None
+
+
+def _git_commit() -> str | None:
+    try:
+        import subprocess
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +521,25 @@ def train(args):
         print(f"Cleaned up {len(_tmp_dirs)} temporary translated adapter dir(s).")
 
     # Save config summary
+    reproducibility = {
+        "seed": args.seed,
+        "pythonhashseed": os.environ.get("PYTHONHASHSEED"),
+        "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+        "tokenizers_parallelism": os.environ.get("TOKENIZERS_PARALLELISM"),
+        "cuda_launch_blocking": os.environ.get("CUDA_LAUNCH_BLOCKING"),
+        "git_commit": _git_commit(),
+        "hostname": platform.node(),
+        "python_version": platform.python_version(),
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda,
+        "transformers_version": _safe_version("transformers"),
+        "trl_version": _safe_version("trl"),
+        "peft_version": _safe_version("peft"),
+        "datasets_version": _safe_version("datasets"),
+        "wandb_version": _safe_version("wandb"),
+        "vllm_version": _safe_version("vllm"),
+        "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+    }
     summary = {
         "base_model":      args.base_model,
         "sft_adapter":     args.adapter_path,
@@ -513,6 +553,7 @@ def train(args):
         "learning_rate":   args.learning_rate,
         "n_train":         len(train_dataset),
         "harmful_weight":  args.harmful_weight,
+        "reproducibility": reproducibility,
     }
     with open(output_dir / "training_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
