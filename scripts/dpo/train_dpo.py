@@ -181,7 +181,7 @@ def _pick_best_checkpoint_by_ood(args, tokenizer, trainer, output_dir: Path) -> 
         shutil.copy2(ckpt_weights, eval_adapter_dir / "adapter_model.safetensors")
         _fix_lora_keys_for_vllm(str(eval_adapter_dir), trainer.model)
 
-        cmd = [
+        base_cmd = [
             sys.executable,
             "scripts/eval_safety_classifier.py",
             "--config-name=eval_ood_validation",
@@ -191,9 +191,21 @@ def _pick_best_checkpoint_by_ood(args, tokenizer, trainer, output_dir: Path) -> 
             f"model.name={args.base_model}",
             f"lora.rank={args.lora_r}",
         ]
+        # vLLM startup can fail on busy nodes at high utilization (e.g. 0.90).
+        # Try a conservative default first, then one lower retry before skipping.
+        utilization_attempts = [
+            args.ood_eval_gpu_memory_utilization,
+            max(0.50, args.ood_eval_gpu_memory_utilization - 0.10),
+        ]
         print(f"\n=== OOD checkpoint eval: {ckpt.name} ===")
-        res = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
-        if res.returncode != 0:
+        res = None
+        for i, util in enumerate(utilization_attempts, start=1):
+            cmd = [*base_cmd, f"vllm.gpu_memory_utilization={util:.2f}"]
+            print(f"  [attempt {i}] vllm.gpu_memory_utilization={util:.2f}")
+            res = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+            if res.returncode == 0:
+                break
+        if res is None or res.returncode != 0:
             print(f"[WARN] OOD eval failed for {ckpt.name}; skipping checkpoint.")
             continue
 
@@ -870,6 +882,9 @@ def parse_args():
                    help="After training, evaluate saved checkpoints on OOD "
                         "(toxic_chat + aegis) and replace final adapter with "
                         "the best checkpoint by average F1.")
+    p.add_argument("--ood-eval-gpu-memory-utilization", type=float, default=0.75,
+                   help="vLLM gpu_memory_utilization used for checkpoint OOD selection. "
+                        "Lower this (e.g. 0.70) on busy nodes to avoid startup OOM.")
     p.add_argument("--skip-eval",     action="store_true",
                    help="Skip vLLM evaluation after training.")
     p.add_argument("--wandb-project", type=str,  default="intention-jailbreak",

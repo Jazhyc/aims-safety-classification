@@ -129,6 +129,7 @@ def step3_train_dpo(args) -> bool:
         cmd += ["--save-steps", str(args.dpo_save_steps)]
     if args.select_best_ood_checkpoint:
         cmd += ["--select-best-ood-checkpoint"]
+        cmd += ["--ood-eval-gpu-memory-utilization", str(args.ood_eval_gpu_memory_utilization)]
     if args.adapter_revision:
         cmd += ["--adapter-revision", args.adapter_revision]
     if args.harmful_weight != 1.0:
@@ -299,6 +300,8 @@ def parse_args():
     p.add_argument("--select-best-ood-checkpoint", action="store_true",
                    help="After training, select best checkpoint by OOD "
                         "(toxic_chat + aegis) and use it as final adapter.")
+    p.add_argument("--ood-eval-gpu-memory-utilization", type=float, default=0.75,
+                   help="vLLM gpu_memory_utilization for checkpoint OOD selection.")
     p.add_argument("--attn-implementation", type=str, default="flash_attention_2",
                    choices=["flash_attention_2", "sdpa", "eager"],
                    help="Attention backend passed to train_dpo.py.")

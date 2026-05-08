@@ -59,6 +59,7 @@ DPO_SAVE_STRATEGY="${DPO_SAVE_STRATEGY:-no}"
 DPO_SAVE_STEPS="${DPO_SAVE_STEPS:-200}"
 DPO_SAVE_TOTAL_LIMIT="${DPO_SAVE_TOTAL_LIMIT:-2}"
 SELECT_BEST_OOD_CHECKPOINT="${SELECT_BEST_OOD_CHECKPOINT:-0}"
+OOD_EVAL_GPU_MEMORY_UTILIZATION="${OOD_EVAL_GPU_MEMORY_UTILIZATION:-0.75}"
 HARMFUL_WEIGHT="${HARMFUL_WEIGHT:-1.0}"
 UNBALANCED="${UNBALANCED:-0}"
 FORCE="${FORCE:-0}"
@@ -182,6 +183,7 @@ if [ "${DPO_SAVE_STRATEGY}" = "steps" ]; then
 fi
 if [ "${SELECT_BEST_OOD_CHECKPOINT}" = "1" ]; then
   PIPELINE_CKPT_ARGS+=(--select-best-ood-checkpoint)
+  PIPELINE_CKPT_ARGS+=(--ood-eval-gpu-memory-utilization "${OOD_EVAL_GPU_MEMORY_UTILIZATION}")
 fi
 
 TRAIN_CKPT_ARGS=(
@@ -193,6 +195,7 @@ if [ "${DPO_SAVE_STRATEGY}" = "steps" ]; then
 fi
 if [ "${SELECT_BEST_OOD_CHECKPOINT}" = "1" ]; then
   TRAIN_CKPT_ARGS+=(--select-best-ood-checkpoint)
+  TRAIN_CKPT_ARGS+=(--ood-eval-gpu-memory-utilization "${OOD_EVAL_GPU_MEMORY_UTILIZATION}")
 fi
 
 case "${STAGE}" in
