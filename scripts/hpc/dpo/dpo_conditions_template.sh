@@ -55,6 +55,10 @@ LEARNING_RATE="${LEARNING_RATE:-5e-5}"
 BATCH_SIZE="${BATCH_SIZE:-2}"
 GRAD_ACCUM="${GRAD_ACCUM:-8}"
 DPO_BETA="${DPO_BETA:-0.5}"
+DPO_SAVE_STRATEGY="${DPO_SAVE_STRATEGY:-no}"
+DPO_SAVE_STEPS="${DPO_SAVE_STEPS:-200}"
+DPO_SAVE_TOTAL_LIMIT="${DPO_SAVE_TOTAL_LIMIT:-2}"
+SELECT_BEST_OOD_CHECKPOINT="${SELECT_BEST_OOD_CHECKPOINT:-0}"
 HARMFUL_WEIGHT="${HARMFUL_WEIGHT:-1.0}"
 UNBALANCED="${UNBALANCED:-0}"
 FORCE="${FORCE:-0}"
@@ -169,6 +173,28 @@ if [ -n "${FORCE_FROM}" ]; then
   PIPELINE_RESTART_ARGS+=(--force-from "${FORCE_FROM}")
 fi
 
+PIPELINE_CKPT_ARGS=(
+  --dpo-save-strategy "${DPO_SAVE_STRATEGY}"
+  --dpo-save-total-limit "${DPO_SAVE_TOTAL_LIMIT}"
+)
+if [ "${DPO_SAVE_STRATEGY}" = "steps" ]; then
+  PIPELINE_CKPT_ARGS+=(--dpo-save-steps "${DPO_SAVE_STEPS}")
+fi
+if [ "${SELECT_BEST_OOD_CHECKPOINT}" = "1" ]; then
+  PIPELINE_CKPT_ARGS+=(--select-best-ood-checkpoint)
+fi
+
+TRAIN_CKPT_ARGS=(
+  --save-strategy "${DPO_SAVE_STRATEGY}"
+  --save-total-limit "${DPO_SAVE_TOTAL_LIMIT}"
+)
+if [ "${DPO_SAVE_STRATEGY}" = "steps" ]; then
+  TRAIN_CKPT_ARGS+=(--save-steps "${DPO_SAVE_STEPS}")
+fi
+if [ "${SELECT_BEST_OOD_CHECKPOINT}" = "1" ]; then
+  TRAIN_CKPT_ARGS+=(--select-best-ood-checkpoint)
+fi
+
 case "${STAGE}" in
   canonical)
     # Generate shared T=0.8 samples once. Every other condition uses
@@ -216,6 +242,7 @@ case "${STAGE}" in
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run "hard-dpo-beta${DPO_BETA}-seed${SEED}" \
+      "${PIPELINE_CKPT_ARGS[@]}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
       "${HARD_EXTRA_ARGS[@]}" \
       ${HARD_SKIP_STEPS:+--skip-steps "${HARD_SKIP_STEPS}"}
@@ -258,6 +285,7 @@ case "${STAGE}" in
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run "judge-dpo-${JUDGE_MODEL_SLUG}-beta${JUDGE_BETA}-seed${SEED}" \
+      "${PIPELINE_CKPT_ARGS[@]}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 1
     ;;
@@ -295,6 +323,7 @@ case "${STAGE}" in
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run "judge-gptoss-dpo-${GPTOSS_JUDGE_MODEL_SLUG}-beta${JUDGE_BETA}-seed${SEED}" \
+      "${PIPELINE_CKPT_ARGS[@]}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 1
     ;;
@@ -329,6 +358,7 @@ case "${STAGE}" in
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run "judge-standalone-dpo-${JUDGE_MODEL_SLUG}-beta${JUDGE_BETA}-seed${SEED}" \
+      "${PIPELINE_CKPT_ARGS[@]}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 1
     ;;
@@ -366,6 +396,7 @@ case "${STAGE}" in
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run "judge-gptoss-standalone-dpo-${GPTOSS_JUDGE_MODEL_SLUG}-beta${JUDGE_BETA}-seed${SEED}" \
+      "${PIPELINE_CKPT_ARGS[@]}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 1
     ;;
@@ -389,6 +420,7 @@ case "${STAGE}" in
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run "judge-decent-dpo-${JUDGE_MODEL_SLUG}-beta${JUDGE_BETA}-seed${SEED}" \
+      "${PIPELINE_CKPT_ARGS[@]}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 1
     ;;
@@ -412,6 +444,7 @@ case "${STAGE}" in
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run "union-decent-dpo-${JUDGE_MODEL_SLUG}-beta${JUDGE_BETA}-seed${SEED}" \
+      "${PIPELINE_CKPT_ARGS[@]}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 1
     ;;
@@ -475,6 +508,7 @@ print('Prerequisite check passed.')
       --seed "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
       --wandb-run "judge-union-dpo-${JUDGE_MODEL_SLUG}-beta${JUDGE_BETA}-seed${SEED}" \
+      "${PIPELINE_CKPT_ARGS[@]}" \
       "${PIPELINE_RESTART_ARGS[@]}" \
       --skip-steps 1
     ;;
@@ -553,7 +587,8 @@ print('Prerequisite check passed.')
       --attn-implementation "${ATTN_IMPL}" \
       --seed         "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
-      --wandb-run    "ratio-dpo-${RATIO_TAG}-beta${DPO_BETA}-seed${SEED}"
+      --wandb-run    "ratio-dpo-${RATIO_TAG}-beta${DPO_BETA}-seed${SEED}" \
+      "${TRAIN_CKPT_ARGS[@]}"
 
     python scripts/eval_safety_classifier.py \
       --config-name=dpo/eval_dpo_condition \
@@ -597,7 +632,8 @@ print('Prerequisite check passed.')
       --seed         "${SEED}" \
       --skip-eval \
       --wandb-project "${WANDB_PROJECT}" \
-      --wandb-run    "curriculum-phase1-beta${DPO_BETA}-seed${SEED}"
+      --wandb-run    "curriculum-phase1-beta${DPO_BETA}-seed${SEED}" \
+      "${TRAIN_CKPT_ARGS[@]}"
 
     echo "[curriculum_dpo] Phase 2: judge pairs (policy from phase-1), ${PHASE2_EPOCHS} epoch(s)"
     python scripts/dpo/train_dpo.py \
@@ -614,7 +650,8 @@ print('Prerequisite check passed.')
       --attn-implementation "${ATTN_IMPL}" \
       --seed           "${SEED}" \
       --wandb-project  "${WANDB_PROJECT}" \
-      --wandb-run      "curriculum-phase2-beta${DPO_BETA}-seed${SEED}"
+      --wandb-run      "curriculum-phase2-beta${DPO_BETA}-seed${SEED}" \
+      "${TRAIN_CKPT_ARGS[@]}"
 
     python scripts/eval_safety_classifier.py \
       --config-name=dpo/eval_dpo_condition \
@@ -714,7 +751,8 @@ print('Prerequisite check passed.')
       --attn-implementation "${ATTN_IMPL}" \
       --seed         "${SEED}" \
       --wandb-project "${WANDB_PROJECT}" \
-      --wandb-run    "gemma-hard-dpo-beta${DPO_BETA}-seed${SEED}"
+      --wandb-run    "gemma-hard-dpo-beta${DPO_BETA}-seed${SEED}" \
+      "${TRAIN_CKPT_ARGS[@]}"
 
     # Evaluate on the same base model that the DPO adapter was trained against.
     # In merged-SFT mode this is GEMMA_SFT_ADAPTER; in LoRA mode it's GEMMA_BASE_MODEL.

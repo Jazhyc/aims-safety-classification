@@ -26,6 +26,8 @@ import gc
 import json
 import os
 import platform
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -94,6 +96,8 @@ from intention_jailbreak.model_generation.parsing import extract_intent_and_harm
 from intention_jailbreak.model_generation.prompt_templates import GENERATION_SYSTEM_PROMPT
 from intention_jailbreak.model_generation.causal import _load_causal_lm, _fix_lora_keys_for_vllm
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 def _safe_version(pkg_name: str) -> str | None:
     try:
@@ -113,6 +117,102 @@ def _git_commit() -> str | None:
         ).strip()
     except Exception:
         return None
+
+
+def _f1_from_jsonl(path: Path) -> float | None:
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    y_true, y_pred = [], []
+    for r in rows:
+        t = r.get("true_harm_binary")
+        p = r.get("predicted_harm")
+        if t is None or p is None:
+            continue
+        y_true.append(str(t).lower())
+        y_pred.append(str(p).lower())
+    if not y_true:
+        return None
+    tp = sum(1 for t, p in zip(y_true, y_pred) if t == "harmful" and p == "harmful")
+    fp = sum(1 for t, p in zip(y_true, y_pred) if t != "harmful" and p == "harmful")
+    fn = sum(1 for t, p in zip(y_true, y_pred) if t == "harmful" and p != "harmful")
+    prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    return (2 * prec * rec / (prec + rec)) if (prec + rec) > 0 else 0.0
+
+
+def _pick_best_checkpoint_by_ood(args, tokenizer, trainer, output_dir: Path) -> dict | None:
+    """Evaluate each saved checkpoint on OOD (toxic_chat + aegis), return best."""
+    ckpt_root = output_dir / "checkpoints"
+    if not ckpt_root.exists():
+        return None
+    ckpts = sorted([p for p in ckpt_root.iterdir() if p.is_dir() and p.name.startswith("checkpoint-")])
+    if not ckpts:
+        return None
+
+    model_slug = args.base_model.replace("/", "_")
+    best = None
+    results = []
+
+    for ckpt in ckpts:
+        ood_out = output_dir / "ood_checkpoint_eval" / ckpt.name
+        cmd = [
+            sys.executable,
+            "scripts/eval_safety_classifier.py",
+            "--config-name=eval_ood_validation",
+            f"finetuned.generation_adapter={ckpt}",
+            "experiment.conditions=[finetuned_generation]",
+            f"paths.output_dir={ood_out}",
+            f"model.name={args.base_model}",
+            f"lora.rank={args.lora_r}",
+        ]
+        print(f"\n=== OOD checkpoint eval: {ckpt.name} ===")
+        res = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
+        if res.returncode != 0:
+            print(f"[WARN] OOD eval failed for {ckpt.name}; skipping checkpoint.")
+            continue
+
+        toxic_p = ood_out / "toxic_chat" / f"{model_slug}_finetuned_generation.jsonl"
+        aegis_p = ood_out / "aegis" / f"{model_slug}_finetuned_generation.jsonl"
+        if not toxic_p.exists() or not aegis_p.exists():
+            print(f"[WARN] Missing OOD outputs for {ckpt.name}; skipping checkpoint.")
+            continue
+        toxic_f1 = _f1_from_jsonl(toxic_p)
+        aegis_f1 = _f1_from_jsonl(aegis_p)
+        if toxic_f1 is None or aegis_f1 is None:
+            print(f"[WARN] Could not parse OOD F1 for {ckpt.name}; skipping checkpoint.")
+            continue
+        avg = (toxic_f1 + aegis_f1) / 2
+        row = {
+            "checkpoint": ckpt.name,
+            "path": str(ckpt),
+            "toxic_f1": toxic_f1,
+            "aegis_f1": aegis_f1,
+            "ood_avg": avg,
+        }
+        results.append(row)
+        print(f"  toxic={toxic_f1:.4f}  aegis={aegis_f1:.4f}  avg={avg:.4f}")
+        if best is None or avg > best["ood_avg"]:
+            best = row
+
+    if not results or best is None:
+        return None
+
+    adapter_save_dir = str(output_dir) + "_adapter"
+    if os.path.exists(adapter_save_dir):
+        shutil.rmtree(adapter_save_dir)
+    shutil.copytree(best["path"], adapter_save_dir)
+    tokenizer.save_pretrained(adapter_save_dir)
+    _fix_lora_keys_for_vllm(adapter_save_dir, trainer.model)
+    print(f"[best-checkpoint] Selected {best['checkpoint']} by OOD avg={best['ood_avg']:.4f}")
+
+    return {"best": best, "all": sorted(results, key=lambda r: r["ood_avg"], reverse=True)}
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +552,7 @@ def train(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dpo_config = DPOConfig(
+    dpo_kwargs = dict(
         output_dir=str(output_dir / "checkpoints"),
         beta=args.beta,
         loss_type=args.loss_type,
@@ -478,7 +578,8 @@ def train(args):
 
         # No eval during training — fixed epochs, final model saved explicitly
         eval_strategy="no",
-        save_strategy="no",
+        save_strategy=args.save_strategy,
+        save_total_limit=args.save_total_limit,
 
         # Misc
         gradient_checkpointing=True,
@@ -486,6 +587,9 @@ def train(args):
         report_to="wandb",
         seed=args.seed,
     )
+    if args.save_strategy == "steps":
+        dpo_kwargs["save_steps"] = args.save_steps
+    dpo_config = DPOConfig(**dpo_kwargs)
 
     trainer_cls = WeightedDPOTrainer if use_weighted else DPOTrainer
     trainer_kwargs = dict(
@@ -512,6 +616,12 @@ def train(args):
     # _fix_lora_keys_for_vllm is a no-op for models without _vllm_lora_prefix (e.g. Llama).
     _fix_lora_keys_for_vllm(adapter_save_dir, trainer.model)
     print(f"DPO adapter saved to {adapter_save_dir}")
+
+    best_ckpt_selection = None
+    if args.select_best_ood_checkpoint:
+        best_ckpt_selection = _pick_best_checkpoint_by_ood(args, tokenizer, trainer, output_dir)
+        if best_ckpt_selection is None:
+            print("[best-checkpoint] No valid checkpoint selection found; keeping final adapter.")
 
     # Clean up translated adapter temp dirs
     if _tmp_dirs:
@@ -553,6 +663,11 @@ def train(args):
         "learning_rate":   args.learning_rate,
         "n_train":         len(train_dataset),
         "harmful_weight":  args.harmful_weight,
+        "save_strategy":   args.save_strategy,
+        "save_steps":      args.save_steps if args.save_strategy == "steps" else None,
+        "save_total_limit": args.save_total_limit,
+        "select_best_ood_checkpoint": args.select_best_ood_checkpoint,
+        "best_checkpoint_selection": best_ckpt_selection,
         "reproducibility": reproducibility,
     }
     with open(output_dir / "training_summary.json", "w") as f:
@@ -723,6 +838,17 @@ def parse_args():
 
     # Misc
     p.add_argument("--seed",          type=int,  default=22)
+    p.add_argument("--save-strategy", type=str, default="no",
+                   choices=["no", "epoch", "steps"],
+                   help="Checkpoint saving strategy during DPO training.")
+    p.add_argument("--save-steps",    type=int, default=200,
+                   help="Save interval when --save-strategy=steps.")
+    p.add_argument("--save-total-limit", type=int, default=2,
+                   help="Maximum number of checkpoints to keep.")
+    p.add_argument("--select-best-ood-checkpoint", action="store_true",
+                   help="After training, evaluate saved checkpoints on OOD "
+                        "(toxic_chat + aegis) and replace final adapter with "
+                        "the best checkpoint by average F1.")
     p.add_argument("--skip-eval",     action="store_true",
                    help="Skip vLLM evaluation after training.")
     p.add_argument("--wandb-project", type=str,  default="intention-jailbreak",

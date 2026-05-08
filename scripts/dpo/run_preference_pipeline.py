@@ -118,11 +118,17 @@ def step3_train_dpo(args) -> bool:
         "--batch-size",           str(args.batch_size),
         "--gradient-accumulation", str(args.grad_accum),
         "--seed",                 str(args.seed),
+        "--save-strategy",        args.dpo_save_strategy,
+        "--save-total-limit",     str(args.dpo_save_total_limit),
         "--skip-eval",                          # evaluation done in step 4
         "--wandb-project",        args.wandb_project,
         "--wandb-run",            run_name,
         "--attn-implementation",  args.attn_implementation,
     ]
+    if args.dpo_save_strategy == "steps":
+        cmd += ["--save-steps", str(args.dpo_save_steps)]
+    if args.select_best_ood_checkpoint:
+        cmd += ["--select-best-ood-checkpoint"]
     if args.adapter_revision:
         cmd += ["--adapter-revision", args.adapter_revision]
     if args.harmful_weight != 1.0:
@@ -283,6 +289,16 @@ def parse_args():
     p.add_argument("--batch-size",      type=int,   default=2)
     p.add_argument("--grad-accum",      type=int,   default=8)
     p.add_argument("--dpo-beta",        type=float, default=0.1)
+    p.add_argument("--dpo-save-strategy", type=str, default="no",
+                   choices=["no", "epoch", "steps"],
+                   help="Checkpoint save strategy forwarded to train_dpo.py.")
+    p.add_argument("--dpo-save-steps", type=int, default=200,
+                   help="Checkpoint interval when --dpo-save-strategy=steps.")
+    p.add_argument("--dpo-save-total-limit", type=int, default=2,
+                   help="Max checkpoints kept during DPO training.")
+    p.add_argument("--select-best-ood-checkpoint", action="store_true",
+                   help="After training, select best checkpoint by OOD "
+                        "(toxic_chat + aegis) and use it as final adapter.")
     p.add_argument("--attn-implementation", type=str, default="flash_attention_2",
                    choices=["flash_attention_2", "sdpa", "eager"],
                    help="Attention backend passed to train_dpo.py.")
