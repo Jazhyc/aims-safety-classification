@@ -157,16 +157,35 @@ def _pick_best_checkpoint_by_ood(args, tokenizer, trainer, output_dir: Path) -> 
         return None
 
     model_slug = args.base_model.replace("/", "_")
+    # Use the already-exported final adapter as a template for adapter metadata
+    # (adapter_config/tokenizer files), then swap only adapter weights per checkpoint.
+    final_adapter_dir = Path(str(output_dir) + "_adapter")
+    if not final_adapter_dir.exists():
+        print(f"[WARN] Final adapter template not found at {final_adapter_dir}; "
+              "cannot evaluate checkpoints for best-ood selection.")
+        return None
     best = None
     results = []
 
     for ckpt in ckpts:
         ood_out = output_dir / "ood_checkpoint_eval" / ckpt.name
+        eval_adapter_dir = output_dir / "ood_checkpoint_eval" / f"{ckpt.name}_adapter"
+        if eval_adapter_dir.exists():
+            shutil.rmtree(eval_adapter_dir)
+        shutil.copytree(final_adapter_dir, eval_adapter_dir)
+
+        ckpt_weights = ckpt / "adapter_model.safetensors"
+        if not ckpt_weights.exists():
+            print(f"[WARN] Missing adapter_model.safetensors in {ckpt}; skipping checkpoint.")
+            continue
+        shutil.copy2(ckpt_weights, eval_adapter_dir / "adapter_model.safetensors")
+        _fix_lora_keys_for_vllm(str(eval_adapter_dir), trainer.model)
+
         cmd = [
             sys.executable,
             "scripts/eval_safety_classifier.py",
             "--config-name=eval_ood_validation",
-            f"finetuned.generation_adapter={ckpt}",
+            f"finetuned.generation_adapter={eval_adapter_dir}",
             "experiment.conditions=[finetuned_generation]",
             f"paths.output_dir={ood_out}",
             f"model.name={args.base_model}",
@@ -178,7 +197,7 @@ def _pick_best_checkpoint_by_ood(args, tokenizer, trainer, output_dir: Path) -> 
             print(f"[WARN] OOD eval failed for {ckpt.name}; skipping checkpoint.")
             continue
 
-        toxic_p = ood_out / "toxic_chat" / f"{model_slug}_finetuned_generation.jsonl"
+        toxic_p = ood_out / "toxic-chat" / f"{model_slug}_finetuned_generation.jsonl"
         aegis_p = ood_out / "aegis" / f"{model_slug}_finetuned_generation.jsonl"
         if not toxic_p.exists() or not aegis_p.exists():
             print(f"[WARN] Missing OOD outputs for {ckpt.name}; skipping checkpoint.")
@@ -192,6 +211,7 @@ def _pick_best_checkpoint_by_ood(args, tokenizer, trainer, output_dir: Path) -> 
         row = {
             "checkpoint": ckpt.name,
             "path": str(ckpt),
+            "eval_adapter_path": str(eval_adapter_dir),
             "toxic_f1": toxic_f1,
             "aegis_f1": aegis_f1,
             "ood_avg": avg,
@@ -207,7 +227,8 @@ def _pick_best_checkpoint_by_ood(args, tokenizer, trainer, output_dir: Path) -> 
     adapter_save_dir = str(output_dir) + "_adapter"
     if os.path.exists(adapter_save_dir):
         shutil.rmtree(adapter_save_dir)
-    shutil.copytree(best["path"], adapter_save_dir)
+    # Copy evaluated adapter bundle of best checkpoint as final adapter
+    shutil.copytree(best["eval_adapter_path"], adapter_save_dir)
     tokenizer.save_pretrained(adapter_save_dir)
     _fix_lora_keys_for_vllm(adapter_save_dir, trainer.model)
     print(f"[best-checkpoint] Selected {best['checkpoint']} by OOD avg={best['ood_avg']:.4f}")
