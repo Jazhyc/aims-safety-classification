@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--base-model", default="meta-llama/Llama-3.1-8B-Instruct")
     p.add_argument("--base-sft-adapter", default="Jazhyc/llama-3.1-8b-sft-generation")
-    p.add_argument("--judge-model", default="Jazhyc/gemma-3-12b-intent-jailbreak-classifier-sft")
+    p.add_argument("--judge-model", default="google/gemma-3-27b-it")
     p.add_argument("--judge-tensor-parallel", type=int, default=1)
 
     p.add_argument("--seed", type=int, default=22)
@@ -219,4 +219,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
