@@ -190,12 +190,17 @@ def main():
                    help="Base directory for OOD validation predictions")
     p.add_argument("--k10", action="store_true",
                    help="Print k10 (a..j) condition summary/ranking from training_summary.json best checkpoint OOD avg.")
+    p.add_argument("--k10-test", action="store_true",
+                   help="Print k10 test-set tables across runs: mean/min/max per condition.")
     args = p.parse_args()
     base     = Path(args.base)
     ood_base = Path(args.ood_base)
 
     if args.k10:
         summarize_k10(base)
+        return
+    if args.k10_test:
+        summarize_k10_test(base)
         return
 
     ds_keys = DATASET_ORDER
@@ -335,6 +340,96 @@ def summarize_k10(base: Path) -> None:
     print("=" * 120)
     for i, (m, cond) in enumerate(ranking, 1):
         print(f"{i:2d}. {cond:28s} mean={m:.4f}")
+
+
+def summarize_k10_test(base: Path) -> None:
+    tags = "abcdefghij"
+    conds = {
+        "hard-dpo": "llama31-8b-k10-{t}-hard-b0.3-e3-s22",
+        "judge-gemma-bad": "llama31-8b-k10-{t}-judge-gemma-bad-b0.3-e3-s22",
+        "judge-gemma-standalone": "llama31-8b-k10-{t}-judge-gemma-standalone-b0.3-e3-s22",
+        "judge-gemma-decent": "llama31-8b-k10-{t}-judge-gemma-decent-b0.3-e3-s22",
+        "hard-plus-gemma-decent": "llama31-8b-k10-{t}-hard-plus-gemma-decent-b0.3-e3-s22",
+    }
+
+    ds = [
+        ("annotated_intents", "ann-test"),
+        ("annotated_intents_val", "ann-val"),
+        ("wildguardmix", "wildguard"),
+        ("xstest", "xstest"),
+        ("toxic_chat", "toxic"),
+        ("aegis", "aegis"),
+        ("openai_moderation", "openai"),
+    ]
+    ext_keys = {"wildguardmix", "xstest", "toxic_chat", "aegis", "openai_moderation"}
+
+    # condition -> metric_key -> list[float]
+    values: dict[str, dict[str, list[float]]] = {
+        c: {k: [] for k, _ in ds} | {"ext_avg": []} for c in conds
+    }
+
+    for cond, pat in conds.items():
+        for t in tags:
+            run = pat.format(t=t)
+            pred_dir = base / run / "predictions_test_selected"
+            if not pred_dir.exists():
+                pred_dir = base / run / "predictions"
+            if not pred_dir.exists():
+                continue
+
+            ext_f1s = []
+            for ds_key, _ in ds:
+                pred_file = find_pred_file(pred_dir, ds_key)
+                if pred_file is None:
+                    continue
+                m = load_metrics(pred_file)
+                if m is None:
+                    continue
+                values[cond][ds_key].append(m["f1"])
+                if ds_key in ext_keys:
+                    ext_f1s.append(m["f1"])
+
+            if len(ext_f1s) == len(ext_keys):
+                values[cond]["ext_avg"].append(round(sum(ext_f1s) / len(ext_f1s), 4))
+
+    def print_table(title: str, reducer: str) -> None:
+        print(f"\n{title}")
+        header = f"{'Condition':<28}" + "".join(f"{name:>12}" for _, name in ds) + f"{'ext-avg':>12}{'n':>6}"
+        print(header)
+        print("-" * len(header))
+        for cond in conds:
+            row = f"{cond:<28}"
+            n_runs = 0
+            for ds_key, _ in ds:
+                xs = values[cond][ds_key]
+                if not xs:
+                    row += f"{'—':>12}"
+                else:
+                    n_runs = max(n_runs, len(xs))
+                    if reducer == "mean":
+                        v = statistics.mean(xs)
+                    elif reducer == "min":
+                        v = min(xs)
+                    else:
+                        v = max(xs)
+                    row += f"{v:>12.4f}"
+            ext = values[cond]["ext_avg"]
+            if not ext:
+                row += f"{'—':>12}"
+            else:
+                if reducer == "mean":
+                    ev = statistics.mean(ext)
+                elif reducer == "min":
+                    ev = min(ext)
+                else:
+                    ev = max(ext)
+                row += f"{ev:>12.4f}"
+            row += f"{n_runs:>6d}"
+            print(row)
+
+    print_table("K10 Test Results — Average Table", "mean")
+    print_table("K10 Test Results — Min Table", "min")
+    print_table("K10 Test Results — Max Table", "max")
 
 
 if __name__ == "__main__":
