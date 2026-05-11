@@ -324,31 +324,37 @@ def load_reasoning_traces_dataset(data_cfg):
     generate_reasoning_traces.py and return a HuggingFace Dataset suitable
     for SFT training.
 
-    The JSON file contains one record per (sample, condition) pair.  This
-    function filters to a single condition so the training signal is consistent:
-
-    * "without_intent" — reasoning conditioned on ground-truth harm label, no
-      intent in the completion.  Good for training a classification-only model.
-    * "with_intent"    — same but the human-written intent is also present in
-      both the reasoning context and the training completion.  Use this to
-      train a generation model (reasoning + intent + harm).
+    ``reasoning_traces_condition`` accepts either a string or a list/sequence
+    (e.g. Hydra ListConfig). When a sequence is given, records whose
+    ``condition`` is in the set are all kept, and the intent source is selected
+    per-record from the record's own ``condition`` field (``predicted.prompt_intent``
+    for ``synthetic_intent``, ``ground_truth.intent`` otherwise). This enables
+    mixed-source training sets that combine multiple condition labels in a
+    single corpus (e.g. annotated ``human_intent`` rows alongside broader-pool
+    ``synthetic_intent`` rows).
 
     Only records with a non-empty reasoning trace AND a resolvable binary harm
-    label are kept.  The harm label is normalised to "harmful"/"safe" so that
-    the output is directly compatible with safety_experiment.py evaluation.
+    label are kept. The harm label is normalised to "harmful"/"safe".
 
     Required config keys (under ``data``):
         reasoning_traces_path       -- path to parsed_results.json
-        reasoning_traces_condition  -- "without_intent" or "with_intent"
+        reasoning_traces_condition  -- str OR list of str
 
     Returns:
-        HuggingFace Dataset with columns: id, prompt, intent, harm_label, reasoning
+        HuggingFace Dataset with columns: id, prompt, intent, harm_label, reasoning, condition
     """
+    from collections import Counter
     from datasets import Dataset
     from .data_utils import map_harm_to_binary
 
     traces_path = data_cfg.get("reasoning_traces_path")
-    condition = data_cfg.get("reasoning_traces_condition", "without_intent")
+    condition_raw = data_cfg.get("reasoning_traces_condition", "without_intent")
+
+    if isinstance(condition_raw, str):
+        conditions = [condition_raw]
+    else:
+        conditions = [str(c) for c in condition_raw]
+    condition_set = set(conditions)
 
     if not traces_path:
         raise ValueError(
@@ -356,7 +362,10 @@ def load_reasoning_traces_dataset(data_cfg):
         )
 
     print(f"Loading reasoning traces from: {traces_path}")
-    print(f"  Condition filter: {condition}")
+    if len(conditions) == 1:
+        print(f"  Condition filter: {conditions[0]}")
+    else:
+        print(f"  Condition filter (mixed): {conditions}")
 
     filter_disagreements = data_cfg.get("filter_teacher_disagreements", False)
 
@@ -367,7 +376,8 @@ def load_reasoning_traces_dataset(data_cfg):
     filtered = []
     n_dropped_harm = 0
     for rec in records:
-        if rec.get("condition") != condition:
+        rec_cond = rec.get("condition")
+        if rec_cond not in condition_set:
             continue
         reasoning = rec.get("reasoning", "").strip()
         harm_raw = rec.get("ground_truth", {}).get("prompt_harm_label")
@@ -381,8 +391,8 @@ def load_reasoning_traces_dataset(data_cfg):
                 n_dropped_harm += 1
                 continue
 
-        # For synthetic_intent, use the model's predicted intent; for others use ground truth
-        if condition == "synthetic_intent":
+        # Per-record intent source: synthetic uses model-generated; everything else uses GT.
+        if rec_cond == "synthetic_intent":
             intent = rec.get("predicted", {}).get("prompt_intent", "") or ""
         else:
             intent = rec.get("ground_truth", {}).get("intent", "")
@@ -393,15 +403,18 @@ def load_reasoning_traces_dataset(data_cfg):
             "intent": intent,
             "harm_label": harm_binary,   # "harmful" or "safe"
             "reasoning": reasoning,
+            "condition": rec_cond,
         })
 
     if not filtered:
         raise ValueError(
-            f"No valid reasoning traces found for condition '{condition}' in "
+            f"No valid reasoning traces found for condition '{condition_raw}' in "
             f"{traces_path}.  Available conditions: {available_conditions}"
         )
 
-    print(f"  Loaded {len(filtered)} examples (condition='{condition}')")
+    print(f"  Loaded {len(filtered)} examples (conditions={conditions})")
+    if len(conditions) > 1:
+        print(f"  Per-condition counts: {dict(Counter(r['condition'] for r in filtered))}")
     if filter_disagreements:
         print(f"  Filtered (harm disagreement):   {n_dropped_harm}")
     return Dataset.from_list(filtered)
@@ -803,10 +816,37 @@ def run_causal_flow(config):
     binary_harm_mapping = data_cfg.get("binary_harm_mapping", True)
     classification_only = data_cfg.get("classification_only", False)
     use_reasoning_traces = data_cfg.get("use_reasoning_traces", False)
-    # rt_condition is the reasoning traces condition name
-    rt_condition = data_cfg.get("reasoning_traces_condition", "no_intent")
-    # with_intent is True for conditions that ask the student to generate intent
-    with_intent = rt_condition in ("synthetic_intent", "human_intent")
+    # rt_condition_raw is the reasoning traces condition spec — string or list of strings.
+    rt_condition_raw = data_cfg.get("reasoning_traces_condition", "no_intent")
+    if isinstance(rt_condition_raw, str):
+        rt_conditions = [rt_condition_raw]
+    else:
+        rt_conditions = [str(c) for c in rt_condition_raw]
+
+    # Decide template family. synthetic_intent and human_intent share the same
+    # student template (PREAMBLE + OUTPUT_FORMAT_WITH_INTENT), so they can be
+    # mixed in a single training set; no_intent is incompatible with both.
+    _intent_family = {"synthetic_intent", "human_intent"}
+    if all(c in _intent_family for c in rt_conditions):
+        rt_template_condition = "synthetic_intent"
+        with_intent = True
+    elif all(c == "no_intent" for c in rt_conditions):
+        rt_template_condition = "no_intent"
+        with_intent = False
+    elif rt_conditions == ["without_intent"]:  # legacy alias
+        rt_template_condition = "no_intent"
+        with_intent = False
+    elif rt_conditions == ["with_intent"]:  # legacy alias
+        rt_template_condition = "synthetic_intent"
+        with_intent = True
+    else:
+        raise ValueError(
+            f"reasoning_traces_condition={rt_conditions!r} mixes template families. "
+            f"All values must be intent-producing ({sorted(_intent_family)}) or all 'no_intent'."
+        )
+
+    # Stable label for printing and val_metrics.json; "+" sentinel preserves order.
+    rt_condition_label = rt_conditions[0] if len(rt_conditions) == 1 else "+".join(rt_conditions)
 
     # Log the training mode
     if use_reasoning_traces:
@@ -817,7 +857,7 @@ def run_causal_flow(config):
         else:
             print("REASONING TRACES MODE (classification: reasoning + harm)")
             print("Training format: prompt -> Reasoning: ... / Prompt harm: ...")
-        print(f"Source condition: {rt_condition}")
+        print(f"Source condition: {rt_condition_label}")
         print(f"Traces path:      {data_cfg.get('reasoning_traces_path', '(not set)')}")
         print("=" * 60)
     elif classification_only:
@@ -862,7 +902,7 @@ def run_causal_flow(config):
 
         def create_prompt_completion(examples):
             prompts = [
-                _apply_template(build_student_messages(p, condition=rt_condition))
+                _apply_template(build_student_messages(p, condition=rt_template_condition))
                 for p in examples["prompt"]
             ]
             intents = examples["intent"] if with_intent else [None] * len(examples["prompt"])
@@ -1108,7 +1148,7 @@ def run_causal_flow(config):
         metrics["val_eval_loss"] = val_eval_loss
     metrics["model"] = model_name
     if use_reasoning_traces:
-        metrics["condition"] = rt_condition
+        metrics["condition"] = rt_condition_label
     metrics["learning_rate"] = train_cfg.get("learning_rate")
     metrics_path = os.path.join(save_dir, "val_metrics.json")
     with open(metrics_path, "w") as f:

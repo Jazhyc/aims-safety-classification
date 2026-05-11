@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Broader-intent-mix ablation
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Goal: test whether mixing the annotated `human_intent` train traces (n=1378)
+# with an equal harm-stratified sample of broader-pool `synthetic_intent`
+# traces (n=1378 drawn from the scaling pool, excluding annotated prompts)
+# improves OOD val / test F1 over training on human_intent alone.
+#
+# Same (teacher, student, lr) point as the headline (gpt-oss-120b →
+# gemma-3-12b, lr=2e-5). Standard 5-epoch ceiling with early-stopping
+# patience=1 (the headline recipe), so the model selection signal is the
+# usual val+test combined eval and the run terminates once val stops
+# improving.
+#
+# Both halves carry their own intent (annotated rows use `ground_truth.intent`;
+# synthetic rows use `predicted.prompt_intent`). The two conditions share the
+# same student system prompt (PREAMBLE + OUTPUT_FORMAT_WITH_INTENT), so no
+# per-row template branching is needed during training. The trace loader
+# accepts `reasoning_traces_condition` as a list to keep both record types.
+#
+# Both halves' traces already exist on disk; no teacher pass is required.
+# ─────────────────────────────────────────────────────────────────────────────
+
+ablation_name: "broader_intent_mix"
+
+teacher:
+  hf_id: "openai/gpt-oss-120b"
+  slug:  "openai-gpt-oss-120b"
+
+student:
+  hf_id: "google/gemma-3-12b-it"
+  slug:  "gemma-3-12b"
+
+# Mixed distillation conditions — both halves are intent-producing.
+# Order doesn't affect training; loader uses set membership.
+conditions:
+  - "human_intent"
+  - "synthetic_intent"
+
+# Best LR for (gpt-oss-120b, gemma-3-12b) on both human_intent and
+# synthetic_intent in the v7 sweep.
+learning_rate: 2.0e-5
+
+# Standard early-stopping recipe (matches the rest of the v7 sweep).
+epochs: 5
+
+# Single seed. The mix is deterministic given this seed.
+seed: 42
+
+# Single data condition. Kept as a list to mirror label_source_ablation.yaml.
+data_conditions:
+  - name: "broader_intent_mix"
+    # Pre-built parsed_results.json (merge of annotated human_intent +
+    # harm-stratified scaling synthetic_intent). Produced by:
+    #   scripts/hpc/ablations/prepare_broader_intent_mix_samples.py
+    traces_path: "data/reasoning_traces_v7_ablations/openai-gpt-oss-120b/broader_intent_mix/train/parsed_results.json"
+
+# Outputs kept disjoint from the main sweep so eval submitters don't pick
+# these adapters up.
+paths:
+  adapters_base_dir:  "models/distillation-ablations"
+  train_results_dir:  "data/train_results/distillation-ablations"
+  predictions_dir:    "data/predictions/distillation-ablations"
+  ood_val_base_dir:   "data/safety_experiment/ood_validation/distillation-ablations"
+  test_eval_base_dir: "data/safety_experiment/distillation-ablations"
+
+# Reused v7 val/test traces for early-stopping signal (consistent with the
+# rest of the v7 sweep and the label_source ablation).
+shared_traces:
+  validation_path: "data/reasoning_traces_v7/openai-gpt-oss-120b/validation/parsed_results.json"
+  test_path:       "data/reasoning_traces_v7/openai-gpt-oss-120b/test/parsed_results.json"
+
+wandb:
+  project: "distillation-ablation-broader-intent-mix"
+
+# Version stamp on adapter directory names — distinct from "v7" and
+# "v7-ablation" so the main and label-source pipelines never confuse it.
+run_version: "v7-mix"
+
+# Eval condition used at OOD-val / test time. Both training halves produce
+# intent at inference; pick synthetic since there's no GT intent on held-out
+# prompts.
+eval_condition: "synthetic_intent"
