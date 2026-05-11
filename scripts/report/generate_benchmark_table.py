@@ -263,18 +263,34 @@ def get_hardcoded_results() -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict
         },
         # Scaling: GPT-OSS-120B → Gemma-3-12B / Synthetic Intent, trained on the full
         # WildGuardMix corpus (~86.7k ex, 1 epoch, lr=2e-5). See submit_scaling.py.
-        "Distillation (WildGuardMix)": {
-            "wildguardmix": 0.8947,
-            "xstest": 0.9510,
-            "aegis": 0.8321,
-            "toxic_chat": 0.7108,
-            "openai_moderation": 0.7412,
+        # "Distillation (WildGuardMix)": {
+        #     "wildguardmix": 0.8947,
+        #     "xstest": 0.9510,
+        #     "aegis": 0.8321,
+        #     "toxic_chat": 0.7108,
+        #     "openai_moderation": 0.7412,
+        # },
+        # Broader-intent-mix ablation: GPT-OSS-120B → Gemma-3-12B trained on a
+        # 50/50 blend of annotated intent traces (n=1378) + harm-stratified
+        # synthetic_intent from the WildGuardMix scaling pool (n=1378),
+        # lr=2e-5, 5-epoch ceiling with early stopping. Two variants differ
+        # only on the annotated half's intent source. See submit_broader_intent_mix.py.
+        # Annotated-intents F1 (Mixed Human=0.715, Mixed Synthetic=0.760) excluded —
+        # not a benchmark column.
+        "Distillation (Mixed Human)": {
+            "wildguardmix": 0.8887,
+            "xstest": 0.9519,
+            "aegis": 0.8168,
+            "toxic_chat": 0.6941,
+            "openai_moderation": 0.7764,
         },
-        # NOTE: an earlier "Distillation (Mixed)" row was rolled back here —
-        # the SLURM job that produced those numbers was hit by the
-        # comma-in-export pitfall (see CLAUDE.md > Known Pitfalls), so it
-        # silently trained on the human_intent half only. Re-add this row
-        # once the corrected mix has been re-trained and re-evaluated end-to-end.
+        # "Distillation (Mixed Synthetic)": {
+        #     "wildguardmix": 0.8821,
+        #     "xstest": 0.9340,
+        #     "aegis": 0.8142,
+        #     "toxic_chat": 0.6893,
+        #     "openai_moderation": 0.7705,
+        # },
     }
     return baselines, our_methods
 
