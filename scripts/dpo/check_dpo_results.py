@@ -8,6 +8,8 @@ Usage:
 
 import argparse
 import json
+import math
+import statistics
 from pathlib import Path
 
 try:
@@ -186,9 +188,15 @@ def main():
                    help="Base directory containing dpo-* model dirs (test predictions)")
     p.add_argument("--ood-base", default="data/safety_experiment/ood_validation/dpo",
                    help="Base directory for OOD validation predictions")
+    p.add_argument("--k10", action="store_true",
+                   help="Print k10 (a..j) condition summary/ranking from training_summary.json best checkpoint OOD avg.")
     args = p.parse_args()
     base     = Path(args.base)
     ood_base = Path(args.ood_base)
+
+    if args.k10:
+        summarize_k10(base)
+        return
 
     ds_keys = DATASET_ORDER
     short   = [SHORT_NAMES[d] for d in ds_keys]
@@ -264,6 +272,69 @@ def main():
 
     print()
     print("Legend: — = predictions not yet saved.")
+
+
+def summarize_k10(base: Path) -> None:
+    tags = "abcdefghij"
+    conds = {
+        "hard-dpo": "llama31-8b-k10-{t}-hard-b0.3-e3-s22",
+        "judge-gemma-bad": "llama31-8b-k10-{t}-judge-gemma-bad-b0.3-e3-s22",
+        "judge-gemma-standalone": "llama31-8b-k10-{t}-judge-gemma-standalone-b0.3-e3-s22",
+        "judge-gemma-decent": "llama31-8b-k10-{t}-judge-gemma-decent-b0.3-e3-s22",
+        "hard-plus-gemma-decent": "llama31-8b-k10-{t}-hard-plus-gemma-decent-b0.3-e3-s22",
+    }
+
+    rows = {c: [] for c in conds}
+    print("Per-run best checkpoint (OOD)")
+    print("=" * 120)
+    print(f"{'condition':28s} {'tag':>3s} {'checkpoint':14s} {'ood_avg':>10s}")
+    print("-" * 120)
+
+    for cond, pat in conds.items():
+        for t in tags:
+            p = base / pat.format(t=t) / "training_summary.json"
+            if not p.exists():
+                rows[cond].append((t, None, float("nan")))
+                print(f"{cond:28s} {t:>3s} {'MISSING':14s} {'nan':>10s}")
+                continue
+            try:
+                d = json.loads(p.read_text())
+            except Exception:
+                rows[cond].append((t, None, float("nan")))
+                print(f"{cond:28s} {t:>3s} {'BROKEN':14s} {'nan':>10s}")
+                continue
+
+            best = (d.get("best_checkpoint_selection") or {}).get("best") or {}
+            ck = best.get("checkpoint")
+            avg = best.get("ood_avg")
+            avg = float(avg) if avg is not None else float("nan")
+            rows[cond].append((t, ck, avg))
+            avg_s = f"{avg:.4f}" if not math.isnan(avg) else "nan"
+            print(f"{cond:28s} {t:>3s} {str(ck):14s} {avg_s:>10s}")
+
+    print("\nCondition summary (best-checkpoint OOD avg across runs)")
+    print("=" * 120)
+    print(f"{'condition':28s} {'n':>3s} {'mean':>10s} {'std':>10s} {'min':>10s} {'max':>10s} {'missing':>8s}")
+
+    ranking = []
+    for cond in conds:
+        vals = [v for _, _, v in rows[cond] if not math.isnan(v)]
+        missing = len(tags) - len(vals)
+        if not vals:
+            print(f"{cond:28s} {0:3d} {'nan':>10s} {'nan':>10s} {'nan':>10s} {'nan':>10s} {missing:8d}")
+            continue
+        mean = statistics.mean(vals)
+        std = statistics.stdev(vals) if len(vals) > 1 else 0.0
+        vmin = min(vals)
+        vmax = max(vals)
+        print(f"{cond:28s} {len(vals):3d} {mean:10.4f} {std:10.4f} {vmin:10.4f} {vmax:10.4f} {missing:8d}")
+        ranking.append((mean, cond))
+
+    ranking.sort(reverse=True)
+    print("\nRanking by mean OOD avg")
+    print("=" * 120)
+    for i, (m, cond) in enumerate(ranking, 1):
+        print(f"{i:2d}. {cond:28s} mean={m:.4f}")
 
 
 if __name__ == "__main__":
