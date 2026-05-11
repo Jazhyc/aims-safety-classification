@@ -32,12 +32,6 @@ student:
   hf_id: "google/gemma-3-12b-it"
   slug:  "gemma-3-12b"
 
-# Mixed distillation conditions — both halves are intent-producing.
-# Order doesn't affect training; loader uses set membership.
-conditions:
-  - "human_intent"
-  - "synthetic_intent"
-
 # Best LR for (gpt-oss-120b, gemma-3-12b) on both human_intent and
 # synthetic_intent in the v7 sweep.
 learning_rate: 2.0e-5
@@ -48,13 +42,23 @@ epochs: 5
 # Single seed. The mix is deterministic given this seed.
 seed: 42
 
-# Single data condition. Kept as a list to mirror label_source_ablation.yaml.
+# Two variants of the mix, sharing the same scaling synthetic_intent half but
+# differing in the annotated half:
+#   - annotated_variant=human:     annotated human_intent + scaling synthetic_intent
+#                                   (training loads both conditions; intent source per-record)
+#   - annotated_variant=synthetic: annotated synthetic_intent + scaling synthetic_intent
+#                                   (uniform synthetic_intent condition)
+# Both variants use the same human-annotated 4-category harm label on the
+# annotated half (mapped to binary via map_harm_to_binary at train time).
 data_conditions:
   - name: "broader_intent_mix"
-    # Pre-built parsed_results.json (merge of annotated human_intent +
-    # harm-stratified scaling synthetic_intent). Produced by:
-    #   scripts/hpc/ablations/prepare_broader_intent_mix_samples.py
+    annotated_variant: "human"
+    train_conditions: ["human_intent", "synthetic_intent"]
     traces_path: "data/reasoning_traces_v7_ablations/openai-gpt-oss-120b/broader_intent_mix/train/parsed_results.json"
+  - name: "broader_intent_mix_synthetic"
+    annotated_variant: "synthetic"
+    train_conditions: ["synthetic_intent"]
+    traces_path: "data/reasoning_traces_v7_ablations/openai-gpt-oss-120b/broader_intent_mix_synthetic/train/parsed_results.json"
 
 # Outputs kept disjoint from the main sweep so eval submitters don't pick
 # these adapters up.

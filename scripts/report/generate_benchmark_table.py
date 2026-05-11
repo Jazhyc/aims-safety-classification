@@ -270,6 +270,11 @@ def get_hardcoded_results() -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict
             "toxic_chat": 0.7108,
             "openai_moderation": 0.7412,
         },
+        # NOTE: an earlier "Distillation (Mixed)" row was rolled back here —
+        # the SLURM job that produced those numbers was hit by the
+        # comma-in-export pitfall (see CLAUDE.md > Known Pitfalls), so it
+        # silently trained on the human_intent half only. Re-add this row
+        # once the corrected mix has been re-trained and re-evaluated end-to-end.
     }
     return baselines, our_methods
 

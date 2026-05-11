@@ -15,8 +15,10 @@ source .venv/bin/activate
 #   STUDENT_MODEL         — HuggingFace student ID
 #   LEARNING_RATE         — fixed at the per-combo best LR
 #   EPOCHS                — ceiling (early stopping handles the rest)
-#   CONDITIONS_LIST       — comma-separated conditions (e.g. "human_intent,synthetic_intent")
-#                          passed straight into Hydra as [c1,c2]
+#   CONDITIONS_LIST       — pipe-separated conditions (e.g. "human_intent|synthetic_intent");
+#                          converted to comma-separated below before the Hydra list
+#                          override. Pipe is used because SLURM's `--export` splits its
+#                          value on commas, so a literal comma would truncate the var.
 #   TRACES_TRAIN_PATH     — merged parsed_results.json (built locally, not via SLURM)
 #   TRACES_VAL_PATH       — shared v7 validation traces
 #   TRACES_TEST_PATH      — shared v7 test traces
@@ -39,7 +41,7 @@ python scripts/baselines/train_generator.py \
     data.reasoning_traces_path="${TRACES_TRAIN_PATH}" \
     data.reasoning_traces_val_path="${TRACES_VAL_PATH}" \
     data.reasoning_traces_test_path="${TRACES_TEST_PATH}" \
-    "data.reasoning_traces_condition=[${CONDITIONS_LIST}]" \
+    "data.reasoning_traces_condition=[${CONDITIONS_LIST//|/,}]" \
     paths.output_dir="${TRAIN_RESULTS_DIR}/${RUN_NAME}" \
     paths.logs_dir="logs/distillation-ablations/${RUN_NAME}" \
     paths.model_save_dir="${ADAPTER_BASE_DIR}/${RUN_NAME}" \

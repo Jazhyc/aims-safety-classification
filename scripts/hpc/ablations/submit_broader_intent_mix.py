@@ -78,24 +78,29 @@ def adapter_dir(cfg: dict, data_condition_name: str) -> Path:
 def mode_samples(cfg: dict, dry_run: bool, force: bool):
     seed = cfg["seed"]
     teacher_slug = cfg["teacher"]["slug"]
-    out_path = PROJECT_ROOT / cfg["data_conditions"][0]["traces_path"]
 
-    if not force and out_path.exists() and out_path.stat().st_size > 0:
-        print(f"  [skip] merged traces already present at {out_path}")
-        return
+    for entry in cfg["data_conditions"]:
+        name = entry["name"]
+        out_path = PROJECT_ROOT / entry["traces_path"]
+        variant = entry.get("annotated_variant", "human")
 
-    cmd = [
-        sys.executable,
-        PREPARE_SAMPLES_SCRIPT,
-        "--seed", str(seed),
-        "--teacher-slug", teacher_slug,
-        "--output-dir", str(out_path.parent),
-    ]
-    print(f"\nCommand: {' '.join(cmd)}")
-    if dry_run:
-        print("[dry-run] would build merged traces.")
-        return
-    subprocess.run(cmd, check=True)
+        if not force and out_path.exists() and out_path.stat().st_size > 0:
+            print(f"  [skip] {name} — merged traces already present at {out_path}")
+            continue
+
+        cmd = [
+            sys.executable,
+            PREPARE_SAMPLES_SCRIPT,
+            "--seed", str(seed),
+            "--variant", variant,
+            "--teacher-slug", teacher_slug,
+            "--output-dir", str(out_path.parent),
+        ]
+        print(f"\n  [{name}] command: {' '.join(cmd)}")
+        if dry_run:
+            print(f"  [dry-run] {name} — would build merged traces.")
+            continue
+        subprocess.run(cmd, check=True)
 
 
 # ── Mode: train ──────────────────────────────────────────────────────────────
@@ -104,8 +109,6 @@ def mode_train(cfg: dict, dry_run: bool, force: bool):
     student_hf = cfg["student"]["hf_id"]
     lr = float(cfg["learning_rate"])
     epochs = cfg["epochs"]
-    conditions = cfg["conditions"]
-    conditions_list = ",".join(conditions)
     val_path = cfg["shared_traces"]["validation_path"]
     test_path = cfg["shared_traces"]["test_path"]
 
@@ -128,6 +131,13 @@ def mode_train(cfg: dict, dry_run: bool, force: bool):
             print(f"  [skip] {name} — adapter already trained at {adir}")
             skipped.append(name)
             continue
+
+        train_conditions = entry["train_conditions"]
+        # SLURM `--export` splits its value on commas, so a comma-separated
+        # CONDITIONS_LIST gets truncated to its first element. Use `|` here
+        # and convert back to comma inside the bash template before handing
+        # to Hydra.
+        conditions_list = "|".join(train_conditions)
 
         run_name = adapter_run_name(cfg, name)
         export_vars = {
@@ -283,14 +293,31 @@ def main():
                         help="Re-run even when outputs already exist on disk.")
     parser.add_argument("--eval-config", default="eval_distillation",
                         help="(test mode) Hydra config name for test eval (default: eval_distillation).")
+    parser.add_argument(
+        "--data-condition", default=None,
+        help="Restrict the run to a single data_conditions entry by name "
+             "(e.g. 'broader_intent_mix' or 'broader_intent_mix_synthetic'). "
+             "Default: process all entries.",
+    )
     args = parser.parse_args()
 
     cfg = load_config()
 
+    if args.data_condition is not None:
+        wanted = args.data_condition
+        all_names = [e["name"] for e in cfg["data_conditions"]]
+        if wanted not in all_names:
+            parser.error(
+                f"--data-condition={wanted!r} not in config. "
+                f"Available: {all_names}"
+            )
+        cfg["data_conditions"] = [e for e in cfg["data_conditions"] if e["name"] == wanted]
+
+    entry_names = [e["name"] for e in cfg["data_conditions"]]
     print_header(
         f"Broader-intent-mix ablation — mode={args.mode}",
         f"teacher={cfg['teacher']['slug']}  student={cfg['student']['slug']}  "
-        f"conditions={cfg['conditions']}  lr={cfg['learning_rate']}  "
+        f"variants={entry_names}  lr={cfg['learning_rate']}  "
         f"epochs={cfg['epochs']}  seed={cfg['seed']}"
         + ("  [DRY RUN]" if args.dry_run else "")
         + ("  [FORCE]" if args.force else ""),

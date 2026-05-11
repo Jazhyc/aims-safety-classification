@@ -5,25 +5,31 @@ Build the merged train traces JSON for the broader-intent-mix ablation.
 Concatenates two existing trace pools into a single ``parsed_results.json``
 that the distillation training script consumes:
 
-  1. All ``human_intent`` records from the annotated-intents train traces
-     (``data/reasoning_traces_v7/<teacher>/train/parsed_results.json``).
+  1. All ``<variant>_intent`` records from the annotated-intents train traces
+     at ``data/reasoning_traces_v7/<teacher>/train/parsed_results.json``,
+     where ``<variant>`` is ``human`` or ``synthetic`` (selected via
+     ``--variant``; default ``human``). Both variants share the same human-
+     annotated 4-category harm label on the annotated half; only the intent
+     source (``ground_truth.intent`` vs ``predicted.prompt_intent``) differs.
 
   2. A harm-stratified random sample from the scaling pool's
      ``synthetic_intent`` traces
      (``data/reasoning_traces_scaling/<teacher>/full_wg/train/parsed_results.json``),
-     size-matched to the human-intent half on binary harm (harmful / unharmful).
+     size-matched to the annotated half on binary harm (harmful / unharmful).
      Prompts that already appear in the annotated-intents train split are
      excluded to prevent within-corpus prompt leakage across the two halves.
 
-Each record keeps its own ``condition`` field (``human_intent`` or
-``synthetic_intent``), so the trace-loader in ``causal.py`` selects the right
-intent source per row (``ground_truth.intent`` vs ``predicted.prompt_intent``).
-The student system prompt is identical for both conditions, so no per-row
-template branching is required at train time.
+Each record keeps its own ``condition`` field, so the trace-loader in
+``causal.py`` selects the right intent source per row. The student system
+prompt is identical across ``human_intent`` / ``synthetic_intent``, so no
+per-row template branching is required at train time.
 
 Usage:
+    # Mix annotated human_intent with WG synthetic_intent (the default)
     python scripts/hpc/ablations/prepare_broader_intent_mix_samples.py
-    python scripts/hpc/ablations/prepare_broader_intent_mix_samples.py --seed 42
+
+    # Mix annotated synthetic_intent with WG synthetic_intent
+    python scripts/hpc/ablations/prepare_broader_intent_mix_samples.py --variant synthetic
 """
 
 import argparse
@@ -46,24 +52,25 @@ def _load_traces(path: Path) -> list[dict]:
 
 def build_mixed_traces(
     rng: random.Random,
-    human_traces_path: Path,
+    annotated_traces_path: Path,
     scaling_traces_path: Path,
+    annotated_condition: str,
 ) -> list[dict]:
-    print(f"\n  Loading annotated human_intent traces from {human_traces_path} ...")
-    all_human = _load_traces(human_traces_path)
-    human = [r for r in all_human if r.get("condition") == "human_intent"]
+    print(f"\n  Loading annotated {annotated_condition} traces from {annotated_traces_path} ...")
+    all_annotated = _load_traces(annotated_traces_path)
+    annotated = [r for r in all_annotated if r.get("condition") == annotated_condition]
     # Apply the same keepability filter the trainer uses (non-empty reasoning,
     # mappable harm) so the mix size matches what the trainer will actually
     # see end-to-end.
-    human_keep = [
-        r for r in human
+    annotated_keep = [
+        r for r in annotated
         if (r.get("reasoning") or "").strip()
         and map_harm_to_binary(r.get("ground_truth", {}).get("prompt_harm_label")) is not None
     ]
-    print(f"    Loaded: {len(human)}  keepable: {len(human_keep)}")
+    print(f"    Loaded: {len(annotated)}  keepable: {len(annotated_keep)}")
 
     binary_counts = Counter(
-        map_harm_to_binary(r["ground_truth"]["prompt_harm_label"]) for r in human_keep
+        map_harm_to_binary(r["ground_truth"]["prompt_harm_label"]) for r in annotated_keep
     )
     print(f"    Binary harm distribution: {dict(binary_counts)}")
 
@@ -72,8 +79,8 @@ def build_mixed_traces(
     scaling = [r for r in all_scaling if r.get("condition") == "synthetic_intent"]
     print(f"    Loaded: {len(scaling)}")
 
-    excluded_prompts = {(r.get("prompt") or "").strip() for r in human_keep}
-    print(f"    Excluding {len(excluded_prompts)} prompts that appear in the human-intent half")
+    excluded_prompts = {(r.get("prompt") or "").strip() for r in annotated_keep}
+    print(f"    Excluding {len(excluded_prompts)} prompts that appear in the annotated half")
 
     # Bucket the synthetic pool by binary harm so we can size-match exactly.
     buckets: dict[str, list[dict]] = defaultdict(list)
@@ -112,9 +119,10 @@ def build_mixed_traces(
     print(f"\n    Synthetic sampled: {len(sampled)}")
     print(f"    Synthetic binary distribution: {Counter(map_harm_to_binary(r['ground_truth']['prompt_harm_label']) for r in sampled)}")
 
-    merged = human_keep + sampled
+    merged = annotated_keep + sampled
     rng.shuffle(merged)
-    print(f"\n  Merged total: {len(merged)}  (human_intent={len(human_keep)}, synthetic_intent={len(sampled)})")
+    print(f"\n  Merged total: {len(merged)}  "
+          f"(annotated {annotated_condition}={len(annotated_keep)}, scaling synthetic_intent={len(sampled)})")
     print(f"  Per-condition counts: {Counter(r['condition'] for r in merged)}")
     print(f"  Binary harm distribution: {Counter(map_harm_to_binary(r['ground_truth']['prompt_harm_label']) for r in merged)}")
     return merged
@@ -127,11 +135,16 @@ def main():
     parser.add_argument("--seed", type=int, default=42,
                         help="RNG seed for synthetic subsampling and final shuffle (default: 42).")
     parser.add_argument(
+        "--variant", choices=["human", "synthetic"], default="human",
+        help="Which condition to draw for the annotated half (default: human, "
+             "matching the original broader_intent_mix experiment).",
+    )
+    parser.add_argument(
         "--teacher-slug", default="openai-gpt-oss-120b",
         help="Teacher slug (default: openai-gpt-oss-120b).",
     )
     parser.add_argument(
-        "--human-traces-path", type=Path, default=None,
+        "--annotated-traces-path", type=Path, default=None,
         help="Override path to annotated train parsed_results.json.",
     )
     parser.add_argument(
@@ -141,12 +154,16 @@ def main():
     parser.add_argument(
         "--output-dir", type=Path,
         default=None,
-        help="Directory to write the merged parsed_results.json (default derived from teacher slug).",
+        help="Directory to write the merged parsed_results.json. "
+             "Defaults to data/reasoning_traces_v7_ablations/<teacher>/broader_intent_mix[_synthetic]/train/.",
     )
     args = parser.parse_args()
 
     teacher_slug = args.teacher_slug
-    human_traces_path = args.human_traces_path or (
+    annotated_condition = f"{args.variant}_intent"
+    default_subdir = "broader_intent_mix" if args.variant == "human" else "broader_intent_mix_synthetic"
+
+    annotated_traces_path = args.annotated_traces_path or (
         PROJECT_ROOT / "data" / "reasoning_traces_v7" / teacher_slug / "train" / "parsed_results.json"
     )
     scaling_traces_path = args.scaling_traces_path or (
@@ -154,21 +171,22 @@ def main():
     )
     out_dir = args.output_dir or (
         PROJECT_ROOT / "data" / "reasoning_traces_v7_ablations" / teacher_slug
-        / "broader_intent_mix" / "train"
+        / default_subdir / "train"
     )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(args.seed)
 
     print("=" * 60)
-    print("Building broader_intent_mix train traces")
-    print(f"  teacher={teacher_slug}  seed={args.seed}")
+    print(f"Building {default_subdir} train traces")
+    print(f"  teacher={teacher_slug}  variant={args.variant}  seed={args.seed}")
     print("=" * 60)
 
     merged = build_mixed_traces(
         rng=rng,
-        human_traces_path=human_traces_path,
+        annotated_traces_path=annotated_traces_path,
         scaling_traces_path=scaling_traces_path,
+        annotated_condition=annotated_condition,
     )
 
     out_path = out_dir / "parsed_results.json"

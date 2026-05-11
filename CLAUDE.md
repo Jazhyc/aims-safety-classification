@@ -287,3 +287,11 @@ The 4-category labels (`Completely Safe`, `Uncertain Harmful`, etc.) do not trig
 Symptom: `reasoning` strings contain `Intent:` substrings, `predicted.prompt_intent` values are >400 chars and look like the teacher's CoT thinking instead of the polished intent. Quick check: `grep -c '"Intent:' parsed_results.json` should be 0.
 
 If a regression slips through, raw_outputs.json is sufficient to re-parse in place — see the inline reparser pattern used in the label-source ablation (`scripts/hpc/ablations/submit_label_source_ablation.py` history). `scripts/distillation/reparse_traces.py` is stale (imports `parse_response` / `_extract_fields`, neither of which exist anymore) — fix or replace it before relying on it.
+
+### SLURM `--export` truncates values containing commas
+
+`scripts/hpc/slurm_utils.submit_sbatch` builds the export string as `K1=V1,K2=V2,…`. SLURM's `--export` splits that value on commas to delimit variables, so any `V` containing a literal comma silently truncates: `--export=CONDITIONS_LIST=human_intent,synthetic_intent,…` makes SLURM set `CONDITIONS_LIST=human_intent` and treat `synthetic_intent=` as a separate (empty) var. The downstream job sees only the prefix and runs on the wrong data with no error.
+
+Symptom (broader-intent-mix bug): training reported `Loaded 1374 examples (conditions=['human_intent'])` and ran 215 steps instead of the expected 2752 examples / 430 steps. The adapter trained as a human_intent-only run, indistinguishable from the existing v7 human_intent adapter.
+
+**Rule**: never pass commas through `submit_sbatch` export values. Use a different separator (e.g. `|`) and decode in the bash template via `${VAR//|/,}`. As of this fix, `submit_sbatch` raises `ValueError` on comma-containing values so the bug fails loudly instead of silently.
