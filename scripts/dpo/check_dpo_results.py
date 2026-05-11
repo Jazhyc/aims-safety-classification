@@ -350,7 +350,10 @@ def summarize_k10_test(base: Path) -> None:
         "judge-gemma-standalone": "llama31-8b-k10-{t}-judge-gemma-standalone-b0.3-e3-s22",
         "judge-gemma-decent": "llama31-8b-k10-{t}-judge-gemma-decent-b0.3-e3-s22",
         "hard-plus-gemma-decent": "llama31-8b-k10-{t}-hard-plus-gemma-decent-b0.3-e3-s22",
+        "curriculum": "llama31-8b-k10-{t}-curriculum-b0.3-p1e2-p2e1-s22",
     }
+    for r in ("0.00", "0.25", "0.50", "0.75", "1.00"):
+        conds[f"ratio-{r}"] = f"llama31-8b-k10-{{t}}-ratio-r{r}-b0.3-e3-s22"
 
     ds = [
         ("annotated_intents", "ann-test"),
@@ -363,10 +366,9 @@ def summarize_k10_test(base: Path) -> None:
     ]
     ext_keys = {"wildguardmix", "xstest", "toxic_chat", "aegis", "openai_moderation"}
 
-    # condition -> metric_key -> list[(tag, value)]
-    values: dict[str, dict[str, list[float]]] = {
-        c: {k: [] for k, _ in ds} | {"ext_avg": []} for c in conds
-    }
+    metric_keys = [k for k, _ in ds]
+    # condition -> list[(tag, {metric_key: f1, ext_avg: f1})]
+    rows: dict[str, list[tuple[str, dict[str, float]]]] = {c: [] for c in conds}
 
     for cond, pat in conds.items():
         for t in tags:
@@ -377,6 +379,7 @@ def summarize_k10_test(base: Path) -> None:
             if not pred_dir.exists():
                 continue
 
+            mrow: dict[str, float] = {}
             ext_f1s = []
             for ds_key, _ in ds:
                 pred_file = find_pred_file(pred_dir, ds_key)
@@ -385,12 +388,14 @@ def summarize_k10_test(base: Path) -> None:
                 m = load_metrics(pred_file)
                 if m is None:
                     continue
-                values[cond][ds_key].append((t, m["f1"]))
+                mrow[ds_key] = m["f1"]
                 if ds_key in ext_keys:
                     ext_f1s.append(m["f1"])
 
             if len(ext_f1s) == len(ext_keys):
-                values[cond]["ext_avg"].append((t, round(sum(ext_f1s) / len(ext_f1s), 4)))
+                mrow["ext_avg"] = round(sum(ext_f1s) / len(ext_f1s), 4)
+            if mrow:
+                rows[cond].append((t, mrow))
 
     def print_table(title: str, reducer: str) -> None:
         print(f"\n{title}")
@@ -400,35 +405,35 @@ def summarize_k10_test(base: Path) -> None:
         print("-" * len(header))
         for cond in conds:
             row = f"{cond:<28}"
-            n_runs = 0
-            for ds_key, _ in ds:
-                xs = values[cond][ds_key]
-                if not xs:
+            cruns = rows[cond]
+            n_runs = len(cruns)
+
+            if reducer == "mean":
+                for ds_key, _ in ds:
+                    xs = [m.get(ds_key) for _, m in cruns if ds_key in m]
+                    if not xs:
+                        row += f"{'—':>{col_w}}"
+                    else:
+                        row += f"{statistics.mean(xs):>{col_w}.4f}"
+                ex = [m.get("ext_avg") for _, m in cruns if "ext_avg" in m]
+                row += f"{statistics.mean(ex):>{col_w}.4f}" if ex else f"{'—':>{col_w}}"
+            else:
+                ex_rows = [(t, m) for t, m in cruns if "ext_avg" in m]
+                if not ex_rows:
+                    row += "".join(f"{'—':>{col_w}}" for _ in ds)
                     row += f"{'—':>{col_w}}"
                 else:
-                    n_runs = max(n_runs, len(xs))
-                    if reducer == "mean":
-                        v = statistics.mean(v for _, v in xs)
-                        row += f"{v:>{col_w}.4f}"
-                    elif reducer == "min":
-                        tag, v = min(xs, key=lambda x: x[1])
-                        row += f"{f'{v:.4f}[{tag}]':>{col_w}}"
+                    if reducer == "min":
+                        sel_t, sel_m = min(ex_rows, key=lambda x: x[1]["ext_avg"])
                     else:
-                        tag, v = max(xs, key=lambda x: x[1])
-                        row += f"{f'{v:.4f}[{tag}]':>{col_w}}"
-            ext = values[cond]["ext_avg"]
-            if not ext:
-                row += f"{'—':>{col_w}}"
-            else:
-                if reducer == "mean":
-                    ev = statistics.mean(v for _, v in ext)
-                    row += f"{ev:>{col_w}.4f}"
-                elif reducer == "min":
-                    tag, ev = min(ext, key=lambda x: x[1])
-                    row += f"{f'{ev:.4f}[{tag}]':>{col_w}}"
-                else:
-                    tag, ev = max(ext, key=lambda x: x[1])
-                    row += f"{f'{ev:.4f}[{tag}]':>{col_w}}"
+                        sel_t, sel_m = max(ex_rows, key=lambda x: x[1]["ext_avg"])
+                    for ds_key, _ in ds:
+                        v = sel_m.get(ds_key)
+                        if v is None:
+                            row += f"{'—':>{col_w}}"
+                        else:
+                            row += f"{f'{v:.4f}[{sel_t}]':>{col_w}}"
+                    row += f"{f'{sel_m['ext_avg']:.4f}[{sel_t}]':>{col_w}}"
             row += f"{n_runs:>6d}"
             print(row)
 
