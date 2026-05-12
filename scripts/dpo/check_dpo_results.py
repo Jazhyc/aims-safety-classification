@@ -369,10 +369,23 @@ def summarize_k10_test(base: Path) -> None:
     metric_keys = [k for k, _ in ds]
     # condition -> list[(tag, {metric_key: f1, ext_avg: f1})]
     rows: dict[str, list[tuple[str, dict[str, float]]]] = {c: [] for c in conds}
+    # condition -> tag -> ood_avg (from training_summary best checkpoint selection)
+    ood_by_tag: dict[str, dict[str, float]] = {c: {} for c in conds}
 
     for cond, pat in conds.items():
         for t in tags:
             run = pat.format(t=t)
+            summary_path = base / run / "training_summary.json"
+            if summary_path.exists():
+                try:
+                    d = json.loads(summary_path.read_text())
+                    best = (d.get("best_checkpoint_selection") or {}).get("best") or {}
+                    ood = best.get("ood_avg")
+                    if ood is not None:
+                        ood_by_tag[cond][t] = float(ood)
+                except Exception:
+                    pass
+
             pred_dir = base / run / "predictions_test_selected"
             if not pred_dir.exists():
                 pred_dir = base / run / "predictions"
@@ -423,10 +436,17 @@ def summarize_k10_test(base: Path) -> None:
                     row += "".join(f"{'—':>{col_w}}" for _ in ds)
                     row += f"{'—':>{col_w}}"
                 else:
+                    # Select min/max run by OOD validation average when available.
+                    # Fallback to test ext_avg if OOD is missing.
+                    scored = []
+                    for t, m in ex_rows:
+                        ood = ood_by_tag[cond].get(t)
+                        score = ood if ood is not None else m["ext_avg"]
+                        scored.append((t, m, score))
                     if reducer == "min":
-                        sel_t, sel_m = min(ex_rows, key=lambda x: x[1]["ext_avg"])
+                        sel_t, sel_m, _ = min(scored, key=lambda x: x[2])
                     else:
-                        sel_t, sel_m = max(ex_rows, key=lambda x: x[1]["ext_avg"])
+                        sel_t, sel_m, _ = max(scored, key=lambda x: x[2])
                     for ds_key, _ in ds:
                         v = sel_m.get(ds_key)
                         if v is None:
@@ -438,8 +458,8 @@ def summarize_k10_test(base: Path) -> None:
             print(row)
 
     print_table("K10 Test Results — Average Table", "mean")
-    print_table("K10 Test Results — Min Table", "min")
-    print_table("K10 Test Results — Max Table", "max")
+    print_table("K10 Test Results — Min Table (run chosen by OOD validation)", "min")
+    print_table("K10 Test Results — Max Table (run chosen by OOD validation)", "max")
 
 
 if __name__ == "__main__":
