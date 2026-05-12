@@ -225,6 +225,7 @@ checkpoints/
 logs/*
 !logs/.gitkeep
 *.out
+.serena/
 
 # Other
 scripts/cache 
