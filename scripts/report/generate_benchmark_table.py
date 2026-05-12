@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 """
-Generate a LaTeX benchmark comparison table by querying W&B projects.
+Generate the LaTeX benchmark comparison table (``report/latex/benchmark_table.tex``).
 
-Fetches F1 scores from W&B for:
-- Baselines (GPT-OSS, WildGuard, LlamaGuard 4)
-- SFT results (Classification, Generation)
-- Best Distillation (Gemma-3-12B student with GPT-OSS-120B teacher)
-
-Generates a formatted LaTeX table with bold/underline for top 2 results.
+Models are organised into ordered groups (zero-shot LLMs, guardrails, SFT, distillation).
+Each group renders as a ``\\multicolumn`` sub-header followed by its rows; best/2nd-best
+per column are bolded/underlined across the whole table.
 
 Usage:
+    python scripts/report/generate_benchmark_table.py
     python scripts/report/generate_benchmark_table.py --output report/latex/benchmark_table.tex
 """
 
 import argparse
 import json
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
 
 try:
     import wandb
@@ -32,459 +30,290 @@ CACHE_DIR = _PROJECT_ROOT / ".cache/benchmark_results"
 CACHE_EXPIRY = 3600  # 1 hour in seconds
 
 
+# ─── Data shape ───────────────────────────────────────────────────────────────
 @dataclass
-class ModelResult:
-    """Single model's results across datasets."""
+class Row:
+    """One table row: display name + optional method annotation + scores per dataset."""
     name: str
-    is_baseline: bool
-    scores: Dict[str, float]  # {dataset: f1_score}
+    scores: Dict[str, float]
+    note: Optional[str] = None  # e.g. "CoT Classification" — rendered in small parens after name
 
 
+@dataclass
+class Group:
+    """A labelled group of rows rendered with a \\multicolumn sub-header."""
+    header: str               # raw LaTeX shown in the group sub-header
+    rows: List[Row] = field(default_factory=list)
+
+
+# ─── W&B cache plumbing (currently unused — see TODO in main) ─────────────────
 def load_cache(cache_key: str) -> Optional[Dict]:
-    """Load results from cache if valid (not expired)."""
     cache_file = CACHE_DIR / f"{cache_key}.json"
-
     if not cache_file.exists():
         return None
-
     try:
-        with open(cache_file, 'r') as f:
+        with open(cache_file, "r") as f:
             data = json.load(f)
-
-        # Check if cache is expired
         if time.time() - data.get("timestamp", 0) > CACHE_EXPIRY:
             return None
-
         return data.get("results")
     except Exception:
         return None
 
 
 def save_cache(cache_key: str, results: Dict):
-    """Save results to cache with timestamp."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = CACHE_DIR / f"{cache_key}.json"
-
     try:
-        with open(cache_file, 'w') as f:
-            json.dump({
-                "timestamp": time.time(),
-                "results": results
-            }, f, indent=2)
+        with open(CACHE_DIR / f"{cache_key}.json", "w") as f:
+            json.dump({"timestamp": time.time(), "results": results}, f, indent=2)
     except Exception as e:
         print(f"Warning: Could not save cache: {e}")
 
 
-def fetch_wandb_results(
-    entity: str,
-    project: str,
-    filters: Optional[Dict] = None,
-    metric_name: str = "f1_binary",
-    use_cache: bool = True,
-    force_refresh: bool = False,
-) -> Dict[str, List[Tuple[str, float]]]:
-    """
-    Fetch results from W&B project.
-    Returns {dataset: [(condition, f1), ...]}
-    """
-    if not HAS_WANDB:
-        print("Warning: wandb not installed, skipping W&B results")
-        return {}
-
-    cache_key = f"{entity}_{project}"
-
-    # Try to load from cache
-    if use_cache and not force_refresh:
-        cached = load_cache(cache_key)
-        if cached is not None:
-            print(f"✓ Loaded {project} from cache")
-            return cached
-
-    print(f"Fetching {project} from W&B...")
-    api = wandb.Api()
-    results = {}
-
-    try:
-        runs = api.runs(f"{entity}/{project}", filters=filters or {})
-
-        for run in runs:
-            if run.state != "finished":
-                continue
-
-            summary = run.summary
-            config = run.config
-
-            # Extract dataset from run config or name
-            dataset = config.get("dataset", {}).get("name") or run.name.split("-")[-1]
-
-            # Get F1 score
-            f1 = summary.get(metric_name)
-            if f1 is None:
-                continue
-
-            # Get condition/model name
-            condition = config.get("condition") or summary.get("condition") or run.name
-
-            if dataset not in results:
-                results[dataset] = []
-
-            results[dataset].append((condition, f1))
-
-        # Save to cache
-        if use_cache:
-            save_cache(cache_key, results)
-
-    except Exception as e:
-        print(f"Warning: Could not fetch results from {project}: {e}")
-
-    return results
-
-
-def get_hardcoded_results() -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, float]]]:
-    """
-    Return hardcoded benchmark results as (baselines, our_methods) — display order
-    follows dict insertion order. The split removes the need for a separate
-    baseline_names list to classify and order rows.
-    """
-    baselines = {
-        # ── Prompting baselines (no training) ────────────────────────────────
-        "Llama 3.1 8B CoT Classification": {
-            "wildguardmix": 0.803,
-            "xstest": 0.876,
-            "aegis": 0.801,
-            "toxic_chat": 0.492,
-            "openai_moderation": 0.740,
-        },
-        "Llama 3.1 8B CoT Generation": {
-            "wildguardmix": 0.762,
-            "xstest": 0.904,
-            "aegis": 0.800,
-            "toxic_chat": 0.516,
-            "openai_moderation": 0.761,
-        },
-        "Gemma 3 12B Generation": {
-            "wildguardmix": 0.853,
-            "xstest": 0.902,
-            "aegis": 0.820,
-            "toxic_chat": 0.644,
-            "openai_moderation": 0.793,
-        },
-        "GPT-OSS 120B": {
-            "wildguardmix": 0.884,
-            "xstest": 0.911,
-            "aegis": 0.806,
-            "toxic_chat": 0.641,
-            "openai_moderation": 0.775,
-        },
-        "GPT-5.4": {
-            "wildguardmix": 0.880,
-            "xstest": 0.920,
-            "aegis": 0.809,
-            "toxic_chat": 0.676,
-            "openai_moderation": 0.791,
-        },
-        "Claude Sonnet 4.6": {
-            "wildguardmix": 0.838,
-            "xstest": 0.860,
-            "aegis": 0.762,
-            "toxic_chat": 0.667,
-            "openai_moderation": 0.785,
-        },
-        # ── Specialised safety models ────────────────────────────────────────
-        "GPT-OSS-Safeguard 120B": {
-            "wildguardmix": 0.871,
-            "xstest": 0.944,
-            "aegis": 0.797,
-            "toxic_chat": 0.643,
-            "openai_moderation": 0.780,
-        },
-        "WildGuard": {
-            "wildguardmix": 0.888,
-            "xstest": 0.945,
-            "aegis": 0.809,
-            "toxic_chat": 0.652,
-            "openai_moderation": 0.724,
-        },
-        "LlamaGuard 4": {
-            "wildguardmix": 0.738,
-            "xstest": 0.836,
-            "aegis": 0.705,
-            "toxic_chat": 0.441,
-            "openai_moderation": 0.736,
-        },
-        "GuardReasoner 8B": {
-            "wildguardmix": 0.8881,
-            "xstest": 0.9187,
-            "aegis": 0.8296,
-            "toxic_chat": 0.6813,
-            "openai_moderation": 0.7040,
-        },
-        "ShieldGemma 27B": {
-            "wildguardmix": 0.5123,
-            "xstest": 0.8226,
-            "aegis": 0.6943,
-            "toxic_chat": 0.7032,
-            "openai_moderation": 0.8136,
-        },
-        "Nemotron Safety 4B": {
-            "wildguardmix": 0.8515,
-            "xstest": 0.8510,
-            "aegis": 0.8597,
-            "toxic_chat": 0.7333,
-            "openai_moderation": 0.7472,
-        },
-    }
-    our_methods = {
-        "Llama 3.1 8B SFT Generation": {
-            "wildguardmix": 0.856,
-            "xstest": 0.908,
-            "aegis": 0.803,
-            "toxic_chat": 0.664,
-            "openai_moderation": 0.728,
-        },
-        # Gemma 3 12B SFT generation — selected by OOD val F1 via submit_sft_eval.py
-        # --project sft-hyperparam-sweep-gemma --mode test.
-        "Gemma 3 12B SFT Generation": {
-            "wildguardmix": 0.857,
-            "xstest": 0.884,
-            "aegis": 0.811,
-            "toxic_chat": 0.727,
-            "openai_moderation": 0.761,
-        },
-        # Best Distillation: GPT-OSS-120B (teacher) → Gemma-3-12B (student) / Human Intent.
-        # Trained on the annotated-intents dataset (~745 train ex, uncertainty-filtered).
-        # Selected by submit_distillation_eval.py --mode test using marginal-mean selection.
-        "Distillation (Annotated Intents)": {
-            "wildguardmix": 0.871,
-            "xstest": 0.934,
-            "aegis": 0.804,
-            "toxic_chat": 0.687,
-            "openai_moderation": 0.791,
-        },
-        # Scaling: GPT-OSS-120B → Gemma-3-12B / Synthetic Intent, trained on the full
-        # WildGuardMix corpus (~86.7k ex, 1 epoch, lr=2e-5). See submit_scaling.py.
-        # "Distillation (WildGuardMix)": {
-        #     "wildguardmix": 0.8947,
-        #     "xstest": 0.9510,
-        #     "aegis": 0.8321,
-        #     "toxic_chat": 0.7108,
-        #     "openai_moderation": 0.7412,
-        # },
-        # Broader-intent-mix ablation: GPT-OSS-120B → Gemma-3-12B trained on a
-        # 50/50 blend of annotated intent traces (n=1378) + harm-stratified
-        # synthetic_intent from the WildGuardMix scaling pool (n=1378),
-        # lr=2e-5, 5-epoch ceiling with early stopping. Two variants differ
-        # only on the annotated half's intent source. See submit_broader_intent_mix.py.
-        # Annotated-intents F1 (Mixed Human=0.715, Mixed Synthetic=0.760) excluded —
-        # not a benchmark column.
-        "Distillation (Mixed Human)": {
-            "wildguardmix": 0.8887,
-            "xstest": 0.9519,
-            "aegis": 0.8168,
-            "toxic_chat": 0.6941,
-            "openai_moderation": 0.7764,
-        },
-        # "Distillation (Mixed Synthetic)": {
-        #     "wildguardmix": 0.8821,
-        #     "xstest": 0.9340,
-        #     "aegis": 0.8142,
-        #     "toxic_chat": 0.6893,
-        #     "openai_moderation": 0.7705,
-        # },
-    }
-    return baselines, our_methods
+# ─── Source of truth: hardcoded results ───────────────────────────────────────
+def get_hardcoded_groups() -> List[Group]:
+    """All benchmark numbers + grouping. Edit here to change the table."""
+    return [
+        Group(
+            # Prompting-condition provenance (kept as comments; not rendered in the table):
+            #   Llama-3.1-8B   → CoT Generation (better of CoT Cls/Gen by benchmark avg).
+            #                    CoT Classification baseline: WG 0.803, XS 0.876, AEGIS 0.801,
+            #                    TC 0.492, OAI 0.740 (avg 0.742) — dropped from the table.
+            #   Gemma-3-12B    → Vanilla Generation was best in the per-condition sweep.
+            #   GPT-OSS-120B   → CoT Classification was best.
+            #   Claude / GPT-5 → Vanilla Generation only (no per-condition sweep due to API cost).
+            header=r"\textit{Zero-shot LLMs}",
+            rows=[
+                Row("Llama-3.1-8B", scores={
+                    "wildguardmix": 0.762, "xstest": 0.904, "aegis": 0.800,
+                    "toxic_chat": 0.516, "openai_moderation": 0.761,
+                }),
+                Row("Gemma-3-12B", scores={
+                    "wildguardmix": 0.853, "xstest": 0.902, "aegis": 0.820,
+                    "toxic_chat": 0.644, "openai_moderation": 0.793,
+                }),
+                Row("GPT-OSS-120B", scores={
+                    "wildguardmix": 0.884, "xstest": 0.911, "aegis": 0.806,
+                    "toxic_chat": 0.641, "openai_moderation": 0.775,
+                }),
+                Row("Claude Sonnet 4.6", scores={
+                    "wildguardmix": 0.838, "xstest": 0.860, "aegis": 0.762,
+                    "toxic_chat": 0.667, "openai_moderation": 0.785,
+                }),
+                Row("GPT-5.4", scores={
+                    "wildguardmix": 0.880, "xstest": 0.920, "aegis": 0.809,
+                    "toxic_chat": 0.676, "openai_moderation": 0.791,
+                }),
+            ],
+        ),
+        Group(
+            header=r"\textit{Dedicated Safety Guardrails}",
+            rows=[
+                Row("LlamaGuard 4", scores={
+                    "wildguardmix": 0.738, "xstest": 0.836, "aegis": 0.705,
+                    "toxic_chat": 0.441, "openai_moderation": 0.736,
+                }),
+                Row("ShieldGemma 27B", scores={
+                    "wildguardmix": 0.5123, "xstest": 0.8226, "aegis": 0.6943,
+                    "toxic_chat": 0.7032, "openai_moderation": 0.8136,
+                }),
+                Row("WildGuard", scores={
+                    "wildguardmix": 0.888, "xstest": 0.945, "aegis": 0.809,
+                    "toxic_chat": 0.652, "openai_moderation": 0.724,
+                }),
+                Row("GuardReasoner 8B", scores={
+                    "wildguardmix": 0.8881, "xstest": 0.9187, "aegis": 0.8296,
+                    "toxic_chat": 0.6813, "openai_moderation": 0.7040,
+                }),
+                Row("GPT-OSS-Safeguard 120B", scores={
+                    "wildguardmix": 0.871, "xstest": 0.944, "aegis": 0.797,
+                    "toxic_chat": 0.643, "openai_moderation": 0.780,
+                }),
+                Row("Nemotron Safety 4B", scores={
+                    "wildguardmix": 0.8515, "xstest": 0.8510, "aegis": 0.8597,
+                    "toxic_chat": 0.7333, "openai_moderation": 0.7472,
+                }),
+            ],
+        ),
+        Group(
+            header=r"\textit{Ours --- SFT on Annotated Intents}",
+            rows=[
+                Row("Llama-3.1-8B", scores={
+                    "wildguardmix": 0.856, "xstest": 0.908, "aegis": 0.803,
+                    "toxic_chat": 0.664, "openai_moderation": 0.728,
+                }),
+                # Gemma 3 12B SFT generation — selected by OOD val F1 via submit_sft_eval.py
+                # --project sft-hyperparam-sweep-gemma --mode test.
+                Row("Gemma-3-12B", scores={
+                    "wildguardmix": 0.857, "xstest": 0.884, "aegis": 0.811,
+                    "toxic_chat": 0.727, "openai_moderation": 0.761,
+                }),
+            ],
+        ),
+        Group(
+            header=r"\textit{Ours --- Reasoning Distillation "
+                   r"(GPT-OSS-120B $\rightarrow$ Gemma-3-12B)}",
+            rows=[
+                # Best Distillation: GPT-OSS-120B (teacher) → Gemma-3-12B (student) / Human Intent.
+                # Trained on the annotated-intents dataset (~745 train ex, uncertainty-filtered).
+                # Selected by submit_distillation_eval.py --mode test using marginal-mean selection.
+                Row("Annotated intents only", scores={
+                    "wildguardmix": 0.871, "xstest": 0.934, "aegis": 0.804,
+                    "toxic_chat": 0.687, "openai_moderation": 0.791,
+                }),
+                # Broader-intent-mix ablation: 50/50 blend of annotated human_intent traces
+                # (n=1378) + harm-stratified synthetic_intent traces from the WildGuardMix
+                # scaling pool (n=1378), lr=2e-5, 5-epoch ceiling with early stopping.
+                # See submit_broader_intent_mix.py.
+                Row("+ Broader-pool synthetic intents", scores={
+                    "wildguardmix": 0.8887, "xstest": 0.9519, "aegis": 0.8168,
+                    "toxic_chat": 0.6941, "openai_moderation": 0.7764,
+                }),
+                # Scaling run (full WildGuardMix ~86.7k, 1 epoch, synthetic_intent) — disabled
+                # until finalised. See submit_scaling.py.
+                # Row("Full WildGuardMix (synthetic intents)", scores={
+                #     "wildguardmix": 0.8947, "xstest": 0.9510, "aegis": 0.8321,
+                #     "toxic_chat": 0.7108, "openai_moderation": 0.7412,
+                # }),
+                # Row("Mixed synthetic (annotated half = synthetic intents)", scores={
+                #     "wildguardmix": 0.8821, "xstest": 0.9340, "aegis": 0.8142,
+                #     "toxic_chat": 0.6893, "openai_moderation": 0.7705,
+                # }),
+            ],
+        ),
+    ]
 
 
-def rank_models_per_dataset(models: List[ModelResult]) -> Dict[str, List[tuple]]:
-    """
-    For each dataset, rank models by score (1st, 2nd, etc).
-    Returns {dataset: [(rank, model), ...]}.
-    """
-    datasets = set()
-    for model in models:
-        datasets.update(model.scores.keys())
-
-    rankings = {}
-    for dataset in sorted(datasets):
-        # Get all models with scores for this dataset
-        scored = [(model.scores[dataset], model) for model in models if dataset in model.scores]
-        # Sort by score descending
-        scored.sort(key=lambda x: x[0], reverse=True)
-        # Assign ranks
-        rankings[dataset] = [(i, model) for i, (_, model) in enumerate(scored)]
-
-    return rankings
-
-
-def format_score(score: float, rank: int) -> str:
-    """Format a score with LaTeX bold/underline for top 2."""
-    score_str = f"{score:.3f}"
-    if rank == 0:  # Best
-        return f"$\\bm{{{score_str}}}$"
-    elif rank == 1:  # Second best
-        return f"$\\underline{{{score_str}}}$"
-    else:
-        return score_str
+# ─── Rendering ────────────────────────────────────────────────────────────────
+DATASET_LABELS = {
+    "wildguardmix": "WGTest",
+    "xstest": "XSTest",
+    "aegis": "AEGIS 2",
+    "toxic_chat": "ToxicChat",
+    "openai_moderation": "OAI Mod",
+}
 
 
 def compute_average(scores: Dict[str, float], datasets: List[str]) -> float:
-    """Compute average F1 across datasets."""
-    valid_scores = [scores[d] for d in datasets if d in scores]
-    if not valid_scores:
-        return 0.0
-    return sum(valid_scores) / len(valid_scores)
+    valid = [scores[d] for d in datasets if d in scores]
+    return sum(valid) / len(valid) if valid else 0.0
 
 
-def generate_latex_table(
-    models: List[ModelResult],
-    datasets: List[str],
-) -> str:
-    """Generate the LaTeX table code."""
+def column_ranks(values: List[float]) -> List[int]:
+    """Return rank (0 = best) for each value, ties share rank."""
+    order = sorted(range(len(values)), key=lambda i: values[i], reverse=True)
+    ranks = [0] * len(values)
+    for r, i in enumerate(order):
+        ranks[i] = r
+    return ranks
 
-    # Rank models per dataset
-    rankings = rank_models_per_dataset(models)
 
-    # Compute averages for ranking
-    averages = {model.name: compute_average(model.scores, datasets) for model in models}
-    avg_ranking = sorted([(avg, name) for name, avg in averages.items()], reverse=True)
-    avg_ranks = {name: rank for rank, (_, name) in enumerate(avg_ranking)}
+def format_score(score: float, rank: int) -> str:
+    s = f"{score:.3f}"
+    if rank == 0:
+        return rf"$\bm{{{s}}}$"
+    if rank == 1:
+        return rf"$\underline{{{s}}}$"
+    return s
 
-    # Build LaTeX table
-    lines = []
-    lines.append(r"\begin{table*}[ht]")
-    lines.append(r"\centering")
-    lines.append(r"\small")
 
-    # Column spec: Condition + datasets + Average (booktabs style - no vertical bars)
+def render_row_label(row: Row) -> str:
+    return row.name
+
+
+def generate_latex_table(groups: List[Group], datasets: List[str]) -> str:
+    # Flat list of (group_idx, row_idx, row) for global ranking
+    flat = [(gi, ri, r) for gi, g in enumerate(groups) for ri, r in enumerate(g.rows)]
+    n = len(flat)
+
+    # Per-column ranks across all rows
+    col_ranks: Dict[str, List[int]] = {}
+    for d in datasets:
+        col_ranks[d] = column_ranks([
+            r.scores.get(d, float("-inf")) for _, _, r in flat
+        ])
+    averages = [compute_average(r.scores, datasets) for _, _, r in flat]
+    avg_ranks = column_ranks(averages)
+
+    n_cols = len(datasets) + 2  # label + datasets + average
     col_spec = "l" + "c" * (len(datasets) + 1)
 
-    lines.append(f"\\begin{{tabular}}{{{col_spec}}}")
-    lines.append(r"\toprule")
+    lines = [
+        r"\begin{table*}[ht]",
+        r"\centering",
+        r"\small",
+        rf"\begin{{tabular}}{{{col_spec}}}",
+        r"\toprule",
+    ]
 
     # Header row
-    header = r"\textbf{Condition}"
-    for dataset in datasets:
-        # Format dataset names
-        ds_name = {
-            "wildguardmix": "WGTest",
-            "xstest": "XSTest",
-            "aegis": "AEGIS 2",
-            "toxic_chat": "ToxicChat",
-            "openai_moderation": "OAI Mod",
-        }.get(dataset, dataset.replace("_", " ").title())
-        header += f" & \\textbf{{{ds_name}}}"
-    header += r" & \textbf{Average}"
-    header += r" \\"
-    lines.append(header)
-    lines.append(r"\midrule")
+    header_cells = [r"\textbf{Model}"]
+    for d in datasets:
+        header_cells.append(rf"\textbf{{{DATASET_LABELS.get(d, d)}}}")
+    header_cells.append(r"\textbf{Average}")
+    lines.append(" & ".join(header_cells) + r" \\")
 
-    # Baselines section
-    baseline_models = [m for m in models if m.is_baseline]
-    for model in baseline_models:
-        row = f"\\textit{{{model.name}}}"
-        for dataset in datasets:
-            if dataset in model.scores:
-                rank = next(r for r, m in rankings[dataset] if m.name == model.name)
-                score = format_score(model.scores[dataset], rank)
-                row += f" & {score}"
-            else:
-                row += " & —"
-        # Add average
-        avg = averages[model.name]
-        avg_rank = avg_ranks[model.name]
-        avg_score = format_score(avg, avg_rank)
-        row += f" & {avg_score}"
-        row += r" \\"
-        lines.append(row)
+    # Group blocks
+    for gi, group in enumerate(groups):
+        lines.append(r"\midrule")
+        lines.append(rf"\multicolumn{{{n_cols}}}{{l}}{{{group.header}}} \\")
+        lines.append(r"\midrule")
+        for ri, row in enumerate(group.rows):
+            flat_idx = next(i for i, (g, r, _) in enumerate(flat) if g == gi and r == ri)
+            cells = [render_row_label(row)]
+            for d in datasets:
+                if d in row.scores:
+                    cells.append(format_score(row.scores[d], col_ranks[d][flat_idx]))
+                else:
+                    cells.append("—")
+            cells.append(format_score(averages[flat_idx], avg_ranks[flat_idx]))
+            lines.append(" & ".join(cells) + r" \\")
 
-    # Separator
-    lines.append(r"\midrule")
-
-    # Our results section
-    our_models = [m for m in models if not m.is_baseline]
-    for model in our_models:
-        row = f"\\textbf{{{model.name}}}"
-        for dataset in datasets:
-            if dataset in model.scores:
-                rank = next(r for r, m in rankings[dataset] if m.name == model.name)
-                score = format_score(model.scores[dataset], rank)
-                row += f" & {score}"
-            else:
-                row += " & —"
-        # Add average
-        avg = averages[model.name]
-        avg_rank = avg_ranks[model.name]
-        avg_score = format_score(avg, avg_rank)
-        row += f" & {avg_score}"
-        row += r" \\"
-        lines.append(row)
-
-    lines.append(r"\bottomrule")
-    lines.append(r"\end{tabular}")
-    lines.append(r"\caption{F1 score comparison across benchmarks. "
-                  r"Best results are bolded; second-best are underlined.}")
-    lines.append(r"\label{fig:f1_benchmark}")
-    lines.append(r"\end{table*}")
-
-    return "\n".join(lines)
+    lines.extend([
+        r"\bottomrule",
+        r"\end{tabular}",
+        r"\caption{F1 score comparison across five external safety benchmarks. "
+        r"Open zero-shot LLMs are evaluated under their strongest prompting condition "
+        r"from Section~\ref{sec:sft_model}; closed-source models (GPT-5.4, Claude Sonnet 4.6) "
+        r"use vanilla generation only, as a per-condition sweep was prohibitive. "
+        r"Best per column in \textbf{bold}; second-best \underline{underlined}.}",
+        r"\label{fig:f1_benchmark}",
+        r"\end{table*}",
+    ])
+    return "\n".join(lines) + "\n"
 
 
+# ─── Entry point ──────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=_PROJECT_ROOT / "report/latex/benchmark_table.tex",
-                       help="Output LaTeX file (default: print to stdout)")
-    parser.add_argument("--results-file", type=Path, default=None,
-                       help="Optional JSON file with results to use instead of hardcoded values")
-    parser.add_argument("--datasets", type=str,
-                       default="wildguardmix,xstest,aegis,toxic_chat,openai_moderation",
-                       help="Comma-separated list of datasets in order")
-    parser.add_argument("--use-cache", action="store_true", default=True,
-                       help="Use cached W&B results if available (default: True)")
-    parser.add_argument("--force-refresh", action="store_true",
-                       help="Force refresh W&B results and skip cache")
-    parser.add_argument("--use-wandb", action="store_true",
-                       help="Fetch results from W&B projects (requires wandb and credentials)")
-
+    parser.add_argument(
+        "--output", type=Path,
+        default=_PROJECT_ROOT / "report/latex/benchmark_table.tex",
+        help="Output LaTeX file (default: report/latex/benchmark_table.tex)",
+    )
+    parser.add_argument(
+        "--datasets", type=str,
+        default="wildguardmix,xstest,aegis,toxic_chat,openai_moderation",
+        help="Comma-separated dataset keys in display order",
+    )
+    parser.add_argument(
+        "--print", action="store_true",
+        help="Also print the LaTeX to stdout",
+    )
     args = parser.parse_args()
 
-    # Load results — accept either the new (baselines, our_methods) shape or, for
-    # backward compatibility with --results-file, a flat dict + "_baselines" key.
-    if args.results_file and args.results_file.exists():
-        print(f"Loading results from {args.results_file}")
-        with open(args.results_file, 'r') as f:
-            payload = json.load(f)
-        baselines = payload.get("baselines", {})
-        our_methods = payload.get("our_methods", {})
-        if not baselines and not our_methods:
-            raise ValueError(
-                f"{args.results_file} must contain top-level 'baselines' and "
-                "'our_methods' dicts (each mapping model name → scores)."
-            )
-    else:
-        if args.use_wandb:
-            # TODO: Implement W&B fetching for baselines, sft, and distillation projects.
-            print("W&B fetching not implemented yet — using hardcoded benchmark results")
-        else:
-            print("Using hardcoded benchmark results")
-        baselines, our_methods = get_hardcoded_results()
+    # TODO: W&B fetching for baselines/sft/distillation projects — currently all values
+    # are hardcoded in get_hardcoded_groups(). See cache helpers above when implementing.
 
+    groups = get_hardcoded_groups()
     datasets = [d.strip() for d in args.datasets.split(",")]
+    latex = generate_latex_table(groups, datasets)
 
-    # Build model list — order follows dict insertion order; baselines first.
-    models = [ModelResult(name=n, is_baseline=True,  scores=s) for n, s in baselines.items()]
-    models += [ModelResult(name=n, is_baseline=False, scores=s) for n, s in our_methods.items()]
-
-    # Generate LaTeX
-    latex_code = generate_latex_table(models, datasets)
-
-    # Output
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        with open(args.output, 'w') as f:
-            f.write(latex_code)
-        print(f"✓ LaTeX table written to {args.output}")
-    else:
-        print(latex_code)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(latex)
+    print(f"✓ LaTeX table written to {args.output}")
+    if args.print:
+        print(latex)
 
 
 if __name__ == "__main__":

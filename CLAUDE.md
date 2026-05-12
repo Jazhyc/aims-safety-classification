@@ -33,7 +33,7 @@ intention-jailbreak/
 │   ├── dataset_analysis/       # One-off dataset analysis scripts
 │   ├── dataset_generation/     # ModernBERT classifier training
 │   ├── hpc/                    # SLURM job submission scripts + shell wrappers
-│   └── report/                 # One-off scripts for report figures
+│   └── report/                 # Scripts that generate report figures/tables (see "Report Artefacts" below)
 ├── src/intention_jailbreak/    # Library source code
 │   ├── comparison/             # Synthetic intent generation + clustering comparison
 │   ├── dataset/                # WildGuardMix loading + stratified splits
@@ -57,7 +57,7 @@ intention-jailbreak/
 | `scripts/hpc/` | SLURM submission + shell wrappers (keep as-is) | `submit_*.py`, `slurm_utils.py`, `*.sh` |
 | `scripts/hpc/ablations/` | Ablation experiments (label-source, etc.) | `submit_label_source_ablation.py`, `prepare_ablation_samples.py` |
 | `scripts/hpc/scaling/` | Data-scaling experiment (full WildGuardMix → gemma-3-12b distillation) | `submit_scaling.py`, `prepare_scaling_samples.py`, `verify_packing.py` |
-| `scripts/report/` | One-off figure generation for the paper | `plot_gemma_prompt_format.py`, `plot_qwen32b_reasoning_mode.py` |
+| `scripts/report/` | Figure/table generation for the paper (see "Report Artefacts" below) | `generate_benchmark_table.py`, `plot_gemma_prompt_format.py`, `plot_qwen32b_reasoning_mode.py` |
 
 ## Notebook Categories
 
@@ -236,12 +236,25 @@ To bump to v8, update the version constant in all submission scripts and the pip
 - **Early stopping**: Applied in all training runs via `EarlyStoppingCallback(patience=1)` in `causal.py`. All configs use `epochs: 5` as the ceiling; early stopping finds the actual stopping point.
 - **Reproducibility**: Seeds set via `training/utils.py:set_all_seeds()`.
 - **Student prompt format**: Uses native chat templates (`tokenizer.apply_chat_template`). Instructions go in the **system** message; the prompt-to-classify goes in the **user** message. `build_student_messages(user_prompt, condition)` in `prompt_templates.py` builds the `[system, user]` list; callers apply `add_generation_prompt=True`. The teacher prompt in `generate_reasoning_traces.py` is intentionally kept as raw text (wraps everything in a user turn).
+- **Where prompt text lives**: All prompt strings (preamble, taxonomy, output formats, plus all `safety_classifier.*` SFT/CoT prompts and `dpo.judge_intent_system_prompt`) are in `configs/prompt_templates.yaml`. `src/intention_jailbreak/model_generation/prompt_templates.py` loads them at import and exposes them as constants (`CLASSIFICATION_SYSTEM_PROMPT`, `GENERATION_SYSTEM_PROMPT`, `COT_CLASSIFICATION_SYSTEM_PROMPT`, `COT_GENERATION_SYSTEM_PROMPT`, `PREAMBLE`, `OUTPUT_FORMAT_WITH_INTENT`, …). When the paper needs the exact text of a prompt, read the YAML — do not re-derive from the code.
 - **Validation set**: Training uses **val + test combined** (346 examples) as the early-stopping signal for both SFT and distillation paths. Neither split is held out during training; use external evaluation for unbiased final numbers.
 - **Local metrics**: After every `run_causal_flow` call, `val_metrics.json` is written alongside the adapter (keys: `val_harm_f1`, `val_harm_precision`, `val_harm_recall`, `val_semantic_sim`, `val_eval_loss`, `model`, `condition`, `learning_rate`). Use this to compare runs without W&B.
 - **`max_length_causal`**: Controls total token budget (prompt + completion) for SFT training truncation. The system message alone is ~300–400 tokens; 512 is too small for most examples.
 - **Ablation adapters**: trained adapters from `scripts/hpc/ablations/` go to `models/distillation-ablations/` (NOT `models/distillation-sweep/`) so the main distillation eval submitter doesn't pick them up. Each ablation has its own `submit_*.py` orchestrator with `samples | traces | train | ood-val | test` modes.
 - **Mixed-condition training**: `data.reasoning_traces_condition` accepts either a single string or a list (e.g. `[human_intent, synthetic_intent]`). With a list, `load_reasoning_traces_dataset` keeps records whose `condition` is in the set and picks the intent source per-record (`predicted.prompt_intent` for `synthetic_intent`, `ground_truth.intent` otherwise). All listed conditions must share the same template family (intent-producing vs `no_intent`) — the loader raises otherwise. The broader-intent-mix ablation uses this to combine annotated `human_intent` traces with broader-pool `synthetic_intent` traces in a single training set.
 - **Scaling adapters**: same pattern — `scripts/hpc/scaling/` writes to `models/distillation-scaling/` and traces to `data/reasoning_traces_scaling/`. Modes: `samples | traces | train | test` (no `ood-val` since there's only one adapter — nothing to select between). Single-shot experiment: 1 epoch, no HP sweep, val set is informational only. The same-named `verify_packing.py` script runs an interactive comparison of `padding_free=True` with/without TRL `packing=True` to gate whether to enable the packing flag for the scaling run.
+
+## Report Artefacts
+
+Tables and figures in `report/latex/` are produced by scripts in `scripts/report/` — **do not edit the `.tex` files directly** unless the artefact has no generator. Edit the generator and re-run it so the numbers can be regenerated when results change.
+
+| Artefact (`report/latex/...`) | Generator (`scripts/report/...`) | Notes |
+|---|---|---|
+| `benchmark_table.tex` | `generate_benchmark_table.py` | Edit numbers/groups in `get_hardcoded_groups()` and re-run. W&B fetch is stubbed (TODO). |
+| `img/gemma_prompt_format.pdf` | `plot_gemma_prompt_format.py` | |
+| `img/qwen32b_reasoning_mode.pdf` | `plot_qwen32b_reasoning_mode.py` | |
+
+Other `.tex` files (`acl_latex.tex`, `dpo_results.tex`, `dpo_validation.tex`, `GRPO_results.tex`) are hand-written prose/tables with no generator and should be edited directly.
 
 ## Tests
 
