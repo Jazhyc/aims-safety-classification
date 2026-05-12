@@ -236,3 +236,5 @@ notebooks/clustering_analysis_copy.ipynb
 .claude/
 notebooks/dpo/figures/
 logs/qualitative/
+
+qualitative/
