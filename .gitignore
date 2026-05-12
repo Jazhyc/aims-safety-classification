@@ -235,4 +235,4 @@ notebooks/clustering_analysis_copy.ipynb
 .codex
 .claude/
 notebooks/dpo/figures/
-logs/
+logs/qualitative/
