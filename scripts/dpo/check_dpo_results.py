@@ -287,7 +287,10 @@ def summarize_k10(base: Path) -> None:
         "judge-gemma-standalone": "llama31-8b-k10-{t}-judge-gemma-standalone-b0.3-e3-s22",
         "judge-gemma-decent": "llama31-8b-k10-{t}-judge-gemma-decent-b0.3-e3-s22",
         "hard-plus-gemma-decent": "llama31-8b-k10-{t}-hard-plus-gemma-decent-b0.3-e3-s22",
+        "curriculum": "llama31-8b-k10-{t}-curriculum-b0.3-p1e2-p2e1-s22",
     }
+    for r in ("0.00", "0.25", "0.50", "0.75", "1.00"):
+        conds[f"ratio-{r}"] = f"llama31-8b-k10-{{t}}-ratio-r{r}-b0.3-e3-s22"
 
     rows = {c: [] for c in conds}
     print("Per-run best checkpoint (OOD)")
