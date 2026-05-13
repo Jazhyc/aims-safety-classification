@@ -197,7 +197,7 @@ def main():
     ood_base = Path(args.ood_base)
 
     if args.k10:
-        summarize_k10(base)
+        summarize_k10(base, ood_base)
         return
     if args.k10_test:
         summarize_k10_test(base)
@@ -279,7 +279,7 @@ def main():
     print("Legend: — = predictions not yet saved.")
 
 
-def summarize_k10(base: Path) -> None:
+def summarize_k10(base: Path, ood_base: Path) -> None:
     tags = "abcdefghij"
     conds = {
         "hard-dpo": "llama31-8b-k10-{t}-hard-b0.3-e3-s22",
@@ -287,7 +287,6 @@ def summarize_k10(base: Path) -> None:
         "judge-gemma-standalone": "llama31-8b-k10-{t}-judge-gemma-standalone-b0.3-e3-s22",
         "judge-gemma-decent": "llama31-8b-k10-{t}-judge-gemma-decent-b0.3-e3-s22",
         "hard-plus-gemma-decent": "llama31-8b-k10-{t}-hard-plus-gemma-decent-b0.3-e3-s22",
-        "curriculum": "llama31-8b-k10-{t}-curriculum-b0.3-p1e2-p2e1-s22",
     }
     for r in ("0.00", "0.25", "0.50", "0.75", "1.00"):
         conds[f"ratio-{r}"] = f"llama31-8b-k10-{{t}}-ratio-r{r}-b0.3-e3-s22"
@@ -295,30 +294,51 @@ def summarize_k10(base: Path) -> None:
     rows = {c: [] for c in conds}
     print("Per-run best checkpoint (OOD)")
     print("=" * 120)
-    print(f"{'condition':28s} {'tag':>3s} {'checkpoint':14s} {'ood_avg':>10s}")
+    print(f"{'condition':28s} {'tag':>3s} {'checkpoint':14s} {'ood_avg':>10s} {'source':>12s}")
     print("-" * 120)
 
     for cond, pat in conds.items():
         for t in tags:
-            p = base / pat.format(t=t) / "training_summary.json"
+            run = pat.format(t=t)
+            p = base / run / "training_summary.json"
             if not p.exists():
-                rows[cond].append((t, None, float("nan")))
-                print(f"{cond:28s} {t:>3s} {'MISSING':14s} {'nan':>10s}")
+                # fallback: infer OOD avg from saved OOD eval outputs if present
+                avg_fb, _ = load_ood_f1(ood_base, run)
+                if avg_fb is None:
+                    rows[cond].append((t, None, float("nan")))
+                    print(f"{cond:28s} {t:>3s} {'MISSING':14s} {'nan':>10s} {'-':>12s}")
+                else:
+                    rows[cond].append((t, None, avg_fb))
+                    print(f"{cond:28s} {t:>3s} {'(final)':14s} {avg_fb:10.4f} {'fallback':>12s}")
                 continue
             try:
                 d = json.loads(p.read_text())
             except Exception:
-                rows[cond].append((t, None, float("nan")))
-                print(f"{cond:28s} {t:>3s} {'BROKEN':14s} {'nan':>10s}")
+                avg_fb, _ = load_ood_f1(ood_base, run)
+                if avg_fb is None:
+                    rows[cond].append((t, None, float("nan")))
+                    print(f"{cond:28s} {t:>3s} {'BROKEN':14s} {'nan':>10s} {'-':>12s}")
+                else:
+                    rows[cond].append((t, None, avg_fb))
+                    print(f"{cond:28s} {t:>3s} {'(final)':14s} {avg_fb:10.4f} {'fallback':>12s}")
                 continue
 
             best = (d.get("best_checkpoint_selection") or {}).get("best") or {}
             ck = best.get("checkpoint")
             avg = best.get("ood_avg")
-            avg = float(avg) if avg is not None else float("nan")
-            rows[cond].append((t, ck, avg))
-            avg_s = f"{avg:.4f}" if not math.isnan(avg) else "nan"
-            print(f"{cond:28s} {t:>3s} {str(ck):14s} {avg_s:>10s}")
+            if avg is not None:
+                avg = float(avg)
+                rows[cond].append((t, ck, avg))
+                print(f"{cond:28s} {t:>3s} {str(ck):14s} {avg:>10.4f} {'summary':>12s}")
+            else:
+                # ratio runs often have no best-checkpoint metadata; use OOD outputs if available
+                avg_fb, _ = load_ood_f1(ood_base, run)
+                if avg_fb is None:
+                    rows[cond].append((t, ck, float("nan")))
+                    print(f"{cond:28s} {t:>3s} {str(ck):14s} {'nan':>10s} {'none':>12s}")
+                else:
+                    rows[cond].append((t, ck, avg_fb))
+                    print(f"{cond:28s} {t:>3s} {'(final)':14s} {avg_fb:>10.4f} {'fallback':>12s}")
 
     print("\nCondition summary (best-checkpoint OOD avg across runs)")
     print("=" * 120)
