@@ -13,7 +13,7 @@ source .venv/bin/activate
 source ~/.wandb_secrets
 
 ATTN_IMPL="${ATTN_IMPL:-sdpa}"
-WANDB_RUN="${WANDB_RUN:-hard-dpo-beta0.5-seed22}"
+WANDB_RUN="${WANDB_RUN:-hard-dpo-beta0.3-seed22}"
 
 echo "======================================================================"
 echo " Preference-learning pipeline (DPO only)"
@@ -30,7 +30,7 @@ python scripts/dpo/run_preference_pipeline.py \
     --learning-rate          5e-5 \
     --batch-size             2 \
     --grad-accum             8 \
-    --dpo-beta               0.5 \
+    --dpo-beta               0.3 \
     --attn-implementation    "${ATTN_IMPL}" \
     --temperature            0.8 \
     --k-samples              5 \
