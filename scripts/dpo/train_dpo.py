@@ -622,7 +622,17 @@ def train(args):
     )
     if args.save_strategy == "steps":
         dpo_kwargs["save_steps"] = args.save_steps
-    dpo_config = DPOConfig(**dpo_kwargs)
+
+    # TRL API compatibility: some cluster environments pin older/newer TRL
+    # versions where certain DPOConfig kwargs differ (e.g. max_prompt_length).
+    import inspect
+    dpo_sig = inspect.signature(DPOConfig.__init__)
+    supported = set(dpo_sig.parameters.keys())
+    filtered_kwargs = {k: v for k, v in dpo_kwargs.items() if k in supported}
+    dropped = sorted(k for k in dpo_kwargs.keys() if k not in supported)
+    if dropped:
+        print(f"[DPOConfig] Dropping unsupported kwargs for this TRL version: {dropped}")
+    dpo_config = DPOConfig(**filtered_kwargs)
 
     trainer_cls = WeightedDPOTrainer if use_weighted else DPOTrainer
     trainer_kwargs = dict(
