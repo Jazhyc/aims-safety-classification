@@ -36,9 +36,9 @@ We filtered to keep only English prompts by examining the first 80 characters of
 
 The full dataset is split into two stages:
 
-**Stage 1: Train vs Annotation set (90% / 10%)**
-- **Annotation set:** 10% of the full dataset — reserved for human annotation to build labeled examples for analysis
-- **Training set:** 90% of the full dataset — used for model training and evaluation
+**Stage 1: Train vs Annotation set (10% / 90%)**
+- **Annotation set:** 90% of the full dataset — reserved for human annotation to build labeled examples for analysis
+- **Training set:** 10% of the full dataset — used for model training and evaluation
 
 **Stage 2: Within the training set (80% train / 10% val / 10% test)**
 - **Training:** 80% of the training set — used to train the model

@@ -64,7 +64,7 @@ def main(cfg: DictConfig):
     print(f"Training split: {len(train_df)} samples")
     print(f"Annotation split: {len(annotation_df)} samples")
     
-    # Prepare data - split train_df into train/val/test (90:10:10 of the 90% training portion)
+    # Prepare data - split train_df into train/val/test (80:10:10 of the 10% training portion)
     print("Preparing data...")
     train_dataset, val_dataset, test_dataset, train_df_processed, val_df_processed, test_df_processed = prepare_classification_data(
         train_df=train_df,

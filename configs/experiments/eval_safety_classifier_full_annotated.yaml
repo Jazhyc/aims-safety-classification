@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Full-annotated agreement run for tab:agreement_kappa
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Goal: produce gpt-oss-120b vanilla_generation predictions over the FULL
+# annotated set (n=1,724 = train + validation + test) so the human–model row
+# of `tab:agreement_kappa` in report/latex/acl_latex.tex matches the
+# human–WildGuardMix sample size, and provides both:
+#   • Cohen's κ on harm labels  (true_harm_binary  vs  predicted_harm)
+#   • Cosine similarity on intents (true_intent  vs  generated_intent)
+#
+# Inherits everything from eval_safety_classifier; only overrides what differs.
+# Output dir is distinct from the existing n=346 val+test JSONL so we do not
+# overwrite it. Artifact upload is disabled because this is a one-off run, not
+# part of the standard `safety-experiment-baselines` artifact.
+
+defaults:
+  - eval_safety_classifier
+  - _self_
+
+experiment:
+  conditions:
+    - "vanilla_generation"
+
+model:
+  name: "openai/gpt-oss-120b"
+
+datasets:
+  - name: "annotated-intents-full"
+    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    subset: null
+    split: "train+validation+test"
+    harm_column: "Annotator Harm"
+    use_manual_split: false
+    output_dir: "data/safety_experiment/annotated_intents_full"
+
+artifacts:
+  enabled: false
+
+wandb:
+  project: "Baselines"
+  run_name: "gpt-oss-120b-vanilla-gen-full-annotated"
+  tags: ["safety", "agreement_kappa", "full_annotated"]
