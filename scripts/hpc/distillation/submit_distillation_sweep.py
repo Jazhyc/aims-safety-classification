@@ -42,7 +42,9 @@ TEACHER_MODELS = [
 # (HuggingFace model ID, short slug used in run names and W&B project names)
 STUDENT_MODELS = [
     ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
-    ("mistralai/Ministral-3-14B-Instruct-2512-BF16",    "ministral-3-14b-instruct"),
+    # Ministral 3 14B removed: Mistral V7's chat template has no assistant-turn opener,
+    # so SFT with completion_only_loss couldn't anchor the response start. Result was
+    # ~70% empty val generations and unrecoverable OOD parse failure.
     ("Qwen/Qwen3-8B",                                  "qwen3-8b"),
     ("google/gemma-3-12b-it",                          "gemma-3-12b"),
 ]

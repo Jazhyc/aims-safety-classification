@@ -2,7 +2,7 @@
 """
 Select best distillation adapters by reading val_metrics.json from disk and submit eval jobs.
 
-Two modes (--mode):
+Three modes (--mode):
   ood-val  (default)
       For every (teacher × student × condition) combination, pick the adapter
       with the highest training-time val_harm_f1 across the LR sweep and submit
@@ -23,6 +23,13 @@ Two modes (--mode):
            bars in the notebook plots.
       Submit one full test-set eval job for that adapter. Requires OOD val to
       have been run first.
+
+  test-all
+      For every (teacher × student × condition) combination, pick the best LR
+      by OOD val F1 if available, otherwise fall back to training val_harm_f1,
+      and submit a full test-set eval job. Produces the per-combo data needed
+      for a 3-panel test-set heatmap. Already-evaluated combinations are
+      skipped unless --force is given.
 
 --cleanup removes every adapter in models/distillation-sweep/ that was not
 selected as best in test mode. Combine with --dry-run to preview deletions.
@@ -75,7 +82,9 @@ TEACHER_MODELS = [
 STUDENT_MODELS = [
     ("meta-llama/Llama-3.1-8B-Instruct",              "llama-3.1-8b"),
     ("google/gemma-3-12b-it",                          "gemma-3-12b"),
-    ("mistralai/Ministral-3-14B-Instruct-2512-BF16",   "ministral-3-14b-instruct"),
+    # Ministral 3 14B removed: Mistral V7's chat template has no assistant-turn opener,
+    # so SFT with completion_only_loss couldn't anchor the response start. Result was
+    # ~70% empty val generations and unrecoverable OOD parse failure. See notes.
     ("Qwen/Qwen3-8B",                                  "qwen3-8b"),
 ]
 
@@ -438,6 +447,110 @@ def test_mode(
     print("=" * 60)
 
 
+def test_all_mode(
+    traces_version: str,
+    eval_config: str,
+    check_datasets: list[str],
+    dry_run: bool,
+    force: bool,
+):
+    """Submit a test-eval job for every (teacher × student × condition) cell.
+
+    Per-combo LR selection order:
+      1. Highest OOD val F1 if at least one adapter in the combo has OOD results.
+      2. Fallback: highest training val_harm_f1 (from val_metrics.json).
+
+    Already-evaluated combos are skipped unless --force. Cells whose chosen
+    adapter relied on the val_harm_f1 fallback are reported separately so they
+    can be re-run once their OOD val numbers land.
+    """
+    print(f"\nConfig: {eval_config}")
+    print("Submitting test eval for every (teacher × student × condition) cell ...")
+
+    print("\nEnumerating adapters from disk ...")
+    all_adapters = fetch_all_distillation_adapters(traces_version)
+    print(f"Found {len(all_adapters)} (teacher, student, condition) groups.\n")
+
+    if not dry_run:
+        create_logs_dir()
+
+    # Per-combo selection: prefer OOD F1, fall back to val_harm_f1.
+    per_combo: dict[tuple[str, str, str], tuple[Path, str, float]] = {}
+    fallback_combos: list[str] = []
+    no_adapter: list[str] = []
+    for (teacher_slug, student_slug, condition), adapters in all_adapters.items():
+        ood_best = None
+        ood_best_f1 = -1.0
+        for adapter_path, _ in adapters:
+            ood_dir = OOD_VAL_BASE_DIR / teacher_slug / student_slug / condition / adapter_path.name
+            ood_f1 = compute_ood_val_f1(ood_dir)
+            if ood_f1 is None:
+                continue
+            if ood_f1 > ood_best_f1:
+                ood_best = adapter_path
+                ood_best_f1 = ood_f1
+        if ood_best is not None:
+            per_combo[(teacher_slug, student_slug, condition)] = (ood_best, "ood-f1", ood_best_f1)
+            continue
+        # Fallback: best by train val_harm_f1.
+        if not adapters:
+            no_adapter.append(f"{teacher_slug}/{student_slug}/{condition}")
+            continue
+        val_best_path, val_best_f1 = max(adapters, key=lambda x: x[1])
+        per_combo[(teacher_slug, student_slug, condition)] = (val_best_path, "val-f1", val_best_f1)
+        fallback_combos.append(f"{teacher_slug}/{student_slug}/{condition}")
+
+    print(f"Combos with a selected adapter: {len(per_combo)}")
+    print(f"  via OOD F1:        {sum(1 for _, src, _ in per_combo.values() if src == 'ood-f1')}")
+    print(f"  via val-f1 fallback: {len(fallback_combos)}")
+    if no_adapter:
+        print(f"  no adapter found:  {len(no_adapter)}")
+        for combo in no_adapter:
+            print(f"    - {combo}")
+
+    submitted, skipped = [], []
+    for (teacher_slug, student_slug, condition), (adapter_path, source, f1) in sorted(per_combo.items()):
+        student_hf = next(hf for hf, slug in STUDENT_MODELS if slug == student_slug)
+        eval_condition = CONDITION_TO_EVAL[condition]
+        output_dir = f"data/safety_experiment/distillation/{teacher_slug}/{student_slug}/{condition}"
+        run_label = f"distill-test-all--{teacher_slug}--{student_slug}--{condition}"
+        label = f"{teacher_slug}/{student_slug}/{condition}"
+
+        if not force and _is_done(output_dir, check_datasets):
+            print(f"  [done] {label} — outputs present, skipping (--force to re-run)")
+            skipped.append(label)
+            continue
+
+        flag = "  " if source == "ood-f1" else " *"
+        print(f"  {'[dry-run] ' if dry_run else ''}submit{flag}{label}/{adapter_path.name}  "
+              f"({source}={f1:.4f})")
+        if dry_run:
+            continue
+
+        export_vars = {
+            "STUDENT_MODEL":  student_hf,
+            "ADAPTER_PATH":   str(adapter_path),
+            "EVAL_CONDITION": eval_condition,
+            "EVAL_CONFIG":    eval_config,
+            "OUTPUT_DIR":     output_dir,
+            "WANDB_RUN_NAME": run_label,
+        }
+        try:
+            job_id = submit_sbatch(TEST_EVAL_TEMPLATE, export_vars)
+            print(f"    ✓ job {job_id}")
+            submitted.append((label, job_id))
+        except subprocess.CalledProcessError as e:
+            print(f"    ✗ submission failed: {e.stderr}")
+
+    print(f"\nSubmitted {len(submitted)}  |  skipped (done) {len(skipped)}")
+    if fallback_combos:
+        print(f"\n* {len(fallback_combos)} combo(s) used the val_harm_f1 fallback "
+              f"(no OOD val results yet). Re-run with --force after OOD val finishes "
+              f"if the LR pick differs:")
+        for combo in fallback_combos:
+            print(f"    - {combo}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -446,10 +559,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--mode", choices=["ood-val", "test"], default="ood-val",
+        "--mode", choices=["ood-val", "test", "test-all"], default="ood-val",
         help=(
             "ood-val: submit OOD validation jobs for all trained adapters (default). "
-            "test: pick best adapter per combination by OOD val F1 and submit full test eval."
+            "test: pick best adapter per combination by OOD val F1 and submit full test eval. "
+            "test-all: submit a full test eval for every (teacher × student × condition) cell."
         ),
     )
     parser.add_argument("--dry-run", "-n", action="store_true",
@@ -483,6 +597,14 @@ def main():
 
     if args.mode == "ood-val":
         ood_val_mode(traces_version, args.dry_run, args.force)
+    elif args.mode == "test-all":
+        test_all_mode(
+            traces_version,
+            args.eval_config,
+            check_datasets,
+            args.dry_run,
+            args.force,
+        )
     else:
         test_mode(
             traces_version,
