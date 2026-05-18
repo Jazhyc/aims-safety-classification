@@ -12,11 +12,11 @@ module --force purge
 PYTHON_MODULE="${PYTHON_MODULE:-Python/3.12.3-GCCcore-13.3.0}"
 CUDA_MODULE="${CUDA_MODULE:-CUDA/13.2.0}"
 
-if ! module load "${PYTHON_MODULE}"; then
+if ! module --ignore_cache load "${PYTHON_MODULE}"; then
   echo "[WARN] Could not load module ${PYTHON_MODULE}."
   echo "[WARN] Continuing with current Python environment."
 fi
-if ! module load "${CUDA_MODULE}"; then
+if ! module --ignore_cache load "${CUDA_MODULE}"; then
   echo "[WARN] Could not load module ${CUDA_MODULE}."
   echo "[WARN] Continuing without explicit CUDA module load."
 fi

@@ -83,7 +83,7 @@ def parse_args() -> argparse.Namespace:
                    help="Wall time for continuation training + OOD checkpoint selection.")
     p.add_argument("--mem", default="24G")
     p.add_argument("--cpus", type=int, default=2)
-    p.add_argument("--gpu-type", default="rtx_pro__6000")
+    p.add_argument("--gpu-type", default="rtx_pro_6000")
 
     return p.parse_args()
 
