@@ -181,6 +181,39 @@ def get_hardcoded_groups() -> List[Group]:
                 # }),
             ],
         ),
+        Group(
+            # Best-by-OOD-validation single runs lifted from
+            # report/latex/dpo_results.tex (the "Best run by OOD validation" block).
+            # Canonical-sample-set tag is in brackets: hard-dpo [e], judge-gemma-standalone [c].
+            header=r"\textit{Ours --- DPO}",
+            rows=[
+                Row("hard-dpo", scores={
+                    "wildguardmix": 0.8560, "xstest": 0.8841, "aegis": 0.8240,
+                    "toxic_chat": 0.7327, "openai_moderation": 0.7651,
+                }),
+                Row("judge-gemma-standalone", scores={
+                    "wildguardmix": 0.8505, "xstest": 0.9086, "aegis": 0.8135,
+                    "toxic_chat": 0.7079, "openai_moderation": 0.7663,
+                }),
+            ],
+        ),
+        Group(
+            # Red-highlighted "best by OOD validation" GRPO runs from GRPO_results.tex,
+            # both initialised from the SFT checkpoint:
+            #   Label reward            → grpo_fn__with_reasoning__format_label__n8_b16_chat_x21_initSFT_max512_temp12
+            #   Label and intent reward → grpo_fn__with_reasoning__format_label_judge_n8_b16_chat_x22_initSFT_max512_temp12
+            header=r"\textit{Ours --- GRPO (continued from SFT)}",
+            rows=[
+                Row("Label reward", scores={
+                    "wildguardmix": 0.886, "xstest": 0.892, "aegis": 0.835,
+                    "toxic_chat": 0.704, "openai_moderation": 0.791,
+                }),
+                Row("Label and intent reward", scores={
+                    "wildguardmix": 0.872, "xstest": 0.916, "aegis": 0.828,
+                    "toxic_chat": 0.705, "openai_moderation": 0.810,
+                }),
+            ],
+        ),
     ]
 
 
@@ -200,12 +233,17 @@ def compute_average(scores: Dict[str, float], datasets: List[str]) -> float:
 
 
 def column_ranks(values: List[float]) -> List[int]:
-    """Return rank (0 = best) for each value, ties share rank."""
-    order = sorted(range(len(values)), key=lambda i: values[i], reverse=True)
-    ranks = [0] * len(values)
-    for r, i in enumerate(order):
-        ranks[i] = r
-    return ranks
+    """Return rank (0 = best) for each value using dense ranking.
+
+    Ties share a rank and do NOT consume the next rank slot — so if two values
+    are tied for best, both get rank 0 (bold) and the next distinct value gets
+    rank 1 (underline). Comparison is at 3-decimal display precision so values
+    that render identically (e.g. 0.7327 and 0.7333 → "0.733") count as tied.
+    """
+    rounded = [round(v, 3) for v in values]
+    distinct_sorted = sorted(set(rounded), reverse=True)
+    rank_of = {v: i for i, v in enumerate(distinct_sorted)}
+    return [rank_of[v] for v in rounded]
 
 
 def format_score(score: float, rank: int) -> str:
