@@ -25,6 +25,16 @@ PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
 cd "${PROJECT_ROOT}"
 
 source .venv/bin/activate
+
+# Make bundled NVIDIA runtime libs (from the torch/cuda wheels) visible to
+# standalone dlopen consumers like bitsandbytes. Needed on nodes that don't
+# expose a CUDA toolkit via Lmod.
+NVIDIA_LIB_DIRS="$(python -c "import glob, os, sys; vp=os.path.dirname(os.path.dirname(sys.executable)); print(':'.join(sorted(glob.glob(os.path.join(vp, 'lib/python*/site-packages/nvidia/*/lib')))))")"
+if [ -n "${NVIDIA_LIB_DIRS}" ]; then
+  export LD_LIBRARY_PATH="${NVIDIA_LIB_DIRS}:${LD_LIBRARY_PATH:-}"
+  echo "[INFO] Added bundled NVIDIA libs to LD_LIBRARY_PATH"
+fi
+
 if [ -f "${HOME}/.wandb_secrets" ]; then
   # shellcheck disable=SC1090
   source "${HOME}/.wandb_secrets"
