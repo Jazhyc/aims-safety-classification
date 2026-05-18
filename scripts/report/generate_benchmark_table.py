@@ -157,9 +157,11 @@ def get_hardcoded_groups() -> List[Group]:
                 # Best Distillation: GPT-OSS-120B (teacher) → Gemma-3-12B (student) / Human Intent.
                 # Trained on the annotated-intents dataset (~745 train ex, uncertainty-filtered).
                 # Selected by submit_distillation_eval.py --mode test using marginal-mean selection.
+                # Numbers recomputed from data/safety_experiment/distillation/openai-gpt-oss-120b/
+                # gemma-3-12b/human_intent/<dataset>/*.jsonl (re-run 2026-05-18).
                 Row("Annotated intents only", scores={
-                    "wildguardmix": 0.871, "xstest": 0.934, "aegis": 0.804,
-                    "toxic_chat": 0.687, "openai_moderation": 0.791,
+                    "wildguardmix": 0.8764, "xstest": 0.9362, "aegis": 0.8055,
+                    "toxic_chat": 0.7019, "openai_moderation": 0.7920,
                 }),
                 # Broader-intent-mix ablation: 50/50 blend of annotated human_intent traces
                 # (n=1378) + harm-stratified synthetic_intent traces from the WildGuardMix
