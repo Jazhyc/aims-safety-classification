@@ -2,16 +2,15 @@
 """
 Submit curriculum DPO training on SLURM.
 
-Phase 1: train on hard balanced pairs (policy starts at SFT).
-Phase 2: train on judge balanced pairs (policy starts at phase-1 DPO, reference = SFT).
-
-Both phases run sequentially within a single SLURM job. Requires that the
-balanced pair files from hard_dpo and judge_dpo stages already exist.
+Continuation-only curriculum:
+  continue from an existing hard-DPO adapter on judge balanced pairs
+  (reference = SFT, policy = existing hard-DPO adapter).
 
 Usage:
     python scripts/hpc/dpo/submit_curriculum_dpo.py --dry-run
     python scripts/hpc/dpo/submit_curriculum_dpo.py
-    python scripts/hpc/dpo/submit_curriculum_dpo.py --phase1-epochs 2 --phase2-epochs 1
+    python scripts/hpc/dpo/submit_curriculum_dpo.py \
+      --policy-adapter trained_models/causal/llama31-8b-k10-e-hard-b0.3-e3-s22_adapter
 """
 
 from __future__ import annotations
@@ -54,8 +53,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true")
 
     # Pair sources (must already exist from hard_dpo / judge_dpo runs)
-    p.add_argument("--hard-balanced-dir", default="data/dpo_pairs/hard_balanced",
-                   help="Directory containing balanced hard pairs (from hard_dpo stage).")
     p.add_argument("--judge-balanced-dir", default="data/dpo_pairs/judge_balanced",
                    help="Directory containing balanced judge pairs (from judge_dpo stage).")
 
@@ -67,24 +64,23 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--name-prefix", default=None,
                    help="Optional prefix for output dirs. Defaults to a tag derived from --base-model.")
 
-    # Curriculum epochs
-    p.add_argument("--phase1-epochs", type=int, default=2,
-                   help="Epochs for phase 1 (hard pairs).")
-    p.add_argument("--phase2-epochs", type=int, default=1,
-                   help="Epochs for phase 2 (judge pairs, policy = phase-1 DPO).")
+    p.add_argument("--policy-adapter", required=True,
+                   help="Path (local or HF repo ID) to the existing hard-DPO *_adapter "
+                        "used to warm-start curriculum continuation.")
+
+    # Curriculum epochs (continuation phase only)
+    p.add_argument("--phase2-epochs", type=int, default=3,
+                   help="Epochs for continuation on judge pairs.")
 
     # Output paths — beta is included in the name so reruns with different beta don't clobber.
-    p.add_argument("--phase1-output", default=None,
-                   help="Output directory for phase-1 adapter "
-                        "(default: trained_models/causal/dpo-curriculum-phase1-beta{beta}).")
     p.add_argument("--curriculum-output", default=None,
-                   help="Final output directory for phase-2 (curriculum) adapter "
+                   help="Output directory for continuation curriculum adapter "
                         "(default: trained_models/causal/dpo-curriculum-beta{beta}).")
 
-    # SLURM — two full training runs in one job, allow extra time
+    # SLURM
     p.add_argument("--partition", default="gpumedium")
     p.add_argument("--time", default="4:00:00",
-                   help="Wall time for the combined two-phase training job.")
+                   help="Wall time for continuation training + OOD checkpoint selection.")
     p.add_argument("--mem", default="24G")
     p.add_argument("--cpus", type=int, default=2)
     p.add_argument("--gpu-type", default="a100")
@@ -105,23 +101,20 @@ def main() -> None:
     model_tag = args.name_prefix or _model_tag(args.base_model)
     beta_tag = f"b{args.dpo_beta}"
     seed_tag = f"s{args.seed}"
-    p1_tag = f"p1e{args.phase1_epochs}"
     p2_tag = f"p2e{args.phase2_epochs}"
-    phase1_output = args.phase1_output or f"trained_models/causal/{model_tag}-curriculum-phase1-{beta_tag}-{p1_tag}-{seed_tag}"
-    curriculum_output = args.curriculum_output or f"trained_models/causal/{model_tag}-curriculum-{beta_tag}-{p1_tag}-{p2_tag}-{seed_tag}"
+    curriculum_output = args.curriculum_output or f"trained_models/causal/{model_tag}-curriculum-{beta_tag}-{p2_tag}-{seed_tag}"
 
     export_vars = {
         "PROJECT_ROOT":              str(Path.cwd()),
         "BASE_MODEL":                args.base_model,
         "BASE_SFT_ADAPTER":          args.base_sft_adapter,
-        "HARD_BALANCED_DIR":         args.hard_balanced_dir,
         "JUDGE_BALANCED_DIR":        args.judge_balanced_dir,
+        "CURRICULUM_POLICY_ADAPTER": args.policy_adapter,
         "SEED":                      str(args.seed),
         "DPO_BETA":                  str(args.dpo_beta),
-        "PHASE1_EPOCHS":             str(args.phase1_epochs),
         "PHASE2_EPOCHS":             str(args.phase2_epochs),
-        "CURRICULUM_PHASE1_OUTPUT":  phase1_output,
         "CURRICULUM_OUTPUT":         curriculum_output,
+        "SELECT_BEST_OOD_CHECKPOINT": "1",
     }
 
     sbatch_opts = [

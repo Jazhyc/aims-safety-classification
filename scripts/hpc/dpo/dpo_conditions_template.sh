@@ -64,7 +64,7 @@ HARMFUL_WEIGHT="${HARMFUL_WEIGHT:-1.0}"
 UNBALANCED="${UNBALANCED:-0}"
 FORCE="${FORCE:-0}"
 FORCE_FROM="${FORCE_FROM:-}"
-ATTN_IMPL="${ATTN_IMPL:-${ATN_IMPL:-sdpa}}"
+ATTN_IMPL="${ATTN_IMPL:-sdpa}"
 EVAL_LORA_RANK="${EVAL_LORA_RANK:-16}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-intention-jailbreak}"
@@ -139,12 +139,13 @@ JUDGE_PAIRS_FILE="${JUDGE_PAIRS_FILE:-${JUDGE_PAIRS_DIR}/pairs_judge_bad_only.js
 # ---------------------------------------------------------------------------
 # Curriculum training variables
 # ---------------------------------------------------------------------------
-# Phase 1: train on hard balanced pairs.
-# Phase 2: continue from phase-1 adapter on judge balanced pairs (reference = SFT).
-PHASE1_EPOCHS="${PHASE1_EPOCHS:-2}"
-PHASE2_EPOCHS="${PHASE2_EPOCHS:-1}"
-CURRICULUM_PHASE1_OUTPUT="${CURRICULUM_PHASE1_OUTPUT:-trained_models/causal/dpo-curriculum-phase1}"
+# Continuation-only curriculum:
+#   Start from an existing hard-DPO adapter and continue on judge pairs.
+#   Reference stays at SFT (--adapter-path); policy warm-starts from
+#   --policy-adapter (CURRICULUM_POLICY_ADAPTER).
+PHASE2_EPOCHS="${PHASE2_EPOCHS:-3}"
 CURRICULUM_OUTPUT="${CURRICULUM_OUTPUT:-trained_models/causal/dpo-curriculum}"
+CURRICULUM_POLICY_ADAPTER="${CURRICULUM_POLICY_ADAPTER:-}"
 
 # ---------------------------------------------------------------------------
 # Gemma DPO variables
@@ -602,47 +603,49 @@ print('Prerequisite check passed.')
     ;;
 
   curriculum_dpo)
-    # Two-phase curriculum: train on hard pairs first, then continue on judge pairs.
-    # The reference model is always the SFT adapter; only the policy starting point
-    # changes between phases (SFT for phase 1, phase-1 DPO for phase 2).
-    # Prerequisites: both balanced pair dirs must exist.
-    HARD_BALANCED="${HARD_BALANCED_DIR}/dpo_pairs.jsonl"
+    # Continuation-only curriculum:
+    # Continue directly from an existing hard-DPO adapter on judge pairs.
+    # Reference model remains SFT; policy starts from CURRICULUM_POLICY_ADAPTER.
     JUDGE_BALANCED="${JUDGE_BALANCED_DIR}/dpo_pairs.jsonl"
 
-    if [ ! -f "${HARD_BALANCED}" ]; then
-      echo "ERROR: ${HARD_BALANCED} not found. Run hard_dpo stage first."
-      exit 1
-    fi
     if [ ! -f "${JUDGE_BALANCED}" ]; then
       echo "ERROR: ${JUDGE_BALANCED} not found. Run judge_dpo stage first."
       exit 1
     fi
+    if [ -z "${CURRICULUM_POLICY_ADAPTER}" ]; then
+      echo "ERROR: CURRICULUM_POLICY_ADAPTER is required for curriculum_dpo."
+      echo "  Example:"
+      echo "    CURRICULUM_POLICY_ADAPTER=trained_models/causal/llama31-8b-k10-e-hard-b0.3-e3-s22_adapter"
+      exit 1
+    fi
+    if [ ! -f "${CURRICULUM_POLICY_ADAPTER}/adapter_config.json" ]; then
+      echo "ERROR: ${CURRICULUM_POLICY_ADAPTER}/adapter_config.json not found."
+      echo "  CURRICULUM_POLICY_ADAPTER must point to a *_adapter directory."
+      exit 1
+    fi
 
-    CURRICULUM_PHASE1_ADAPTER="${CURRICULUM_PHASE1_OUTPUT}_adapter"
+    CURR_SAVE_STRATEGY="${DPO_SAVE_STRATEGY}"
+    if [ "${CURR_SAVE_STRATEGY}" = "no" ]; then
+      CURR_SAVE_STRATEGY="steps"
+      echo "[curriculum_dpo] DPO_SAVE_STRATEGY=no -> overriding to steps so checkpoint selection can run."
+    fi
+    CURR_TRAIN_CKPT_ARGS=(
+      --save-strategy "${CURR_SAVE_STRATEGY}"
+      --save-total-limit "${DPO_SAVE_TOTAL_LIMIT}"
+      --select-best-ood-checkpoint
+      --ood-eval-gpu-memory-utilization "${OOD_EVAL_GPU_MEMORY_UTILIZATION}"
+    )
+    if [ "${CURR_SAVE_STRATEGY}" = "steps" ]; then
+      CURR_TRAIN_CKPT_ARGS+=(--save-steps "${DPO_SAVE_STEPS}")
+    fi
 
-    echo "[curriculum_dpo] Phase 1: hard pairs, ${PHASE1_EPOCHS} epoch(s)"
-    python scripts/dpo/train_dpo.py \
-      --pairs-path   "${HARD_BALANCED}" \
-      --adapter-path "${BASE_SFT_ADAPTER}" \
-      --base-model   "${BASE_MODEL}" \
-      --output-dir   "${CURRICULUM_PHASE1_OUTPUT}" \
-      --epochs       "${PHASE1_EPOCHS}" \
-      --learning-rate "${LEARNING_RATE}" \
-      --batch-size   "${BATCH_SIZE}" \
-      --gradient-accumulation "${GRAD_ACCUM}" \
-      --beta         "${DPO_BETA}" \
-      --attn-implementation "${ATTN_IMPL}" \
-      --seed         "${SEED}" \
-      --skip-eval \
-      --wandb-project "${WANDB_PROJECT}" \
-      --wandb-run    "curriculum-phase1-beta${DPO_BETA}-seed${SEED}" \
-      "${TRAIN_CKPT_ARGS[@]}"
-
-    echo "[curriculum_dpo] Phase 2: judge pairs (policy from phase-1), ${PHASE2_EPOCHS} epoch(s)"
+    echo "[curriculum_dpo] Continuing from existing hard-DPO adapter on judge pairs."
+    echo "[curriculum_dpo] Policy adapter: ${CURRICULUM_POLICY_ADAPTER}"
+    echo "[curriculum_dpo] Epochs: ${PHASE2_EPOCHS}"
     python scripts/dpo/train_dpo.py \
       --pairs-path     "${JUDGE_BALANCED}" \
       --adapter-path   "${BASE_SFT_ADAPTER}" \
-      --policy-adapter "${CURRICULUM_PHASE1_ADAPTER}" \
+      --policy-adapter "${CURRICULUM_POLICY_ADAPTER}" \
       --base-model     "${BASE_MODEL}" \
       --output-dir     "${CURRICULUM_OUTPUT}" \
       --epochs         "${PHASE2_EPOCHS}" \
@@ -652,9 +655,10 @@ print('Prerequisite check passed.')
       --beta           "${DPO_BETA}" \
       --attn-implementation "${ATTN_IMPL}" \
       --seed           "${SEED}" \
+      --skip-eval \
       --wandb-project  "${WANDB_PROJECT}" \
-      --wandb-run      "curriculum-phase2-beta${DPO_BETA}-seed${SEED}" \
-      "${TRAIN_CKPT_ARGS[@]}"
+      --wandb-run      "curriculum-continue-beta${DPO_BETA}-seed${SEED}" \
+      "${CURR_TRAIN_CKPT_ARGS[@]}"
 
     python scripts/eval_safety_classifier.py \
       --config-name=dpo/eval_dpo_condition \
