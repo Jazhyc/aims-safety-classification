@@ -535,16 +535,12 @@ def main(cfg: DictConfig):
             reasoning_synthetic_lora_request,
         ) = _setup_lora_requests(finetuned_cfg) if not use_merged else (None, None, None, None, None)
 
-        if use_merged:
-            tokenizer_path = model_cfg["name"]
-        else:
-            generation_adapter = finetuned_cfg.get("generation_adapter")
-            tokenizer_path = (
-                generation_adapter
-                if generation_adapter and os.path.exists(generation_adapter)
-                else model_cfg["name"]
-            )
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        # Always load the tokenizer from the base model. LoRA adapters share the
+        # base tokenizer, and pulling it from `generation_adapter` (a default Llama
+        # SFT path in eval_ood_validation.yaml) silently applies the Llama chat
+        # template to every student, producing empty / refusal outputs on Qwen3
+        # and Ministral whose native templates use <|im_start|> / [INST] markers.
+        tokenizer = AutoTokenizer.from_pretrained(model_cfg["name"])
     else:
         print("\n=== Skipping main model load (no main-model conditions requested) ===")
 
