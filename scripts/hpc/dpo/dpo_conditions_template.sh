@@ -9,8 +9,17 @@
 set -euo pipefail
 
 module --force purge
-module load Python/3.12.3-GCCcore-13.3.0
-module load CUDA/13.2.0
+PYTHON_MODULE="${PYTHON_MODULE:-Python/3.12.3-GCCcore-13.3.0}"
+CUDA_MODULE="${CUDA_MODULE:-CUDA/13.2.0}"
+
+if ! module load "${PYTHON_MODULE}"; then
+  echo "[WARN] Could not load module ${PYTHON_MODULE}."
+  echo "[WARN] Continuing with current Python environment."
+fi
+if ! module load "${CUDA_MODULE}"; then
+  echo "[WARN] Could not load module ${CUDA_MODULE}."
+  echo "[WARN] Continuing without explicit CUDA module load."
+fi
 
 PROJECT_ROOT="${PROJECT_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
 cd "${PROJECT_ROOT}"
