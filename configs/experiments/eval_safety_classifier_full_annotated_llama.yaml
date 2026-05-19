@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Full-annotated agreement run for tab:agreement_kappa — Llama 3.1 8B variant
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Mirrors eval_safety_classifier_full_annotated.yaml but swaps the model to
+# meta-llama/Llama-3.1-8B-Instruct so we can add Human–Llama and Llama–WG
+# rows to `tab:agreement_kappa` at the same n=1,724 as the gpt-oss-120b row.
+# Only vanilla_generation is needed — it captures both predicted_harm (κ) and
+# generated_intent (cosine).
+
+defaults:
+  - eval_safety_classifier
+  - _self_
+
+experiment:
+  conditions:
+    - "vanilla_generation"
+
+model:
+  name: "meta-llama/Llama-3.1-8B-Instruct"
+
+datasets:
+  - name: "annotated-intents-full"
+    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    subset: null
+    split: "train+validation+test"
+    harm_column: "Annotator Harm"
+    use_manual_split: false
+    output_dir: "data/safety_experiment/annotated_intents_full"
+
+artifacts:
+  enabled: false
+
+wandb:
+  project: "Baselines"
+  run_name: "llama-3.1-8b-vanilla-gen-full-annotated"
+  tags: ["safety", "agreement_kappa", "full_annotated"]
