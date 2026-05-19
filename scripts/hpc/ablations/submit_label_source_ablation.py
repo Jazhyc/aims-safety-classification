@@ -10,8 +10,11 @@ Runs the synthetic_intent distillation pipeline for two new data conditions
 Pipeline stages, selected via --mode:
 
     samples       Build the two train sample JSON files (no SLURM).
-    traces        Submit SLURM trace-gen jobs for the two conditions
-                  (only those whose train traces are missing).
+    traces        Populate teacher traces for each data_condition. When the
+                  scaling traces pool (data/reasoning_traces_scaling/...)
+                  covers all sample wildguard_ids, traces are filtered out
+                  of it directly (no SLURM). Otherwise a SLURM teacher pass
+                  is submitted. Pass --no-scaling-pool to force SLURM.
     train         Submit SLURM training jobs for the two conditions
                   (requires traces present).
     ood-val       Submit OOD validation jobs for trained adapters.
@@ -41,6 +44,7 @@ Usage:
 """
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -104,12 +108,16 @@ def trace_train_path(cfg: dict, data_condition_name: str) -> Path:
 def mode_samples(cfg: dict, dry_run: bool):
     seed = cfg["seed"]
     out_dir = PROJECT_ROOT / cfg["paths"]["samples_dir"]
+    extra_seeds = cfg.get("extra_random_seeds", []) or []
     cmd = [
         sys.executable,
         PREPARE_SAMPLES_SCRIPT,
         "--seed", str(seed),
         "--output-dir", str(out_dir),
+        "--skip-existing",
     ]
+    if extra_seeds:
+        cmd += ["--extra-random-seeds", ",".join(str(s) for s in extra_seeds)]
     print(f"\nCommand: {' '.join(cmd)}")
     if dry_run:
         print("[dry-run] would run sample preparation.")
@@ -119,7 +127,54 @@ def mode_samples(cfg: dict, dry_run: bool):
 
 # ── Mode: traces ─────────────────────────────────────────────────────────────
 
-def mode_traces(cfg: dict, dry_run: bool, force: bool):
+def _scaling_traces_path(cfg: dict) -> Path:
+    """Path to the full-WG scaling traces for this teacher.
+
+    Used to source teacher traces for any data_condition whose samples are
+    a subset of WildGuardMix train (matched by wildguard_id). Avoids a
+    redundant teacher pass when the scaling experiment has already covered
+    the prompt pool.
+    """
+    return (
+        PROJECT_ROOT / "data" / "reasoning_traces_scaling"
+        / cfg["teacher"]["slug"] / "full_wg" / "train" / "parsed_results.json"
+    )
+
+
+def _try_traces_from_scaling(cfg: dict, samples_json: str, out_path: Path) -> str | None:
+    """If every sample's wildguard_id appears in the scaling pool, write the
+    filtered scaling traces to `out_path` and return a status string. Returns
+    None if the scaling pool doesn't fully cover the samples (caller should
+    fall back to SLURM teacher pass).
+    """
+    scaling_path = _scaling_traces_path(cfg)
+    if not scaling_path.exists():
+        return None
+
+    samples_path = PROJECT_ROOT / samples_json
+    if not samples_path.exists():
+        return None
+
+    with open(samples_path) as f:
+        samples = json.load(f)
+    with open(scaling_path) as f:
+        scaling = json.load(f)
+    by_wgid = {r["wildguard_id"]: r for r in scaling}
+
+    matched: list[dict] = []
+    for s in samples:
+        sc = by_wgid.get(s["wildguard_id"])
+        if sc is None:
+            return None  # Pool doesn't cover this sample — fall back to SLURM.
+        matched.append(sc)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(matched, f, indent=2, ensure_ascii=False)
+    return f"sourced {len(matched)} traces from scaling pool at {scaling_path.relative_to(PROJECT_ROOT)}"
+
+
+def mode_traces(cfg: dict, dry_run: bool, force: bool, no_scaling_pool: bool):
     teacher_hf  = cfg["teacher"]["hf_id"]
     teacher_slug = cfg["teacher"]["slug"]
     cond = cfg["condition"]
@@ -128,7 +183,7 @@ def mode_traces(cfg: dict, dry_run: bool, force: bool):
     if not dry_run:
         create_logs_dir()
 
-    submitted, skipped = [], []
+    submitted, skipped, sourced = [], [], []
     for entry in cfg["data_conditions"]:
         name = entry["name"]
         samples_json = entry["samples_json"]
@@ -143,6 +198,30 @@ def mode_traces(cfg: dict, dry_run: bool, force: bool):
             print(f"  [error] samples JSON missing: {samples_json}  "
                   f"(run --mode samples first)")
             continue
+
+        # Try sourcing from the scaling pool before falling back to SLURM.
+        if not no_scaling_pool:
+            if dry_run:
+                # Inspect coverage without writing.
+                scaling_path = _scaling_traces_path(cfg)
+                if scaling_path.exists():
+                    with open(PROJECT_ROOT / samples_json) as f:
+                        samples = json.load(f)
+                    with open(scaling_path) as f:
+                        scaling = json.load(f)
+                    wgids = {r["wildguard_id"] for r in scaling}
+                    covered = sum(1 for s in samples if s["wildguard_id"] in wgids)
+                    if covered == len(samples):
+                        print(f"  [dry-run] {name} — would source {covered} traces from scaling pool (no SLURM)")
+                        continue
+                    else:
+                        print(f"  [dry-run] {name} — scaling pool covers {covered}/{len(samples)}; would submit SLURM")
+            else:
+                status = _try_traces_from_scaling(cfg, samples_json, out_path)
+                if status is not None:
+                    print(f"  ✓ {name} — {status}")
+                    sourced.append(name)
+                    continue
 
         export_vars = {
             "MODEL_NAME":          teacher_hf,
@@ -165,7 +244,7 @@ def mode_traces(cfg: dict, dry_run: bool, force: bool):
         except subprocess.CalledProcessError as e:
             print(f"  ✗ FAILED {label}: {e.stderr}")
 
-    print(f"\nSubmitted: {len(submitted)}  |  skipped: {len(skipped)}")
+    print(f"\nSourced from scaling: {len(sourced)}  |  SLURM submitted: {len(submitted)}  |  skipped (already on disk): {len(skipped)}")
     if submitted:
         print_job_summary(submitted)
 
@@ -373,6 +452,10 @@ def main():
                         help="Print planned actions without submitting / running.")
     parser.add_argument("--force", action="store_true",
                         help="Re-run even when outputs already exist on disk.")
+    parser.add_argument("--no-scaling-pool", action="store_true",
+                        help="(traces mode) Force a fresh SLURM teacher pass even when the "
+                             "scaling traces pool already covers the samples. "
+                             "Default: source from scaling pool when available.")
     parser.add_argument("--eval-config", default="eval_distillation",
                         help="(test mode) Hydra config name for test eval (default: eval_distillation).")
     args = parser.parse_args()
@@ -389,7 +472,7 @@ def main():
 
     {
         "samples":  lambda: mode_samples(cfg, args.dry_run),
-        "traces":   lambda: mode_traces(cfg, args.dry_run, args.force),
+        "traces":   lambda: mode_traces(cfg, args.dry_run, args.force, args.no_scaling_pool),
         "train":    lambda: mode_train(cfg, args.dry_run, args.force),
         "ood-val":  lambda: mode_ood_val(cfg, args.dry_run, args.force),
         "test":     lambda: mode_test(cfg, args.dry_run, args.force, args.eval_config),

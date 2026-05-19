@@ -25,6 +25,11 @@ results to the train/ subdirectory.
 Usage:
     python scripts/hpc/ablations/prepare_ablation_samples.py
     python scripts/hpc/ablations/prepare_ablation_samples.py --seed 42 --output-dir data/reasoning_traces_v7_ablations/samples
+
+    # Also emit additional random_original samples at seeds 43, 44 to estimate
+    # variance from data-selection randomness (written to
+    # random_original_seed{N}_train_samples.json):
+    python scripts/hpc/ablations/prepare_ablation_samples.py --extra-random-seeds 43,44 --skip-existing
 """
 
 import argparse
@@ -167,6 +172,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--seed", type=int, default=42,
                         help="RNG seed for shuffling and random subset sampling (default: 42).")
+    parser.add_argument("--extra-random-seeds", default="",
+                        help="Comma-separated additional seeds for random_original "
+                             "(written to random_original_seed{N}_train_samples.json). "
+                             "Used to estimate variance from data-selection randomness.")
+    parser.add_argument("--skip-existing", action="store_true",
+                        help="Skip writing files that already exist on disk.")
     parser.add_argument(
         "--output-dir", type=Path,
         default=PROJECT_ROOT / "data" / "reasoning_traces_v7_ablations" / "samples",
@@ -174,9 +185,12 @@ def main():
     )
     args = parser.parse_args()
 
+    extra_seeds: list[int] = [
+        int(s) for s in args.extra_random_seeds.split(",") if s.strip()
+    ]
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     rng_hard = random.Random(args.seed)
-    rng_rand = random.Random(args.seed)
 
     print("=" * 60)
     print("Building hard_original (annotated-intents train, deduped, WG labels)")
@@ -186,27 +200,49 @@ def main():
     excluded_prompts = {s["prompt"] for s in hard}
     excluded_wg_ids = {s["wildguard_id"] for s in hard if s["wildguard_id"] is not None}
 
-    print("\n" + "=" * 60)
-    print(f"Building random_original (size-matched to hard_original n={len(hard)})")
-    print("=" * 60)
-    rand = build_random_original(
-        rng_rand,
-        target_size=len(hard),
-        excluded_prompts=excluded_prompts,
-        excluded_wg_ids=excluded_wg_ids,
-        seed=args.seed,
-    )
+    written: list[tuple[Path, int]] = []
 
     hard_path = args.output_dir / "hard_original_train_samples.json"
-    rand_path = args.output_dir / "random_original_train_samples.json"
-    with open(hard_path, "w") as f:
-        json.dump(hard, f, indent=2, ensure_ascii=False)
-    with open(rand_path, "w") as f:
-        json.dump(rand, f, indent=2, ensure_ascii=False)
+    if args.skip_existing and hard_path.exists():
+        print(f"\n  [skip] {hard_path} already exists")
+    else:
+        with open(hard_path, "w") as f:
+            json.dump(hard, f, indent=2, ensure_ascii=False)
+        written.append((hard_path, len(hard)))
+
+    # Main seed-42 random_original plus any extra seeds.
+    random_jobs: list[tuple[int, Path]] = [
+        (args.seed, args.output_dir / "random_original_train_samples.json"),
+    ]
+    for s in extra_seeds:
+        random_jobs.append(
+            (s, args.output_dir / f"random_original_seed{s}_train_samples.json")
+        )
+
+    for seed_val, rand_path in random_jobs:
+        if args.skip_existing and rand_path.exists():
+            print(f"\n  [skip] {rand_path} already exists")
+            continue
+        print("\n" + "=" * 60)
+        print(f"Building random_original seed={seed_val} (size-matched to hard_original n={len(hard)})")
+        print("=" * 60)
+        rng_rand = random.Random(seed_val)
+        rand = build_random_original(
+            rng_rand,
+            target_size=len(hard),
+            excluded_prompts=excluded_prompts,
+            excluded_wg_ids=excluded_wg_ids,
+            seed=seed_val,
+        )
+        with open(rand_path, "w") as f:
+            json.dump(rand, f, indent=2, ensure_ascii=False)
+        written.append((rand_path, len(rand)))
 
     print("\n" + "=" * 60)
-    print(f"Wrote {hard_path}  ({len(hard)} samples)")
-    print(f"Wrote {rand_path}  ({len(rand)} samples)")
+    for path, n in written:
+        print(f"Wrote {path}  ({n} samples)")
+    if not written:
+        print("(nothing written — all targets already existed and --skip-existing was set)")
     print("=" * 60)
 
 

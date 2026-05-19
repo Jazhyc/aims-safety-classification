@@ -60,9 +60,14 @@ condition: "synthetic_intent"
 # survived the per-combo W&B-best filter for OOD eval).
 learning_rate: 2.0e-5
 
-# Single seed: variance across seeds is expected to be small relative to the
-# label-source / data-selection effect being measured.
+# Primary seed for hard_original shuffling and the first random_original draw.
 seed: 42
+
+# Extra seeds for random_original to estimate variance from data-selection
+# randomness. Each seed produces a fresh stratified WG draw of the same size,
+# with the same prompt-exclusion list, and is run through the full
+# traces → train → test pipeline as a separate data_condition below.
+extra_random_seeds: [43, 44]
 
 # Conditions (data sources) submitted by this ablation.
 data_conditions:
@@ -70,6 +75,10 @@ data_conditions:
     samples_json: "data/reasoning_traces_v7_ablations/samples/hard_original_train_samples.json"
   - name: "random_original"
     samples_json: "data/reasoning_traces_v7_ablations/samples/random_original_train_samples.json"
+  - name: "random_original_seed43"
+    samples_json: "data/reasoning_traces_v7_ablations/samples/random_original_seed43_train_samples.json"
+  - name: "random_original_seed44"
+    samples_json: "data/reasoning_traces_v7_ablations/samples/random_original_seed44_train_samples.json"
 
 # Existing main-sweep adapters that should also be test-evaluated as the
 # `hard_human` comparator. They were never picked by the main test-mode
