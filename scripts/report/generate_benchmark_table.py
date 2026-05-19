@@ -159,28 +159,14 @@ def get_hardcoded_groups() -> List[Group]:
                 # Selected by submit_distillation_eval.py --mode test using marginal-mean selection.
                 # Numbers recomputed from data/safety_experiment/distillation/openai-gpt-oss-120b/
                 # gemma-3-12b/human_intent/<dataset>/*.jsonl (re-run 2026-05-18).
-                Row("Annotated intents only", scores={
+                # Broader-intent-mix and full-WildGuardMix scaling variants were both within
+                # ~0.02 held-out mean F1 of this row, so they're moved to the source/quantity
+                # ablation table in the appendix (see report/latex/acl_latex.tex,
+                # tab:label_source_ablation).
+                Row(r"Human-intent on \textsc{AIMS}", scores={
                     "wildguardmix": 0.8764, "xstest": 0.9362, "aegis": 0.8055,
                     "toxic_chat": 0.7019, "openai_moderation": 0.7920,
                 }),
-                # Broader-intent-mix ablation: 50/50 blend of annotated human_intent traces
-                # (n=1378) + harm-stratified synthetic_intent traces from the WildGuardMix
-                # scaling pool (n=1378), lr=2e-5, 5-epoch ceiling with early stopping.
-                # See submit_broader_intent_mix.py.
-                Row("+ Broader-pool synthetic intents", scores={
-                    "wildguardmix": 0.8887, "xstest": 0.9519, "aegis": 0.8168,
-                    "toxic_chat": 0.6941, "openai_moderation": 0.7764,
-                }),
-                # Scaling run (full WildGuardMix ~86.7k, 1 epoch, synthetic_intent) — disabled
-                # until finalised. See submit_scaling.py.
-                # Row("Full WildGuardMix (synthetic intents)", scores={
-                #     "wildguardmix": 0.8947, "xstest": 0.9510, "aegis": 0.8321,
-                #     "toxic_chat": 0.7108, "openai_moderation": 0.7412,
-                # }),
-                # Row("Mixed synthetic (annotated half = synthetic intents)", scores={
-                #     "wildguardmix": 0.8821, "xstest": 0.9340, "aegis": 0.8142,
-                #     "toxic_chat": 0.6893, "openai_moderation": 0.7705,
-                # }),
             ],
         ),
         Group(
