@@ -38,19 +38,26 @@ CSV_FIELDS = [
 
 
 def load_jsonl_by_id(path: Path) -> dict[str, dict]:
-    rows: dict[str, dict] = {}
+    """Load JSONL rows keyed by `id`, falling back to `prompt` when ids are
+    missing/empty (some datasets — wildguardmix, toxic-chat — write empty
+    id strings, so prompt is the only stable join key)."""
+    raw: list[dict] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
         try:
-            r = json.loads(line)
+            raw.append(json.loads(line))
         except json.JSONDecodeError:
             continue
-        rid = r.get("id")
-        if rid is None:
+    ids = [str(r.get("id") or "").strip() for r in raw]
+    use_prompt = sum(1 for i in ids if i) < max(1, len(ids) // 2)
+    rows: dict[str, dict] = {}
+    for r, rid in zip(raw, ids):
+        key = (r.get("prompt") or "").strip() if use_prompt else rid
+        if not key:
             continue
-        rows[str(rid)] = r
+        rows[key] = r
     return rows
 
 
