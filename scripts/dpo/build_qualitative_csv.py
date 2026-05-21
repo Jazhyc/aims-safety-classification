@@ -1,10 +1,10 @@
-"""Build per-dataset CSVs of rows where SFT was wrong but a DPO model was right.
+"""Build per-dataset CSVs of all rows with decidable predictions across SFT, hard-DPO, and judge-standalone.
 
 For each of three datasets (annotated-intents test, wildguardmix test,
 toxic-chat test), joins the prediction JSONLs from SFT, hard-DPO, and
-judge-standalone on `id`, keeps rows where SFT is wrong AND at least one DPO
-model is right, and writes a CSV with intent + harm columns for visual review
-in Google Sheets.
+judge-standalone on `id`, keeps every row where all three models produce a
+decidable prediction, and writes a CSV with intent + harm columns for visual
+review in Google Sheets.
 
 Correctness semantics mirror scripts/eval_safety_classifier.compute_metrics:
 strict `harmful`/`safe` equality between `predicted_harm` and `true_harm_binary`
@@ -81,12 +81,22 @@ def is_correct(row: dict) -> bool | None:
     return t == p
 
 
-def winning_condition(hard_correct: bool, judge_correct: bool) -> str:
+def outcome(sft_correct: bool, hard_correct: bool, judge_correct: bool) -> str:
+    if sft_correct and hard_correct and judge_correct:
+        return "all"
+    if sft_correct and hard_correct:
+        return "sft_hard"
+    if sft_correct and judge_correct:
+        return "sft_judge"
+    if sft_correct:
+        return "sft_only"
     if hard_correct and judge_correct:
-        return "both"
+        return "hard_judge"
     if hard_correct:
-        return "hard"
-    return "judge"  # only judge_correct (caller has already filtered)
+        return "hard_only"
+    if judge_correct:
+        return "judge_only"
+    return "none"
 
 
 def build_dataset_csv(dataset: str, sft_root: Path, hard_root: Path,
@@ -107,8 +117,7 @@ def build_dataset_csv(dataset: str, sft_root: Path, hard_root: Path,
     common_ids = set(sft) & set(hard) & set(judge)
 
     csv_rows: list[dict] = []
-    n_undec = n_sft_wrong = 0
-    n_hard_only = n_judge_only = n_both = 0
+    n_undec = 0
 
     for rid in sorted(common_ids):
         s_row, h_row, j_row = sft[rid], hard[rid], judge[rid]
@@ -116,18 +125,6 @@ def build_dataset_csv(dataset: str, sft_root: Path, hard_root: Path,
         if sc is None or hc is None or jc is None:
             n_undec += 1
             continue
-        if sc:
-            continue  # SFT was right; skip
-        n_sft_wrong += 1
-        if not (hc or jc):
-            continue  # neither DPO model fixed it
-        win = winning_condition(hc, jc)
-        if win == "both":
-            n_both += 1
-        elif win == "hard":
-            n_hard_only += 1
-        else:
-            n_judge_only += 1
         csv_rows.append({
             "id":           rid,
             "prompt":       s_row.get("prompt", ""),
@@ -139,7 +136,7 @@ def build_dataset_csv(dataset: str, sft_root: Path, hard_root: Path,
             "hard_intent":  h_row.get("generated_intent", "") or "",
             "judge_pred":   j_row.get("predicted_harm", ""),
             "judge_intent": j_row.get("generated_intent", "") or "",
-            "winning_condition": win,
+            "winning_condition": outcome(sc, hc, jc),
         })
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -155,11 +152,7 @@ def build_dataset_csv(dataset: str, sft_root: Path, hard_root: Path,
         "out_path": str(out_path),
         "n_common": len(common_ids),
         "n_undecidable": n_undec,
-        "n_sft_wrong": n_sft_wrong,
         "n_kept": len(csv_rows),
-        "n_hard_only": n_hard_only,
-        "n_judge_only": n_judge_only,
-        "n_both": n_both,
     }
 
 
@@ -188,16 +181,14 @@ def main(argv: Iterable[str] | None = None) -> int:
         results.append(res)
 
     print()
-    print(f"{'dataset':<22}{'common':<10}{'sft_wrong':<12}{'kept':<8}"
-          f"{'hard':<7}{'judge':<8}{'both':<7}{'out':<60}")
-    print("-" * 130)
+    print(f"{'dataset':<22}{'common':<10}{'undecidable':<14}{'kept':<8}{'out':<60}")
+    print("-" * 114)
     for r in results:
         if r["skipped"]:
             print(f"{r['dataset']:<22}SKIPPED — missing: {','.join(r['missing'])}")
             continue
-        print(f"{r['dataset']:<22}{r['n_common']:<10}{r['n_sft_wrong']:<12}"
-              f"{r['n_kept']:<8}{r['n_hard_only']:<7}{r['n_judge_only']:<8}"
-              f"{r['n_both']:<7}{r['out_path']:<60}")
+        print(f"{r['dataset']:<22}{r['n_common']:<10}{r['n_undecidable']:<14}"
+              f"{r['n_kept']:<8}{r['out_path']:<60}")
     return 0
 
 
