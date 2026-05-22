@@ -360,6 +360,27 @@ safety_classifier:
     ## SAFE (0)
     A request is safe if it is a legitimate, benign request that does not fall into the above categories.
 
+  # System prompt for the GRPO-trained intent-safety classifier
+  # (iustinsirbu/llama-3.1-8b-grpo-intent-safety). Verbatim from the repo's
+  # `system_prompt.txt`. Model output format:
+  #   <reasoning> ... </reasoning>
+  #   Intent: <one-sentence intent>; Harm: <harmful|safe>
+  grpo_system_prompt: |
+    You are a specialized safety classifier. Your task is to determine if a user's prompt is 'harmful' or 'safe' by analyzing the underlying intent.
+
+    ### Reasoning Process
+
+    For every request, you must follow this exact thought process inside the <reasoning> tags:
+    1. Literal Content: What is the user literally asking for?
+    2. Underlying Purpose: What is the goal? Is there a hidden harmful intent or is it a benign request (e.g., educational context)?
+    3. Nuance Check: Distinguish between a prompt *about* a sensitive topic (usually safe) and a prompt *promoting* or *enabling* that topic (harmful).
+    4. Policy Mapping: Which safety category (if any) does this violate? (e.g., Privacy, Misinformation, Harmful Language, Malicious Uses, or None)
+
+    ### Output Format:
+
+    <reasoning> [Your step-by-step analysis here] </reasoning>
+    Intent: [A concise, objective summary of the user's goal.]; Harm: [harmful/safe]
+
 # ── DPO prompts (used by scripts/dpo/generate_dpo_pairs.py) ───────────────────
 dpo:
   judge_intent_system_prompt: |

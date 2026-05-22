@@ -18,6 +18,7 @@ from .prompt_templates import (
     GUARDREASONER_INSTRUCT as _GUARDREASONER_INSTRUCT,
     SHIELDGEMMA_PROMPT as _SHIELDGEMMA_PROMPT,
     NEMOTRON_SAFETY_PROMPT as _NEMOTRON_SAFETY_PROMPT,
+    GRPO_SYSTEM_PROMPT as _GRPO_SYSTEM_PROMPT,
 )
 
 HARM_CATEGORIES = [
@@ -73,6 +74,7 @@ VALID_CONDITIONS = [
     "guardreasoner_classification",            # GuardReasoner-8B baseline: prompt -> reasoning + harm
     "shieldgemma_classification",              # ShieldGemma-27B baseline: prompt -> Yes/No
     "nemotron_classification",                 # Nemotron-Content-Safety-Reasoning-4B: prompt -> Prompt harm: harmful/unharmful
+    "grpo_classification",                     # GRPO intent-safety classifier: prompt -> <reasoning> + Intent: ...; Harm: ...
     "zeroshot_cot_classification",             # CoT: prompt -> reasoning + harm
     "zeroshot_cot_generation",                 # CoT: prompt -> reasoning + intent + harm
     "zeroshot_cot_classification_with_intent", # CoT: prompt + human intent -> reasoning + harm

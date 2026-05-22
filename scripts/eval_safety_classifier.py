@@ -69,6 +69,7 @@ from intention_jailbreak.model_generation.safety_classifier import (
     run_guardreasoner_classification,
     run_shieldgemma_classification,
     run_nemotron_classification,
+    run_grpo_classification,
     run_vanilla_generation_openrouter,
     run_condition_on_dataset,
 )
@@ -81,6 +82,7 @@ PRIOR_WORK_CONDITIONS = {
     "guardreasoner_classification",
     "shieldgemma_classification",
     "nemotron_classification",
+    "grpo_classification",
 }
 
 
@@ -387,6 +389,7 @@ def main(cfg: DictConfig):
     guardreasoner_cfg = config.get("guardreasoner", {})
     shieldgemma_cfg = config.get("shieldgemma", {})
     nemotron_cfg = config.get("nemotron", {})
+    grpo_cfg = config.get("grpo", {})
     artifacts_cfg = config.get("artifacts", {})
 
     conditions = experiment_cfg.get("conditions", ["vanilla_classification"])
@@ -412,10 +415,12 @@ def main(cfg: DictConfig):
     needs_guardreasoner = "guardreasoner_classification" in conditions
     needs_shieldgemma = "shieldgemma_classification" in conditions
     needs_nemotron = "nemotron_classification" in conditions
+    needs_grpo = "grpo_classification" in conditions
     needs_main_model = bool(set(conditions) - PRIOR_WORK_CONDITIONS)
     needs_prior_work = (
         needs_llamaguard or needs_wildguard or needs_safeguard
         or needs_guardreasoner or needs_shieldgemma or needs_nemotron
+        or needs_grpo
     )
 
     openrouter_cfg = config.get("openrouter", {}) or {}
@@ -435,6 +440,7 @@ def main(cfg: DictConfig):
     guardreasoner_model = guardreasoner_cfg.get("name", "yueliu1999/GuardReasoner-8B")
     shieldgemma_model = shieldgemma_cfg.get("name", "google/shieldgemma-27b")
     nemotron_model = nemotron_cfg.get("name", "nvidia/Nemotron-Content-Safety-Reasoning-4B")
+    grpo_model = grpo_cfg.get("name", "iustinsirbu/llama-3.1-8b-grpo-intent-safety")
 
     # Download missing fine-tuned adapters from W&B registry
     if artifacts_cfg.get("enabled", False) and needs_finetuned_lora:
@@ -485,6 +491,8 @@ def main(cfg: DictConfig):
         print(f"ShieldGemma model: {shieldgemma_model}")
     if needs_nemotron:
         print(f"Nemotron model: {nemotron_model} (thinking={nemotron_cfg.get('thinking', True)})")
+    if needs_grpo:
+        print(f"GRPO model: {grpo_model}")
     print(f"{'='*60}")
 
     # Initialize wandb
@@ -732,6 +740,24 @@ def main(cfg: DictConfig):
         del nemotron_llm
         _free_vllm()
 
+    if needs_grpo:
+        print(f"\n=== Loading GRPO: {grpo_model} ===")
+        grpo_llm = _load_vllm(grpo_model, vllm_cfg)
+        grpo_tokenizer = AutoTokenizer.from_pretrained(grpo_model)
+        _run_baseline_on_datasets(
+            run_fn=lambda ds, sp, hc: run_grpo_classification(grpo_llm, grpo_tokenizer, ds, sp, hc),
+            condition="grpo_classification",
+            model_slug=grpo_model.replace("/", "_"),
+            datasets_cfg=datasets_cfg,
+            sampling_params=sampling_params,
+            paths_cfg=paths_cfg,
+            wandb_run=wandb_run,
+            all_metrics=all_metrics,
+            result_files_written=result_files_written,
+        )
+        del grpo_llm
+        _free_vllm()
+
     # OpenRouter closed-source baselines (vanilla_generation only) — no GPU usage
     if openrouter_models:
         or_max_tokens = openrouter_cfg.get("max_tokens", gen_cfg.get("max_new_tokens", 2048))
@@ -771,20 +797,23 @@ def main(cfg: DictConfig):
                     result_files_written=result_files_written,
                 )
 
-    # Per-model suite summary written locally so downstream notebooks don't need W&B.
-    # Written before artifact upload so it gets bundled into the results artifact too.
+    # Per-(model, condition) suite summary written locally so downstream notebooks
+    # don't need W&B. Written before artifact upload so it gets bundled too.
+    # Grouping by (model_slug, condition) matches the W&B backfill convention
+    # (scripts/backfill_eval_timing.py) and keeps eval-by-adapter distinct when
+    # a single run evaluates multiple conditions on the same base model.
     if all_metrics:
-        per_model: Dict[str, Dict[str, Any]] = {}
+        per_group: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for key, metrics in all_metrics.items():
             ms = metrics.get("model_slug", "unknown")
-            per_model.setdefault(ms, {"runs": {}, "datasets": set(), "conditions": set()})
-            per_model[ms]["runs"][key] = metrics
-            per_model[ms]["datasets"].add(metrics.get("dataset_name", "unknown"))
-            per_model[ms]["conditions"].add(metrics.get("condition", "unknown"))
+            cond = metrics.get("condition", "unknown")
+            per_group.setdefault((ms, cond), {"runs": {}, "datasets": set()})
+            per_group[(ms, cond)]["runs"][key] = metrics
+            per_group[(ms, cond)]["datasets"].add(metrics.get("dataset_name", "unknown"))
 
         summary_dir = Path(paths_cfg.get("output_dir") or "data/safety_experiment")
         summary_dir.mkdir(parents=True, exist_ok=True)
-        for model_slug, payload in per_model.items():
+        for (model_slug, condition), payload in per_group.items():
             runs = payload["runs"]
             suite_elapsed = sum(float(m.get("elapsed_s", 0.0)) for m in runs.values())
             suite_tokens = sum(int(m.get("total_tokens", 0)) for m in runs.values())
@@ -792,8 +821,9 @@ def main(cfg: DictConfig):
             suite_tps = suite_tokens / suite_elapsed if suite_elapsed > 0 else 0.0
             summary = {
                 "model_slug": model_slug,
+                "condition": condition,
                 "datasets": sorted(payload["datasets"]),
-                "conditions": sorted(payload["conditions"]),
+                "conditions": [condition],
                 "runs": runs,
                 "suite": {
                     "elapsed_s": suite_elapsed,
@@ -802,10 +832,10 @@ def main(cfg: DictConfig):
                     "tokens_per_second": suite_tps,
                 },
             }
-            summary_path = summary_dir / f"{model_slug}_suite_summary.json"
+            summary_path = summary_dir / f"{model_slug}_{condition}_suite_summary.json"
             with open(summary_path, "w", encoding="utf-8") as f:
                 json.dump(summary, f, indent=2)
-            print(f"✓ Wrote suite summary for {model_slug}: {summary_path}")
+            print(f"✓ Wrote suite summary for {model_slug} / {condition}: {summary_path}")
             print(f"    Suite: {suite_total:,} ex  |  {suite_tokens:,} tok  |  {suite_elapsed:.1f}s  |  {suite_tps:.1f} tok/s")
             result_files_written.append(summary_path)
 

@@ -35,6 +35,7 @@ from .safety_prompts import (
     _GUARDREASONER_INSTRUCT,
     _SHIELDGEMMA_PROMPT,
     _NEMOTRON_SAFETY_PROMPT,
+    _GRPO_SYSTEM_PROMPT,
 )
 
 # ---------------------------------------------------------------------------
@@ -1227,6 +1228,89 @@ def run_nemotron_classification(
             "raw_generation": generated_text,
             "num_tokens": len(output.outputs[0].token_ids),
             "condition": "nemotron_classification",
+        })
+    return results
+
+
+def run_grpo_classification(
+    llm: LLM,
+    tokenizer: AutoTokenizer,
+    test_dataset,
+    sampling_params: SamplingParams,
+    harm_column: str,
+) -> List[dict]:
+    """GRPO intent-safety classifier (iustinsirbu/llama-3.1-8b-grpo-intent-safety).
+
+    Uses the model's repo system prompt and standard Llama chat template. The
+    expected output format is:
+
+        <reasoning> [step-by-step] </reasoning>
+        Intent: <one-sentence>; Harm: <harmful|safe>
+    """
+    print("\n=== Running: GRPO Intent-Safety Classification ===")
+    examples = list(test_dataset)
+
+    # The reasoning + intent + harm output can be several hundred tokens; ensure
+    # we don't truncate by clamping max_tokens to at least 512.
+    grpo_params = SamplingParams(
+        max_tokens=max(sampling_params.max_tokens, 512),
+        temperature=sampling_params.temperature,
+        top_p=sampling_params.top_p,
+        top_k=sampling_params.top_k,
+        skip_special_tokens=True,
+    )
+    formatted_prompts = [
+        tokenizer.apply_chat_template(
+            [
+                {"role": "system", "content": _GRPO_SYSTEM_PROMPT},
+                {"role": "user", "content": ex["prompt"]},
+            ],
+            add_generation_prompt=True,
+            tokenize=False,
+        )
+        for ex in examples
+    ]
+    outputs = llm.generate(formatted_prompts, grpo_params)
+
+    reasoning_re = re.compile(r"<reasoning>\s*(.*?)\s*</reasoning>", re.DOTALL | re.IGNORECASE)
+    intent_re = re.compile(r"Intent:\s*(.+?)(?:;|\n|Harm:|$)", re.IGNORECASE | re.DOTALL)
+    harm_re = re.compile(r"Harm:\s*(harmful|safe)\b", re.IGNORECASE)
+
+    results = []
+    for ex, output in zip(examples, outputs):
+        generated_text = output.outputs[0].text.strip()
+
+        # Restrict downstream parsing to the post-reasoning tail so reasoning text
+        # mentioning "harmful" doesn't bleed into the harm classification.
+        m = reasoning_re.search(generated_text)
+        reasoning = m.group(1).strip() if m else None
+        tail = generated_text[m.end():] if m else generated_text
+
+        predicted_intent = None
+        m = intent_re.search(tail)
+        if m:
+            predicted_intent = m.group(1).strip().rstrip(".;,")
+
+        predicted_harm = None
+        m = harm_re.search(tail)
+        if m:
+            predicted_harm = m.group(1).lower()
+        else:
+            predicted_harm = extract_harm_label(tail) or extract_harm_label(generated_text)
+
+        true_harm = ex.get(harm_column)
+        results.append({
+            "id": ex.get("id", ""),
+            "prompt": ex["prompt"],
+            "true_intent": ex.get("intent"),
+            "generated_intent": predicted_intent,
+            "reasoning": reasoning,
+            "true_harm": true_harm,
+            "true_harm_binary": map_harm_to_binary(true_harm),
+            "predicted_harm": predicted_harm,
+            "raw_generation": generated_text,
+            "num_tokens": len(output.outputs[0].token_ids),
+            "condition": "grpo_classification",
         })
     return results
 

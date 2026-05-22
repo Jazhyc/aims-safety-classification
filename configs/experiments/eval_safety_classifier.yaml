@@ -105,6 +105,11 @@ nemotron:
   name: "nvidia/Nemotron-Content-Safety-Reasoning-4B"
   thinking: true  # /think mode; set false for /no_think (faster, no reasoning trace)
 
+# GRPO intent-safety classifier baseline configuration.
+# Full model (not LoRA); system prompt loaded from prompt_templates.yaml.
+grpo:
+  name: "iustinsirbu/llama-3.1-8b-grpo-intent-safety"
+
 # OpenRouter closed-source baselines (vanilla_generation only, to keep cost down).
 # Requires OPENROUTER_API_KEY in env. Runs after the main vLLM phase; no GPU needed.
 # Set enabled: false to skip. Each model runs vanilla_generation across all `datasets`.

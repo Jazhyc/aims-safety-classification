@@ -90,6 +90,22 @@ MODELS: list[ModelSpec] = [
         description="GuardReasoner 8B prior-work baseline",
     ),
     ModelSpec(
+        key="llamaguard",
+        model_slug="meta-llama_Llama-Guard-4-12B",
+        condition="llamaguard_classification",
+        project="Baselines",
+        output_dir=DATA,
+        description="Meta Llama-Guard 4 12B prior-work baseline",
+    ),
+    ModelSpec(
+        key="shieldgemma",
+        model_slug="google_shieldgemma-27b",
+        condition="shieldgemma_classification",
+        project="Baselines",
+        output_dir=DATA,
+        description="Google ShieldGemma 27B prior-work baseline",
+    ),
+    ModelSpec(
         key="llama_sft",
         model_slug="meta-llama_Llama-3.1-8B-Instruct",
         condition="finetuned_generation",
@@ -98,6 +114,19 @@ MODELS: list[ModelSpec] = [
         # Disambiguates from Gemma SFT (also uses `finetuned_generation` in this project).
         config_contains=[("model.name", "meta-llama/Llama-3.1-8B-Instruct")],
         description="Llama-3.1-8B-Instruct SFT (generation adapter, OOD-val-selected) — test eval",
+    ),
+    ModelSpec(
+        key="gemma_sft",
+        model_slug="google_gemma-3-12b-it",
+        condition="finetuned_generation",
+        project="Baselines",
+        output_dir=DATA / "sft",
+        # The released HF SFT classifier — Jazhyc/gemma-3-12b-intent-jailbreak-classifier.
+        config_contains=[
+            ("model.name", "google/gemma-3-12b-it"),
+            ("finetuned.generation_adapter", "gemma-3-12b-intent-jailbreak-classifier"),
+        ],
+        description="Gemma-3-12B SFT (generation, released Jazhyc/gemma-3-12b-intent-jailbreak-classifier)",
     ),
     ModelSpec(
         key="gemma_distill",
@@ -113,6 +142,22 @@ MODELS: list[ModelSpec] = [
         ],
         description=(
             "Best-distillation classifier — gpt-oss-120b → gemma-3-12b, human_intent, lr=2e-5, v7"
+        ),
+    ),
+    ModelSpec(
+        key="llama_distill",
+        model_slug="meta-llama_Llama-3.1-8B-Instruct",
+        condition="finetuned_reasoning_synthetic_intent",
+        project="Distillation Results",
+        output_dir=DATA / "distillation" / "openai-gpt-oss-120b" / "llama-3.1-8b" / "synthetic_intent",
+        # gpt-oss-120b → Llama-3.1-8B distill, synthetic_intent, best by OOD val (lr=1e-4).
+        config_contains=[
+            ("model.name", "meta-llama/Llama-3.1-8B-Instruct"),
+            ("finetuned.reasoning_synthetic_adapter", "openai-gpt-oss-120b--llama-3.1-8b--synthetic-intent--lr1e-04--v7"),
+        ],
+        description=(
+            "Llama distill — gpt-oss-120b → llama-3.1-8b, synthetic_intent, lr=1e-4, v7 "
+            "(competitive at F1 ~0.82)"
         ),
     ),
 ]
