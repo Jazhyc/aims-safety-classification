@@ -252,7 +252,7 @@ def _process_results(
     metrics["tokens_per_second"] = tokens_per_second
 
     metric_key = f"{dataset_name}/{condition}"
-    all_metrics[metric_key] = metrics
+    all_metrics[metric_key] = {**metrics, "model_slug": model_slug, "dataset_name": dataset_name, "condition": condition}
 
     print(f"\n  Results for {condition}:")
     print(f"    Accuracy: {metrics['accuracy']:.4f} ({metrics['correct']}/{metrics['total']})")
@@ -269,6 +269,17 @@ def _process_results(
     output_path = output_dir / f"{model_slug}_{condition}.jsonl"
     save_results(results, output_path, condition)
     result_files_written.append(output_path)
+
+    metrics_path = output_dir / f"{model_slug}_{condition}.metrics.json"
+    metrics_payload = {
+        "model_slug": model_slug,
+        "condition": condition,
+        "dataset_name": dataset_name,
+        **metrics,
+    }
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(metrics_payload, f, indent=2)
+    result_files_written.append(metrics_path)
 
     if wandb_run is not None:
         wandb.log({
@@ -759,6 +770,44 @@ def main(cfg: DictConfig):
                     all_metrics=all_metrics,
                     result_files_written=result_files_written,
                 )
+
+    # Per-model suite summary written locally so downstream notebooks don't need W&B.
+    # Written before artifact upload so it gets bundled into the results artifact too.
+    if all_metrics:
+        per_model: Dict[str, Dict[str, Any]] = {}
+        for key, metrics in all_metrics.items():
+            ms = metrics.get("model_slug", "unknown")
+            per_model.setdefault(ms, {"runs": {}, "datasets": set(), "conditions": set()})
+            per_model[ms]["runs"][key] = metrics
+            per_model[ms]["datasets"].add(metrics.get("dataset_name", "unknown"))
+            per_model[ms]["conditions"].add(metrics.get("condition", "unknown"))
+
+        summary_dir = Path(paths_cfg.get("output_dir") or "data/safety_experiment")
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        for model_slug, payload in per_model.items():
+            runs = payload["runs"]
+            suite_elapsed = sum(float(m.get("elapsed_s", 0.0)) for m in runs.values())
+            suite_tokens = sum(int(m.get("total_tokens", 0)) for m in runs.values())
+            suite_total = sum(int(m.get("total", 0)) for m in runs.values())
+            suite_tps = suite_tokens / suite_elapsed if suite_elapsed > 0 else 0.0
+            summary = {
+                "model_slug": model_slug,
+                "datasets": sorted(payload["datasets"]),
+                "conditions": sorted(payload["conditions"]),
+                "runs": runs,
+                "suite": {
+                    "elapsed_s": suite_elapsed,
+                    "total_tokens": suite_tokens,
+                    "total_examples": suite_total,
+                    "tokens_per_second": suite_tps,
+                },
+            }
+            summary_path = summary_dir / f"{model_slug}_suite_summary.json"
+            with open(summary_path, "w", encoding="utf-8") as f:
+                json.dump(summary, f, indent=2)
+            print(f"✓ Wrote suite summary for {model_slug}: {summary_path}")
+            print(f"    Suite: {suite_total:,} ex  |  {suite_tokens:,} tok  |  {suite_elapsed:.1f}s  |  {suite_tps:.1f} tok/s")
+            result_files_written.append(summary_path)
 
     # Upload results artifact if configured
     results_name = artifacts_cfg.get("results_name")
