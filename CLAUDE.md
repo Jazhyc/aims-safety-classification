@@ -257,7 +257,7 @@ Tables and figures in `report/latex/` are produced by scripts in `scripts/report
 | `img/gemma_prompt_format.pdf` | `scripts/report/plot_gemma_prompt_format.py` | |
 | `img/qwen32b_reasoning_mode.pdf` | `scripts/report/plot_qwen32b_reasoning_mode.py` | |
 | `img/pareto_f1_latency.pdf` | `notebooks/baselines/eval_suite_timing.ipynb` (scatter cell) | Mean Test F1 vs per-prompt latency scatter with Pareto frontier. Symmetric save bbox centres the axes for a LaTeX caption. |
-| `pareto_latency_table.tex` | `notebooks/baselines/eval_suite_timing.ipynb` (table cell) | 10-row latency / tokens / mean-F1 table sorted by ms/prompt, includes LlamaGuard 4 and ShieldGemma 27B. |
+| `pareto_latency_table.tex` | `notebooks/baselines/eval_suite_timing.ipynb` (table cell) | 12-row latency / tokens / mean-F1 table sorted by ms/prompt; includes LlamaGuard 4, ShieldGemma 27B, and the two Gemma-3-12B rows that are kept out of the scatter. |
 
 Other `.tex` files (`acl_latex.tex`, `dpo_results.tex`, `dpo_validation.tex`, `GRPO_results.tex`) are hand-written prose/tables with no generator and should be edited directly.
 
@@ -265,7 +265,7 @@ Other `.tex` files (`acl_latex.tex`, `dpo_results.tex`, `dpo_validation.tex`, `G
 
 Headline figure for the paper. Reads `<model_slug>_<condition>_suite_summary.json` files under `data/safety_experiment/` and emits the Pareto scatter + table above.
 
-- **Models covered**: WildGuard 7B, Nemotron Safety 4B, GuardReasoner 8B, GPT OSS Safeguard 120B, LlamaGuard 4 12B, ShieldGemma 27B (prior-work), Llama-3.1-8B SFT (generation), Llama-3.1-8B LE-DPO, Llama-3.1-8B GRPO (= `iustinsirbu/llama-3.1-8b-grpo-intent-safety`), Llama-3.1-8B Distill (gpt-oss-120b teacher, synthetic_intent). LlamaGuard + ShieldGemma are excluded from the scatter to keep axes tight; both are in the LaTeX table. Gemma-3-12B SFT and Gemma-3-12B Distill are excluded from both the scatter and the table — both are dominated on the latency–F1 plane by the Llama LE-DPO / GRPO variants.
+- **Models covered**: WildGuard 7B, Nemotron Safety 4B, GuardReasoner 8B, GPT OSS Safeguard 120B, LlamaGuard 4 12B, ShieldGemma 27B (prior-work), Llama-3.1-8B / Gemma-3-12B SFT (generation), Llama-3.1-8B LE-DPO, Llama-3.1-8B GRPO (= `iustinsirbu/llama-3.1-8b-grpo-intent-safety`), Llama-3.1-8B / Gemma-3-12B Distill (gpt-oss-120b teacher, synthetic_intent / human_intent respectively). LlamaGuard 4, ShieldGemma 27B, Gemma-3-12B SFT, and Gemma-3-12B Distill are all in `EXTRA_MODELS` (table cell) so they appear in the LaTeX table but not in the scatter: LlamaGuard + ShieldGemma stretch the axes (low F1 / very slow prefill), and the Gemma rows are dominated on both axes by the Llama LE-DPO / GRPO variants — kept in the table because they still outscore several prior-work classifiers on F1.
 - **Pareto frontier (latency vs OOD F1)**: Llama-3.1-8B SFT (4.66 ms, F1 0.791) → LE-DPO (5.52 ms, 0.812) → Llama Distill (20.19 ms, 0.820) → GRPO (25.28 ms, 0.836). Every prior-work classifier is dominated.
 - **`paper_mean_ood_f1` override**: optional per-model field in the notebook's `MODELS` dict — set it when the paper reports a multi-seed mean that diverges from this notebook's single-eval number. Currently set for LE-DPO (0.812) and GRPO (0.836). All other models use the locally computed mean.
 - **F1 fallback**: if a `_suite_summary.json` entry has `f1 == 0` (the W&B parser-failure case — see Known Pitfalls), the notebook recomputes F1 from the prediction `.jsonl` via `_recompute_f1_from_jsonl` so the row still plots correctly.
