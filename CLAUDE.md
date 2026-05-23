@@ -257,7 +257,7 @@ Tables and figures in `report/latex/` are produced by scripts in `scripts/report
 | `img/gemma_prompt_format.pdf` | `scripts/report/plot_gemma_prompt_format.py` | |
 | `img/qwen32b_reasoning_mode.pdf` | `scripts/report/plot_qwen32b_reasoning_mode.py` | |
 | `img/pareto_f1_latency.pdf` | `notebooks/baselines/eval_suite_timing.ipynb` (scatter cell) | Mean Test F1 vs per-prompt latency scatter with Pareto frontier. Symmetric save bbox centres the axes for a LaTeX caption. |
-| `pareto_latency_table.tex` | `notebooks/baselines/eval_suite_timing.ipynb` (table cell) | 12-row latency / tokens / mean-F1 table sorted by ms/prompt, includes LlamaGuard 4 and ShieldGemma 27B. |
+| `pareto_latency_table.tex` | `notebooks/baselines/eval_suite_timing.ipynb` (table cell) | 10-row latency / tokens / mean-F1 table sorted by ms/prompt, includes LlamaGuard 4 and ShieldGemma 27B. |
 
 Other `.tex` files (`acl_latex.tex`, `dpo_results.tex`, `dpo_validation.tex`, `GRPO_results.tex`) are hand-written prose/tables with no generator and should be edited directly.
 
@@ -265,10 +265,11 @@ Other `.tex` files (`acl_latex.tex`, `dpo_results.tex`, `dpo_validation.tex`, `G
 
 Headline figure for the paper. Reads `<model_slug>_<condition>_suite_summary.json` files under `data/safety_experiment/` and emits the Pareto scatter + table above.
 
-- **Models covered**: WildGuard 7B, Nemotron Safety 4B, GuardReasoner 8B, GPT OSS Safeguard 120B, LlamaGuard 4 12B, ShieldGemma 27B (prior-work), Llama-3.1-8B / Gemma-3-12B SFT (generation), Llama-3.1-8B LE-DPO, Llama-3.1-8B GRPO (= `iustinsirbu/llama-3.1-8b-grpo-intent-safety`), Llama-3.1-8B / Gemma-3-12B Distill (gpt-oss-120b teacher, synthetic_intent / human_intent respectively). LlamaGuard + ShieldGemma are excluded from the scatter to keep axes tight; both are in the LaTeX table.
+- **Models covered**: WildGuard 7B, Nemotron Safety 4B, GuardReasoner 8B, GPT OSS Safeguard 120B, LlamaGuard 4 12B, ShieldGemma 27B (prior-work), Llama-3.1-8B SFT (generation), Llama-3.1-8B LE-DPO, Llama-3.1-8B GRPO (= `iustinsirbu/llama-3.1-8b-grpo-intent-safety`), Llama-3.1-8B Distill (gpt-oss-120b teacher, synthetic_intent). LlamaGuard + ShieldGemma are excluded from the scatter to keep axes tight; both are in the LaTeX table. Gemma-3-12B SFT and Gemma-3-12B Distill are excluded from both the scatter and the table — both are dominated on the latency–F1 plane by the Llama LE-DPO / GRPO variants.
 - **Pareto frontier (latency vs OOD F1)**: Llama-3.1-8B SFT (4.66 ms, F1 0.791) → LE-DPO (5.52 ms, 0.812) → Llama Distill (20.19 ms, 0.820) → GRPO (25.28 ms, 0.836). Every prior-work classifier is dominated.
 - **`paper_mean_ood_f1` override**: optional per-model field in the notebook's `MODELS` dict — set it when the paper reports a multi-seed mean that diverges from this notebook's single-eval number. Currently set for LE-DPO (0.812) and GRPO (0.836). All other models use the locally computed mean.
-- **F1 fallback**: if a `_suite_summary.json` entry has `f1 == 0` (the W&B parser-failure case — see Known Pitfalls), the notebook recomputes F1 from the prediction `.jsonl` so the row still plots correctly (e.g. Gemma-3-12B SFT).
+- **F1 fallback**: if a `_suite_summary.json` entry has `f1 == 0` (the W&B parser-failure case — see Known Pitfalls), the notebook recomputes F1 from the prediction `.jsonl` via `_recompute_f1_from_jsonl` so the row still plots correctly.
+- **Tokens fallback**: the same W&B parser bug also inflated the summary's `total_tokens` for Gemma SFT generation by 2–4× (it appears to have double-counted prompt tokens). The notebook now always pulls the generated-token total from the `.jsonl` (`_sum_jsonl_tokens` sums the per-prediction `num_tokens` field) rather than trusting the summary. Latency (`elapsed_s`) was not affected by the bug.
 - **`ms/prompt` is the headline latency metric** — not `tokens/second`. tok/s is misleading for short-output models (prefill dominates wall-clock, so a fast classifier like LlamaGuard 4 looks "slow" on tok/s). All latency claims in the paper should use ms/prompt or examples/sec.
 - **Hardware**: all rows pinned to a single `rtx_pro_6000` GPU partition under vLLM continuous batching, so the latency comparison is fair within ~hardware noise (~±0.005 F1 between repeats).
 - **Output formats per prior-work classifier** (useful for paper text — token-count facts):
@@ -289,11 +290,11 @@ Run with: `.venv/bin/python3.12 -m pytest tests/ -v` (activating the venv via `s
 
 ### W&B `f1 = 0` for full-model evals (Gemma SFT generation)
 
-`eval_safety_classifier.py` logs per-(dataset, condition) metrics including `accuracy`, `f1`, `precision`, `recall`, `total` to W&B at the end of each dataset. For at least one historical Gemma-3-12B SFT generation run, every metric logged as `0` while `elapsed_s` and `total_tokens` were correct — a log-time parser failure rather than a model failure (the per-example predictions in the `.jsonl` are intact and re-parse correctly).
+`eval_safety_classifier.py` logs per-(dataset, condition) metrics including `accuracy`, `f1`, `precision`, `recall`, `total` to W&B at the end of each dataset. For at least one historical Gemma-3-12B SFT generation run, every accuracy/F1 metric logged as `0` and the `total_tokens` field was inflated by 2–4× (apparently double-counting prompt tokens), while `elapsed_s` was correct — a log-time parser failure rather than a model failure (the per-example predictions in the `.jsonl` are intact and re-parse correctly).
 
-**Symptom**: a suite summary with `f1: 0.0` across all datasets but realistic `elapsed_s`/`total_tokens` values; predicted_harm populated in the local `.jsonl`.
+**Symptom**: a suite summary with `f1: 0.0` across all datasets and `total_tokens` 2–4× the true per-prediction `num_tokens` sum, but realistic `elapsed_s` values; predicted_harm populated in the local `.jsonl`.
 
-**Fix**: `notebooks/baselines/eval_suite_timing.ipynb` falls back to recomputing F1 from the `.jsonl` (`true_harm_binary` vs `predicted_harm`) when the summary's F1 is 0, so the row still appears on the Pareto scatter. The `scripts/backfill_eval_timing.py` workflow inherits the same predictions and benefits from the same fallback in the notebook. If a fresh re-eval is needed (e.g. to repopulate W&B), re-run `eval_safety_classifier.py` for the affected `model.name` + condition.
+**Fix**: `notebooks/baselines/eval_suite_timing.ipynb` falls back to the `.jsonl` for both metrics: `_recompute_f1_from_jsonl` recomputes F1 from `true_harm_binary` vs `predicted_harm` when summary `f1 == 0`, and `_sum_jsonl_tokens` always sums the per-prediction `num_tokens` field rather than trusting the summary's `total_tokens`. The `scripts/backfill_eval_timing.py` workflow inherits the same predictions and benefits from both fallbacks. If a fresh re-eval is needed (e.g. to repopulate W&B), re-run `eval_safety_classifier.py` for the affected `model.name` + condition.
 
 ### vLLM LoRA key mismatch for multimodal students (Gemma3, Mistral3, Qwen3.5)
 
