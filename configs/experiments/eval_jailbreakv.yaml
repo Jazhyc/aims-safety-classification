@@ -1,0 +1,142 @@
+# JailbreakV-28K evaluation — runs prior-work guardrails + our best distillation model.
+#
+# Datasets (all assumed harmful — no safe labels available, so F1 reduces to 2R/(1+R)):
+#   - jailbreakv_28k          : JailbreakV_28K split (28k prompts, `jailbreak_query`)
+#   - mini_jailbreakv_28k     : mini_JailBreakV_28K split (280 prompts, `jailbreak_query`)
+#   - redteam_2k              : RedTeam_2K split (2k prompts, `question`)
+#
+# Conditions:
+#   - finetuned_reasoning_human_intent  : Jazhyc/gemma-3-12b-intent-jailbreak-classifier
+#   - wildguard_classification
+#   - nemotron_classification
+#   - guardreasoner_classification
+#   - safeguard_classification          : GPT-OSS-Safeguard 120B
+#
+# The released distilled classifier is a *merged* Gemma-3-12B checkpoint
+# (not a LoRA adapter), so finetuned.use_merged=true and we point model.name
+# at the HF repo directly.
+
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
+experiment:
+  conditions:
+    - "finetuned_reasoning_human_intent"
+    - "wildguard_classification"
+    - "nemotron_classification"
+    - "guardreasoner_classification"
+    - "safeguard_classification"
+
+model:
+  # Base for the released distilled student. The adapter below contains the
+  # student weights (Jazhyc/gemma-3-12b-intent-jailbreak-classifier is the same
+  # LoRA, just mirrored on HF).
+  name: "google/gemma-3-12b-it"
+  max_length: 4096
+
+distilled_models_dir: "models/distillation-sweep"
+sft_models_dir: "models/sft"
+
+finetuned:
+  use_merged: false
+  generation_adapter: null
+  classification_adapter: null
+  reasoning_classification_adapter: null
+  reasoning_generation_adapter: null
+  # Best human_intent adapter (gpt-oss-120b teacher -> gemma-3-12b student, lr=2e-05).
+  # Matches the published Jazhyc/gemma-3-12b-intent-jailbreak-classifier (same val_harm_f1=0.761).
+  reasoning_human_intent_adapter: "${distilled_models_dir}/openai-gpt-oss-120b--gemma-3-12b--human-intent--lr2e-05--v7_adapter"
+  reasoning_synthetic_adapter: null
+
+lora:
+  rank: 32  # matches the human_intent adapter's training config
+
+# Prior-work baseline model identifiers (defaults match eval_safety_classifier.yaml).
+wildguard:
+  name: "allenai/wildguard"
+
+safeguard:
+  name: "openai/gpt-oss-safeguard-120b"
+
+guardreasoner:
+  name: "yueliu1999/GuardReasoner-8B"
+
+nemotron:
+  name: "nvidia/Nemotron-Content-Safety-Reasoning-4B"
+  thinking: true
+
+# Disabled baselines (kept for schema completeness; not in experiment.conditions).
+llamaguard:
+  name: "meta-llama/Llama-Guard-4-12B"
+shieldgemma:
+  name: "google/shieldgemma-27b"
+grpo:
+  name: "iustinsirbu/llama-3.1-8b-grpo-intent-safety"
+
+# Datasets — all-harmful (no safe ground truth). harm_column points at a name
+# that doesn't exist in the source so the `all_harmful: true` branch in
+# load_test_dataset() synthesises a column where every row is "harmful".
+# prompt_column tells load_test_dataset() which existing column to rename to "prompt".
+datasets:
+  - name: "jailbreakv_28k"
+    dataset_name: "JailbreakV-28K/JailBreakV-28k"
+    subset: "JailBreakV_28K"
+    split: "JailBreakV_28K"
+    prompt_column: "jailbreak_query"
+    harm_column: "synthetic_harm"
+    all_harmful: true
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/jailbreakv_28k"
+
+  - name: "mini_jailbreakv_28k"
+    dataset_name: "JailbreakV-28K/JailBreakV-28k"
+    subset: "JailBreakV_28K"
+    split: "mini_JailBreakV_28K"
+    prompt_column: "jailbreak_query"
+    harm_column: "synthetic_harm"
+    all_harmful: true
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/mini_jailbreakv_28k"
+
+  - name: "redteam_2k"
+    dataset_name: "JailbreakV-28K/JailBreakV-28k"
+    subset: "RedTeam_2K"
+    split: "RedTeam_2K"
+    prompt_column: "question"
+    harm_column: "synthetic_harm"
+    all_harmful: true
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/redteam_2k"
+
+generation:
+  max_new_tokens: 2048
+  temperature: 0.0
+  top_p: 1.0
+  top_k: -1
+
+paths:
+  output_dir: "data/safety_experiment/jailbreakv"
+
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 8192
+  dtype: "bfloat16"
+  enforce_eager: false
+  flash_attn_version: null
+
+artifacts:
+  enabled: true
+  registry_project: "intention-jailbreak-models"
+  entity: null
+  results_name: "safety-experiment-jailbreakv"
+
+wandb:
+  enabled: true
+  entity: null
+  project: "JailbreakV-Eval"
+  run_name: null
+  tags: ["safety", "classification", "jailbreakv"]
+  dir: "logs/wandb"
+  mode: "online"

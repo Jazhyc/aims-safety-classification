@@ -117,6 +117,11 @@ def load_test_dataset(data_cfg: dict) -> Tuple[Any, str, bool]:
         rename_map["Intent"] = "intent"
     if "user_input" in dataset.column_names and "prompt" not in dataset.column_names:
         rename_map["user_input"] = "prompt"
+    # User-supplied override: explicit prompt_column wins over the auto-renames above
+    # so datasets like JailbreakV (question / jailbreak_query) can plug in directly.
+    custom_prompt_col = data_cfg.get("prompt_column")
+    if custom_prompt_col and custom_prompt_col in dataset.column_names and custom_prompt_col != "prompt":
+        rename_map[custom_prompt_col] = "prompt"
     existing_renames = {k: v for k, v in rename_map.items() if k in dataset.column_names}
     if existing_renames:
         dataset = dataset.rename_columns(existing_renames)

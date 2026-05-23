@@ -1,0 +1,108 @@
+# @package _global_
+# Minimal eval config for running a SINGLE fine-tuned condition (or GRPO) on the
+# three JailbreakV-28K splits. Designed to be driven from
+# scripts/hpc/baselines/eval_jailbreakv_oneoff.sh, which sets model.name /
+# experiment.conditions / finetuned.generation_adapter / paths.output_dir per job.
+#
+# Outputs land at:
+#   data/safety_experiment/jailbreakv/<OUTPUT_NAME>/<dataset>/<model_slug>_<condition>.jsonl
+#
+# That subdir layout keeps multiple Llama-base adapter runs from clobbering each
+# other on the {model_slug}_{condition}.jsonl filename (they all share
+# meta-llama_Llama-3.1-8B-Instruct + finetuned_generation).
+
+defaults:
+  - base_wandb@wandb
+  - base_hydra@hydra
+  - _self_
+
+experiment:
+  conditions:
+    - "finetuned_generation"   # overridden per job
+
+model:
+  name: "meta-llama/Llama-3.1-8B-Instruct"   # overridden per job
+  max_length: 4096
+
+distilled_models_dir: "models/distillation-sweep"
+sft_models_dir: "models/sft"
+
+finetuned:
+  use_merged: false
+  generation_adapter: "PLACEHOLDER"   # overridden per job
+  classification_adapter: null
+  reasoning_classification_adapter: null
+  reasoning_generation_adapter: null
+  reasoning_human_intent_adapter: null
+  reasoning_synthetic_adapter: null
+
+lora:
+  rank: 16   # overridden per job (32 for v7 distillation, 16 for SFT / DPO)
+
+# Required for the GRPO condition; ignored otherwise.
+grpo:
+  name: "iustinsirbu/llama-3.1-8b-grpo-intent-safety"
+
+datasets:
+  - name: "jailbreakv_28k"
+    dataset_name: "JailbreakV-28K/JailBreakV-28k"
+    subset: "JailBreakV_28K"
+    split: "JailBreakV_28K"
+    prompt_column: "jailbreak_query"
+    harm_column: "synthetic_harm"
+    all_harmful: true
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/jailbreakv_28k"
+
+  - name: "mini_jailbreakv_28k"
+    dataset_name: "JailbreakV-28K/JailBreakV-28k"
+    subset: "JailBreakV_28K"
+    split: "mini_JailBreakV_28K"
+    prompt_column: "jailbreak_query"
+    harm_column: "synthetic_harm"
+    all_harmful: true
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/mini_jailbreakv_28k"
+
+  - name: "redteam_2k"
+    dataset_name: "JailbreakV-28K/JailBreakV-28k"
+    subset: "RedTeam_2K"
+    split: "RedTeam_2K"
+    prompt_column: "question"
+    harm_column: "synthetic_harm"
+    all_harmful: true
+    use_manual_split: false
+    output_dir: "${paths.output_dir}/redteam_2k"
+
+generation:
+  max_new_tokens: 2048
+  temperature: 0.0
+  top_p: 1.0
+  top_k: -1
+
+paths:
+  output_dir: "data/safety_experiment/jailbreakv/PLACEHOLDER"   # overridden per job
+
+vllm:
+  gpu_memory_utilization: 0.90
+  max_model_len: 8192
+  dtype: "bfloat16"
+  enforce_eager: false
+  flash_attn_version: null
+
+# Artifact upload off — each one-off run would otherwise create its own artifact;
+# easier to upload once at the end if we need to publish.
+artifacts:
+  enabled: false
+  registry_project: "intention-jailbreak-models"
+  entity: null
+  results_name: null
+
+wandb:
+  enabled: true
+  entity: null
+  project: "JailbreakV-Eval"
+  run_name: null
+  tags: ["safety", "classification", "jailbreakv", "oneoff"]
+  dir: "logs/wandb"
+  mode: "online"
