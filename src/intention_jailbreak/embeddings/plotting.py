@@ -67,7 +67,9 @@ def interactive_umap_plot_toggleable(
     plot_df["_intent_wrapped"] = plot_df[intent_col].map(_wrap_for_hover)
     plot_df["_prompt_wrapped"] = plot_df[prompt_col].map(_wrap_for_hover)
 
-    palette = px.colors.qualitative.Plotly
+    # Light24 carries us through 24 distinct hues before cycling — enough for
+    # cluster-style colorings without making everything look the same.
+    palette = px.colors.qualitative.Light24
     fig = go.Figure()
     # (color_col, [trace_index, ...]) so the dropdown knows what to toggle.
     trace_groups: list[tuple[str, list[int]]] = []
@@ -76,7 +78,12 @@ def interactive_umap_plot_toggleable(
         values = plot_df[color_col]
         if values.dtype == object or pd.api.types.is_categorical_dtype(values):
             values = values.fillna("(missing)")
-        categories = sorted(values.unique(), key=lambda v: str(v))
+        unique_values = values.unique()
+        # Numeric-aware sort so "10" comes after "2" and noise (-1) comes first.
+        try:
+            categories = sorted(unique_values, key=lambda v: (float(v),))
+        except (TypeError, ValueError):
+            categories = sorted(unique_values, key=lambda v: str(v))
 
         idx_in_group: list[int] = []
         is_first_group = not trace_groups

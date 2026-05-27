@@ -1,6 +1,6 @@
 """Embedding generation and caching for intent analysis."""
 
-from .intent_loading import DEFAULT_TEST_DATASETS, load_intent_predictions
+from .intent_loading import DEFAULT_TEST_DATASETS, dedupe_by_intent, load_intent_predictions
 from .sentence_embeddings import DEFAULT_MODEL, embed_texts, pca_project, umap_project
 
 # Lazily expose BERTopic helpers: importing them eagerly pulls in bertopic →
@@ -10,6 +10,8 @@ _LAZY_NAMES = {
     "BERTopicModelWrapper": ".bertopic_wrapper",
     "load_intents_from_parquet": ".bertopic_wrapper",
     "interactive_umap_plot_toggleable": ".plotting",
+    "hdbscan_cluster": ".clustering",
+    "summarise_clusters": ".clustering",
 }
 
 
@@ -28,10 +30,13 @@ __all__ = [
     "BERTopicModelWrapper",
     "DEFAULT_MODEL",
     "DEFAULT_TEST_DATASETS",
+    "dedupe_by_intent",
     "embed_texts",
+    "hdbscan_cluster",
     "interactive_umap_plot_toggleable",
     "load_intent_predictions",
     "load_intents_from_parquet",
     "pca_project",
+    "summarise_clusters",
     "umap_project",
 ]

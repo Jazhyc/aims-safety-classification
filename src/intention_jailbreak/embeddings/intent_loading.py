@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Iterable
 
@@ -78,3 +79,70 @@ def load_intent_predictions(
                     )
 
     return pd.DataFrame(rows)
+
+
+def dedupe_by_intent(
+    df: pd.DataFrame,
+    *,
+    intent_col: str = "intent",
+) -> pd.DataFrame:
+    """Collapse to one row per unique intent string.
+
+    Use this when the analysis is about intents themselves (clustering, topic
+    modelling, embedding visualisation) rather than per-prompt behaviour —
+    encoding the same intent string 144 times is wasted work and gives UMAP /
+    HDBSCAN a misleading view of density.
+
+    Aggregations per group:
+      - `n_prompts` (int): number of original rows with this intent.
+      - `prompts` (list[str]): unique prompts that produced this intent.
+      - `dataset`, `predicted_harm`, `true_harm_binary`: mode (most common value).
+      - `dataset_breakdown` (str): hover-friendly tally, e.g.
+        `"toxic-chat: 143, aegis: 1"`. Surfaces cross-dataset intents at a glance.
+      - `true_intent`: first non-null.
+      - `prompt`: hover-ready summary — for solo intents it's just the prompt,
+        otherwise `"[N prompts, K unique] first_prompt"`. Keeps the existing
+        plot helper (which expects a string) working unchanged.
+    """
+
+    def _mode_or_first(series: pd.Series):
+        modes = series.mode(dropna=True)
+        return modes.iloc[0] if not modes.empty else None
+
+    def _breakdown(series: pd.Series) -> str:
+        counts = Counter(v for v in series if v is not None and not pd.isna(v))
+        return ", ".join(f"{k}: {v}" for k, v in counts.most_common())
+
+    def _first_non_null(series: pd.Series):
+        for v in series:
+            if v is None:
+                continue
+            if isinstance(v, float) and pd.isna(v):
+                continue
+            return v
+        return None
+
+    grouped = (
+        df.groupby(intent_col, sort=False, dropna=False)
+        .agg(
+            n_prompts=("prompt", "size"),
+            prompts=("prompt", lambda s: list(dict.fromkeys(v for v in s if v))),
+            dataset=("dataset", _mode_or_first),
+            dataset_breakdown=("dataset", _breakdown),
+            predicted_harm=("predicted_harm", _mode_or_first),
+            true_harm_binary=("true_harm_binary", _mode_or_first),
+            true_intent=("true_intent", _first_non_null),
+        )
+        .reset_index()
+    )
+
+    def _prompt_summary(row) -> str:
+        prompts = row["prompts"]
+        if not prompts:
+            return ""
+        if row["n_prompts"] == 1:
+            return prompts[0]
+        return f"[{row['n_prompts']} prompts, {len(prompts)} unique] {prompts[0]}"
+
+    grouped["prompt"] = grouped.apply(_prompt_summary, axis=1)
+    return grouped

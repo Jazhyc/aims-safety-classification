@@ -30,6 +30,7 @@ def _content_hash(
     model_name: str,
     model_init_kwargs: dict | None,
     encode_kwargs: dict | None,
+    deduplicate: bool,
 ) -> str:
     h = hashlib.sha256()
     h.update(model_name.encode("utf-8"))
@@ -37,6 +38,8 @@ def _content_hash(
     h.update(_stable_json(model_init_kwargs or {}).encode("utf-8"))
     h.update(b"\x00")
     h.update(_stable_json(encode_kwargs or {}).encode("utf-8"))
+    h.update(b"\x00")
+    h.update(b"dedup" if deduplicate else b"raw")
     h.update(b"\x00")
     for t in texts:
         h.update(t.encode("utf-8"))
@@ -54,6 +57,7 @@ def embed_texts(
     use_cache: bool = True,
     model_init_kwargs: dict | None = None,
     encode_kwargs: dict | None = None,
+    deduplicate: bool = True,
 ) -> np.ndarray:
     """Encode `texts` with a sentence-transformer, caching the result on disk.
 
@@ -68,14 +72,22 @@ def embed_texts(
             `{"trust_remote_code": True, "model_kwargs": {"dtype": torch.bfloat16}}`).
         encode_kwargs: passed to `model.encode(...)` (e.g. `{"task": "clustering"}`
             for Jina v5; `{"prompt_name": "query"}` for asymmetric retrieval).
+        deduplicate: encode each unique string only once and broadcast the result
+            back to the original row order. Faster when many duplicates exist and
+            sidesteps batched-matmul nondeterminism in low-precision dtypes
+            (bf16/fp16) where the same string at different batch positions can
+            otherwise produce microscopically different vectors. Output shape is
+            unchanged: `(len(texts), embedding_dim)`.
 
     The cache filename embeds a hash of (model_name, model_init_kwargs,
-    encode_kwargs, texts), so changing any of them busts the cache automatically.
+    encode_kwargs, deduplicate, texts), so changing any of them busts the cache.
     """
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    content_hash = _content_hash(texts, model_name, model_init_kwargs, encode_kwargs)
+    content_hash = _content_hash(
+        texts, model_name, model_init_kwargs, encode_kwargs, deduplicate
+    )
     cache_path = cache_dir / f"{cache_key}_{content_hash}.npy"
 
     if use_cache and cache_path.exists():
@@ -90,13 +102,26 @@ def embed_texts(
                 f"encode_kwargs may not set {reserved!r} — managed by embed_texts."
             )
 
+    if deduplicate:
+        unique_texts, inverse = np.unique(
+            np.asarray(texts, dtype=object), return_inverse=True
+        )
+        encode_targets: Sequence[str] = list(unique_texts)
+        print(
+            f"Dedup: encoding {len(encode_targets)} unique texts "
+            f"(of {len(texts)} total)"
+        )
+    else:
+        encode_targets = texts
+        inverse = None
+
     embeddings: list[np.ndarray] = []
     for start in tqdm(
-        range(0, len(texts), batch_size),
+        range(0, len(encode_targets), batch_size),
         desc=f"Embedding {cache_key}",
         unit="batch",
     ):
-        batch = list(texts[start : start + batch_size])
+        batch = list(encode_targets[start : start + batch_size])
         emb = model.encode(
             batch,
             convert_to_numpy=True,
@@ -105,7 +130,8 @@ def embed_texts(
         )
         embeddings.append(emb)
 
-    stacked = np.vstack(embeddings)
+    encoded = np.vstack(embeddings)
+    stacked = encoded[inverse] if inverse is not None else encoded
     np.save(cache_path, stacked)
     return stacked
 
@@ -130,12 +156,20 @@ def umap_project(
     min_dist: float = 0.1,
     metric: str = "cosine",
     random_state: int = 42,
+    deduplicate: bool = True,
 ):
     """Fit UMAP on `embeddings` and return `(projection, fitted_reducer)`.
 
     `cosine` metric is the right default for sentence-transformer embeddings
     (they're trained with cosine similarity). `n_neighbors=30` favours global
     structure over very tight local clusters; lower it to ~15 for the opposite.
+
+    `deduplicate=True` collapses byte-identical input rows before fitting and
+    broadcasts the projection back. Without this, UMAP can place duplicate
+    inputs at different macro positions because each duplicate is an independent
+    node in the k-NN graph and SGD may pull them into different basins early in
+    optimization — `random_state` does not prevent this. Set to False if you
+    want density-aware layouts where duplicates count toward local mass.
     """
     import umap  # lazy: heavy import, optional dep
 
@@ -146,5 +180,17 @@ def umap_project(
         metric=metric,
         random_state=random_state,
     )
-    projection = reducer.fit_transform(embeddings)
+
+    if deduplicate:
+        unique_emb, inverse = np.unique(embeddings, axis=0, return_inverse=True)
+        if len(unique_emb) < len(embeddings):
+            print(
+                f"UMAP dedup: fitting on {len(unique_emb)} unique rows "
+                f"(of {len(embeddings)} total)"
+            )
+        unique_proj = reducer.fit_transform(unique_emb)
+        projection = unique_proj[inverse]
+    else:
+        projection = reducer.fit_transform(embeddings)
+
     return projection, reducer
