@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -14,9 +15,28 @@ from tqdm.auto import tqdm
 DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
-def _content_hash(texts: Sequence[str], model_name: str) -> str:
+def _stable_json(obj: Any) -> str:
+    """JSON dump that's deterministic across dict orderings and rejects unhashable junk."""
+
+    def fallback(x: Any):
+        # torch.dtype, torch.device etc → repr is stable per-process
+        return repr(x)
+
+    return json.dumps(obj, sort_keys=True, default=fallback)
+
+
+def _content_hash(
+    texts: Sequence[str],
+    model_name: str,
+    model_init_kwargs: dict | None,
+    encode_kwargs: dict | None,
+) -> str:
     h = hashlib.sha256()
     h.update(model_name.encode("utf-8"))
+    h.update(b"\x00")
+    h.update(_stable_json(model_init_kwargs or {}).encode("utf-8"))
+    h.update(b"\x00")
+    h.update(_stable_json(encode_kwargs or {}).encode("utf-8"))
     h.update(b"\x00")
     for t in texts:
         h.update(t.encode("utf-8"))
@@ -32,22 +52,44 @@ def embed_texts(
     cache_key: str = "embeddings",
     batch_size: int = 64,
     use_cache: bool = True,
+    model_init_kwargs: dict | None = None,
+    encode_kwargs: dict | None = None,
 ) -> np.ndarray:
     """Encode `texts` with a sentence-transformer, caching the result on disk.
 
-    The cache filename embeds a hash of `(model_name, texts)` so a stale cache
-    under the same `cache_key` is never silently returned.
+    Args:
+        texts: input strings to embed.
+        cache_dir: directory for cached `.npy` files.
+        model_name: HF model id (default: `sentence-transformers/all-MiniLM-L6-v2`).
+        cache_key: human-readable prefix for the cache file.
+        batch_size: rows per `encode()` call.
+        use_cache: skip the encode and return the cached array if it exists.
+        model_init_kwargs: passed to `SentenceTransformer(...)` (e.g.
+            `{"trust_remote_code": True, "model_kwargs": {"dtype": torch.bfloat16}}`).
+        encode_kwargs: passed to `model.encode(...)` (e.g. `{"task": "clustering"}`
+            for Jina v5; `{"prompt_name": "query"}` for asymmetric retrieval).
+
+    The cache filename embeds a hash of (model_name, model_init_kwargs,
+    encode_kwargs, texts), so changing any of them busts the cache automatically.
     """
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    content_hash = _content_hash(texts, model_name)
+    content_hash = _content_hash(texts, model_name, model_init_kwargs, encode_kwargs)
     cache_path = cache_dir / f"{cache_key}_{content_hash}.npy"
 
     if use_cache and cache_path.exists():
         return np.load(cache_path)
 
-    model = SentenceTransformer(model_name)
+    model = SentenceTransformer(model_name, **(model_init_kwargs or {}))
+    extra_encode = dict(encode_kwargs or {})
+    # These two are non-negotiable for our cache path; warn rather than silently drop.
+    for reserved in ("convert_to_numpy", "show_progress_bar"):
+        if reserved in extra_encode:
+            raise ValueError(
+                f"encode_kwargs may not set {reserved!r} — managed by embed_texts."
+            )
+
     embeddings: list[np.ndarray] = []
     for start in tqdm(
         range(0, len(texts), batch_size),
@@ -55,7 +97,12 @@ def embed_texts(
         unit="batch",
     ):
         batch = list(texts[start : start + batch_size])
-        emb = model.encode(batch, convert_to_numpy=True, show_progress_bar=False)
+        emb = model.encode(
+            batch,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+            **extra_encode,
+        )
         embeddings.append(emb)
 
     stacked = np.vstack(embeddings)

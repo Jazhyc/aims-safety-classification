@@ -9,7 +9,6 @@ from .sentence_embeddings import DEFAULT_MODEL, embed_texts, pca_project, umap_p
 _LAZY_NAMES = {
     "BERTopicModelWrapper": ".bertopic_wrapper",
     "load_intents_from_parquet": ".bertopic_wrapper",
-    "interactive_umap_plot": ".plotting",
     "interactive_umap_plot_toggleable": ".plotting",
 }
 
@@ -30,7 +29,6 @@ __all__ = [
     "DEFAULT_MODEL",
     "DEFAULT_TEST_DATASETS",
     "embed_texts",
-    "interactive_umap_plot",
     "interactive_umap_plot_toggleable",
     "load_intent_predictions",
     "load_intents_from_parquet",
