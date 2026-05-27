@@ -125,7 +125,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--tensor-parallel-size", type=int, default=1)
     parser.add_argument("--max-model-len", type=int, default=4096)
-    parser.add_argument("--max-tokens", type=int, default=256)
+    parser.add_argument(
+        "--max-tokens", type=int, default=1024,
+        help="gpt-oss can spend several hundred tokens in its analysis channel "
+             "before emitting the final answer; 1024 leaves comfortable headroom.",
+    )
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.90)
     args = parser.parse_args()
 
