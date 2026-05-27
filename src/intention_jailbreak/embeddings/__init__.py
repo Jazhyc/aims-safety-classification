@@ -10,6 +10,7 @@ _LAZY_NAMES = {
     "BERTopicModelWrapper": ".bertopic_wrapper",
     "load_intents_from_parquet": ".bertopic_wrapper",
     "interactive_umap_plot_toggleable": ".plotting",
+    "export_clusters_jsonl": ".clustering",
     "hdbscan_cluster": ".clustering",
     "summarise_clusters": ".clustering",
 }
@@ -32,6 +33,7 @@ __all__ = [
     "DEFAULT_TEST_DATASETS",
     "dedupe_by_intent",
     "embed_texts",
+    "export_clusters_jsonl",
     "hdbscan_cluster",
     "interactive_umap_plot_toggleable",
     "load_intent_predictions",

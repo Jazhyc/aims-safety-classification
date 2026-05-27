@@ -22,6 +22,7 @@ intention-jailbreak/
 │   ├── bert_harm/              # BERT harm classifier checkpoints
 │   └── bert_intent/            # BERT intent classifier checkpoints
 ├── notebooks/                  # Jupyter analysis notebooks — see categories below
+│   ├── analysis/               # Intent embedding + clustering analyses
 │   ├── baselines/              # Baseline intent generation/classification analysis
 │   ├── distillation/           # Teacher distillation sweep + reasoning trace analysis
 │   ├── modernbert/             # ModernBERT classifier analysis
@@ -63,6 +64,7 @@ intention-jailbreak/
 
 | Subdirectory | Purpose | Notebooks |
 |---|---|---|
+| `notebooks/analysis/` | Intent embedding + clustering analyses (Jina v5 → UMAP → HDBSCAN) | `intent_embedding_pca.ipynb`, `intent_cluster_annotations.ipynb` |
 | `notebooks/baselines/` | Baseline intent generation/classification analysis | `eval_results_analysis.ipynb`, `wandb_llm_sweep_analysis.ipynb`, `safety_experiment_results.ipynb`, `eval_suite_timing.ipynb` |
 | `notebooks/distillation/` | Teacher distillation sweep + reasoning trace analysis | `distillation_teacher_sweep.ipynb`, `reasoning_traces_analysis_llama.ipynb` |
 | `notebooks/` (root, **do not modify**) | Preference learning results | `preference_learning_results.ipynb`, `diversity_analysis.ipynb` |
@@ -244,6 +246,11 @@ To bump to v8, update the version constant in all submission scripts and the pip
 - **Eval metrics on disk**: `eval_safety_classifier.py` writes a `<model_slug>_<condition>.metrics.json` sidecar next to every prediction `.jsonl` it produces (per-dataset accuracy/F1/`elapsed_s`/`total_tokens`/`tokens_per_second`), and a per-`(model_slug, condition)` `<model_slug>_<condition>_suite_summary.json` at `paths.output_dir` root with per-dataset entries plus a `suite` aggregate (`elapsed_s`, `total_tokens`, `total_examples`, `tokens_per_second`). Downstream notebooks read these and don't need W&B. For older runs that pre-date this change, `scripts/backfill_eval_timing.py` pulls the same numbers from W&B into the same file layout — extend its `MODELS` list to add another model.
 - **`max_length_causal`**: Controls total token budget (prompt + completion) for SFT training truncation. The system message alone is ~300–400 tokens; 512 is too small for most examples.
 - **Ablation adapters**: trained adapters from `scripts/hpc/ablations/` go to `models/distillation-ablations/` (NOT `models/distillation-sweep/`) so the main distillation eval submitter doesn't pick them up. Each ablation has its own `submit_*.py` orchestrator with `samples | traces | train | ood-val | test` modes.
+- **Embeddings module pipeline** (`src/intention_jailbreak/embeddings/`):
+  - `embed_texts(texts, cache_dir, model_name, model_init_kwargs, encode_kwargs, deduplicate=True)` — sentence-transformer encode with disk cache. Cache hash covers `(model_name, model_init_kwargs, encode_kwargs, deduplicate, texts)` so any change busts it. Reserved encode kwargs (`convert_to_numpy`, `show_progress_bar`) raise if passed.
+  - `umap_project(..., deduplicate=True)` and `hdbscan_cluster(..., metric='cosine')` — both follow the BERTopic recipe; pass UMAP-reduced (~10D) embeddings to HDBSCAN with `metric='euclidean'` (UMAP output is always euclidean regardless of input metric). Raw 768-dim → HDBSCAN gives ~94% noise.
+  - `dedupe_by_intent(df)` collapses to one row per unique intent with aggregated `n_prompts`, `prompts` list, and `dataset_breakdown` string. Use at the loader stage when the analysis is about intents (clustering, topic modelling), not per-prompt behaviour.
+  - `__init__.py` lazy-loads `bertopic_wrapper` and `plotting` (plotly) via PEP 562 `__getattr__` — eager imports cost ~19s of transitive deps (BERTopic → umap, hdbscan, plotly, transformers). Add new heavy submodules to `_LAZY_NAMES` rather than the top-level import block.
 - **Mixed-condition training**: `data.reasoning_traces_condition` accepts either a single string or a list (e.g. `[human_intent, synthetic_intent]`). With a list, `load_reasoning_traces_dataset` keeps records whose `condition` is in the set and picks the intent source per-record (`predicted.prompt_intent` for `synthetic_intent`, `ground_truth.intent` otherwise). All listed conditions must share the same template family (intent-producing vs `no_intent`) — the loader raises otherwise. The broader-intent-mix ablation uses this to combine annotated `human_intent` traces with broader-pool `synthetic_intent` traces in a single training set.
 - **Scaling adapters**: same pattern — `scripts/hpc/scaling/` writes to `models/distillation-scaling/` and traces to `data/reasoning_traces_scaling/`. Modes: `samples | traces | train | test` (no `ood-val` since there's only one adapter — nothing to select between). Single-shot experiment: 1 epoch, no HP sweep, val set is informational only. The same-named `verify_packing.py` script runs an interactive comparison of `padding_free=True` with/without TRL `packing=True` to gate whether to enable the packing flag for the scaling run.
 
@@ -333,6 +340,22 @@ The 4-category labels (`Completely Safe`, `Uncertain Harmful`, etc.) do not trig
 Symptom: `reasoning` strings contain `Intent:` substrings, `predicted.prompt_intent` values are >400 chars and look like the teacher's CoT thinking instead of the polished intent. Quick check: `grep -c '"Intent:' parsed_results.json` should be 0.
 
 If a regression slips through, raw_outputs.json is sufficient to re-parse in place — see the inline reparser pattern used in the label-source ablation (`scripts/hpc/ablations/submit_label_source_ablation.py` history). `scripts/distillation/reparse_traces.py` is stale (imports `parse_response` / `_extract_fields`, neither of which exist anymore) — fix or replace it before relying on it.
+
+### bf16 + batched-matmul nondeterminism in sentence-transformer encode
+
+Embedding the same string at different batch positions with a bf16 model (Jina v5 nano, etc.) produces ~1e-3 different vectors due to bf16's 7-bit mantissa and reduction-order dependence on position. Cosine sim stays >0.99994 — within-vector noise — but downstream UMAP is nonlinear and can place "identical" inputs at visibly different 2D positions.
+
+**Fix in tree:** `embed_texts(..., deduplicate=True)` (default) — encodes each unique string exactly once and broadcasts back to the input order. Sidesteps the bf16 nondeterminism by construction, also speeds up encoding when many duplicates exist.
+
+### UMAP places duplicate inputs at different positions
+
+Even with `random_state` set, UMAP treats every input row as an independent graph node; byte-identical rows can be pulled into different SGD basins early in optimization and never merge. Symptom: 144 rows with the same intent text and identical embeddings land at 2+ macro positions in the UMAP scatter.
+
+**Fix in tree:** `umap_project(..., deduplicate=True)` (default) — fits on unique rows and broadcasts back. Note this also applies to the clustering UMAP in step 5a of `intent_embedding_pca.ipynb`.
+
+### Jina v5 nano (EuroBert) doesn't support flash-attn 2
+
+`SentenceTransformer("jinaai/jina-embeddings-v5-text-nano", config_kwargs={"_attn_implementation": "flash_attention_2"})` raises `ValueError: EuroBertModel does not support Flash Attention 2 yet` in current HF transformers. Use bf16 + default SDPA — at our scales (10K × short texts) the FA2 vs SDPA difference is in the seconds anyway.
 
 ### SLURM `--export` truncates values containing commas
 

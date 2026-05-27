@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
+import pandas as pd
 
 if TYPE_CHECKING:
     import hdbscan as _hdbscan_t  # noqa: F401
@@ -64,6 +67,72 @@ def hdbscan_cluster(
     if verbose:
         print(f"HDBSCAN fit complete in {time.perf_counter() - t0:.1f}s")
     return labels, clusterer
+
+
+def export_clusters_jsonl(
+    df: pd.DataFrame,
+    output_path: Path | str,
+    *,
+    columns: Sequence[str] = (
+        "cluster",
+        "intent",
+        "n_prompts",
+        "prompts",
+        "dataset",
+        "dataset_breakdown",
+        "predicted_harm",
+        "true_harm_binary",
+        "umap1",
+        "umap2",
+    ),
+    drop_noise: bool = False,
+) -> Path:
+    """Write `df` to JSONL with one record per row, sorted by cluster id.
+
+    JSONL is the right format for downstream LLM annotation: each line is a
+    self-contained record, list-valued columns (e.g. `prompts`) survive
+    unflattened, and the file is trivial to iterate per-cluster (`groupby` on
+    the load side, or `jq 'select(.cluster == N)'`).
+
+    Args:
+        df: DataFrame containing the columns in `columns`.
+        output_path: destination `.jsonl` file.
+        columns: ordered list of columns to include in each record. Missing
+            columns are silently skipped (so callers can pass a superset).
+        drop_noise: when True, omit rows where `cluster == -1`.
+
+    Returns the resolved `Path` written.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    present_cols = [c for c in columns if c in df.columns]
+    work = df[present_cols].copy()
+    if drop_noise and "cluster" in work.columns:
+        work = work[work["cluster"] != -1]
+
+    sort_keys = [c for c in ("cluster", "n_prompts") if c in work.columns]
+    if sort_keys:
+        ascending = [True, False][: len(sort_keys)]
+        work = work.sort_values(sort_keys, ascending=ascending)
+
+    n_written = 0
+    with output_path.open("w", encoding="utf-8") as f:
+        for _, row in work.iterrows():
+            record = {}
+            for col in present_cols:
+                value = row[col]
+                # numpy scalars → native Python so json doesn't choke
+                if isinstance(value, np.generic):
+                    value = value.item()
+                elif isinstance(value, np.ndarray):
+                    value = value.tolist()
+                record[col] = value
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            n_written += 1
+
+    print(f"Wrote {n_written} rows → {output_path}")
+    return output_path
 
 
 def summarise_clusters(labels: np.ndarray) -> dict:
