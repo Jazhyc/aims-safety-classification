@@ -170,6 +170,10 @@ K10_EXT_DATASETS = [
     ("openai_moderation", "openai"),
 ]
 
+LEGACY_BASE = Path("/scratch/s4351495/intention-jailbreak/trained_models/causal")
+LOCAL_BASE = Path("trained_models/causal")
+HARD_RUN_GLOB = "llama31-8b-k10-*-hard-b0.3-e3-s22"
+
 
 def load_ood_f1(ood_base: Path, dir_name: str) -> tuple[float, list] | tuple[None, None]:
     """Return (avg_ood_f1, [f1s]) or (None, None) if not available.
@@ -317,10 +321,65 @@ def _fmt_num(value: float | int | None, digits: int = 4) -> str:
         return "-"
 
 
+def _looks_like_causal_base(path: Path) -> bool:
+    return path.exists() and any(path.glob(HARD_RUN_GLOB))
+
+
+def resolve_base(base_arg: str | None) -> Path:
+    """Resolve the model-result base dir.
+
+    If --base is omitted, prefer the repo-local trained_models/causal when
+    present, then the current directory if it already is the causal directory.
+    The legacy scratch path is kept as a final fallback for old invocations.
+    """
+    if base_arg:
+        return Path(base_arg).expanduser()
+
+    if LOCAL_BASE.exists():
+        return LOCAL_BASE
+    if _looks_like_causal_base(Path.cwd()):
+        return Path.cwd()
+    return LEGACY_BASE
+
+
+def print_k10_base_diagnostics(base: Path) -> bool:
+    resolved = base.resolve()
+    print(f"[k10] base: {resolved}")
+    if not base.exists():
+        print(f"[WARN] --base does not exist: {resolved}")
+        _print_base_hint()
+        return False
+
+    hard_runs = sorted(p for p in base.glob(HARD_RUN_GLOB) if p.is_dir())
+    if not hard_runs:
+        print(f"[WARN] No k10 hard-label run directories found under: {resolved}")
+        print(f"       Expected directories like: {HARD_RUN_GLOB}")
+        _print_base_hint()
+        return False
+
+    sample = hard_runs[0]
+    summary = sample / "training_summary.json"
+    pred_dir = sample / "predictions"
+    selected_pred_dir = sample / "predictions_test_selected"
+    print(f"[k10] found {len(hard_runs)} hard-label k10 run dir(s); sample: {sample.name}")
+    print(f"[k10] sample training_summary.json: {'yes' if summary.exists() else 'no'}")
+    print(
+        "[k10] sample predictions dirs: "
+        f"predictions={'yes' if pred_dir.exists() else 'no'}, "
+        f"predictions_test_selected={'yes' if selected_pred_dir.exists() else 'no'}"
+    )
+    return True
+
+
+def _print_base_hint() -> None:
+    print("       Hint from project root: python scripts/dpo/check_dpo_results.py --k10-thesis --base trained_models/causal")
+    print("       Hint from inside trained_models/causal: python /path/to/scripts/dpo/check_dpo_results.py --k10-thesis --base .")
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--base", default="/scratch/s4351495/intention-jailbreak/trained_models/causal",
-                   help="Base directory containing dpo-* model dirs (test predictions)")
+    p.add_argument("--base", default=None,
+                   help="Base directory containing DPO model dirs. Defaults to trained_models/causal when present.")
     p.add_argument("--ood-base", default="data/safety_experiment/ood_validation/dpo",
                    help="Base directory for OOD validation predictions")
     p.add_argument("--k10", action="store_true",
@@ -330,16 +389,25 @@ def main():
     p.add_argument("--k10-thesis", action="store_true",
                    help="Print thesis-oriented k10 summary: main variants only, test averages, and HP diagnostics.")
     args = p.parse_args()
-    base     = Path(args.base)
+    base     = resolve_base(args.base)
     ood_base = Path(args.ood_base)
 
     if args.k10:
+        if not print_k10_base_diagnostics(base):
+            return
+        print()
         summarize_k10(base, ood_base)
         return
     if args.k10_test:
+        if not print_k10_base_diagnostics(base):
+            return
+        print()
         summarize_k10_test(base)
         return
     if args.k10_thesis:
+        if not print_k10_base_diagnostics(base):
+            return
+        print()
         summarize_k10_thesis(base, ood_base)
         return
 
