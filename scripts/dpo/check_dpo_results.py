@@ -9,6 +9,7 @@ Usage:
 import argparse
 import json
 import math
+import re
 import statistics
 from pathlib import Path
 
@@ -151,6 +152,24 @@ def load_metrics(path: Path) -> dict | None:
 
 OOD_DATASETS = ["toxic_chat", "aegis"]
 
+K10_TAGS = "abcdefghij"
+
+K10_MAIN_CONDITIONS = {
+    "LE-DPO": "llama31-8b-k10-{t}-hard-b0.3-e3-s22",
+    "IF-DPO": "llama31-8b-k10-{t}-judge-gemma-standalone-b0.3-e3-s22",
+    "hard+IF-bad": "llama31-8b-k10-{t}-judge-gemma-bad-b0.3-e3-s22",
+    "IF-DPO-bad+decent": "llama31-8b-k10-{t}-judge-gemma-decent-b0.3-e3-s22",
+    "LE+IF-bad+decent": "llama31-8b-k10-{t}-hard-plus-gemma-decent-b0.3-e3-s22",
+}
+
+K10_EXT_DATASETS = [
+    ("wildguardmix", "wildguard"),
+    ("xstest", "xstest"),
+    ("toxic_chat", "toxic"),
+    ("aegis", "aegis"),
+    ("openai_moderation", "openai"),
+]
+
 
 def load_ood_f1(ood_base: Path, dir_name: str) -> tuple[float, list] | tuple[None, None]:
     """Return (avg_ood_f1, [f1s]) or (None, None) if not available.
@@ -182,6 +201,122 @@ def load_ood_f1(ood_base: Path, dir_name: str) -> tuple[float, list] | tuple[Non
     return avg, f1s
 
 
+def read_best_ood(base: Path, run: str, ood_base: Path) -> dict:
+    """Read OOD checkpoint-selection metrics, with saved OOD predictions fallback."""
+    summary_path = base / run / "training_summary.json"
+    if summary_path.exists():
+        try:
+            d = json.loads(summary_path.read_text())
+            best = (d.get("best_checkpoint_selection") or {}).get("best") or {}
+            avg = best.get("ood_avg")
+            if avg is not None:
+                return {
+                    "checkpoint": best.get("checkpoint"),
+                    "toxic_f1": _maybe_round(best.get("toxic_f1")),
+                    "aegis_f1": _maybe_round(best.get("aegis_f1")),
+                    "ood_avg": round(float(avg), 4),
+                    "source": "summary",
+                }
+        except Exception:
+            pass
+
+    avg_fb, f1s = load_ood_f1(ood_base, run)
+    if avg_fb is None:
+        return {
+            "checkpoint": None,
+            "toxic_f1": None,
+            "aegis_f1": None,
+            "ood_avg": None,
+            "source": "-",
+        }
+    return {
+        "checkpoint": "(final)",
+        "toxic_f1": f1s[0],
+        "aegis_f1": f1s[1],
+        "ood_avg": avg_fb,
+        "source": "fallback",
+    }
+
+
+def _maybe_round(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return round(float(value), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def read_test_metrics(base: Path, run: str) -> dict[str, float]:
+    """Read five-benchmark test F1 metrics for a run if predictions exist."""
+    pred_dir = base / run / "predictions_test_selected"
+    if not pred_dir.exists():
+        pred_dir = base / run / "predictions"
+    if not pred_dir.exists():
+        return {}
+
+    metrics: dict[str, float] = {}
+    ext_f1s = []
+    for ds_key, _ in K10_EXT_DATASETS:
+        pred_file = find_pred_file(pred_dir, ds_key)
+        if pred_file is None:
+            continue
+        m = load_metrics(pred_file)
+        if m is None:
+            continue
+        metrics[ds_key] = m["f1"]
+        ext_f1s.append(m["f1"])
+
+    if len(ext_f1s) == len(K10_EXT_DATASETS):
+        metrics["ext_avg"] = round(sum(ext_f1s) / len(ext_f1s), 4)
+    return metrics
+
+
+def summarize_values(values: list[float], total: int) -> dict[str, float | int | None]:
+    if not values:
+        return {
+            "n": 0,
+            "mean": None,
+            "std": None,
+            "min": None,
+            "max": None,
+            "missing": total,
+        }
+    return {
+        "n": len(values),
+        "mean": statistics.mean(values),
+        "std": statistics.stdev(values) if len(values) > 1 else 0.0,
+        "min": min(values),
+        "max": max(values),
+        "missing": total - len(values),
+    }
+
+
+def format_table(headers: list[str], rows: list[list[object]], widths: list[int] | None = None) -> None:
+    if widths is None:
+        widths = []
+        for i, header in enumerate(headers):
+            width = len(str(header))
+            for row in rows:
+                width = max(width, len(str(row[i])))
+            widths.append(width + 2)
+
+    header = "".join(str(h).ljust(widths[i]) for i, h in enumerate(headers)).rstrip()
+    print(header)
+    print("-" * len(header))
+    for row in rows:
+        print("".join(str(v).ljust(widths[i]) for i, v in enumerate(row)).rstrip())
+
+
+def _fmt_num(value: float | int | None, digits: int = 4) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--base", default="/scratch/s4351495/intention-jailbreak/trained_models/causal",
@@ -192,6 +327,8 @@ def main():
                    help="Print k10 (a..j) condition summary/ranking from training_summary.json best checkpoint OOD avg.")
     p.add_argument("--k10-test", action="store_true",
                    help="Print k10 test-set tables across runs: mean/min/max per condition.")
+    p.add_argument("--k10-thesis", action="store_true",
+                   help="Print thesis-oriented k10 summary: main variants only, test averages, and HP diagnostics.")
     args = p.parse_args()
     base     = Path(args.base)
     ood_base = Path(args.ood_base)
@@ -201,6 +338,9 @@ def main():
         return
     if args.k10_test:
         summarize_k10_test(base)
+        return
+    if args.k10_thesis:
+        summarize_k10_thesis(base, ood_base)
         return
 
     ds_keys = DATASET_ORDER
@@ -277,6 +417,233 @@ def main():
 
     print()
     print("Legend: — = predictions not yet saved.")
+
+
+def summarize_k10_thesis(base: Path, ood_base: Path) -> None:
+    """Print ten-pool thesis tables for the main DPO variants."""
+    runs: dict[str, list[dict]] = {cond: [] for cond in K10_MAIN_CONDITIONS}
+
+    for cond, pattern in K10_MAIN_CONDITIONS.items():
+        for tag in K10_TAGS:
+            run = pattern.format(t=tag)
+            runs[cond].append({
+                "condition": cond,
+                "tag": tag,
+                "run": run,
+                "ood": read_best_ood(base, run, ood_base),
+                "test": read_test_metrics(base, run),
+            })
+
+    print("K10 Thesis DPO Summary")
+    print("=" * 120)
+    print("Main variants exclude ratio sweeps. OOD validation = mean F1 over toxic_chat and aegis.")
+    print("LE-DPO maps to hard-label DPO; IF-DPO maps to judge-standalone intent-filter DPO.\n")
+
+    _print_k10_ood_per_run(runs)
+    _print_k10_ood_summary(runs)
+    _print_k10_test_summary(runs)
+    _print_k10_best_rows(runs)
+    _print_k10_hp_table(base, ood_base)
+
+
+def _print_k10_ood_per_run(runs: dict[str, list[dict]]) -> None:
+    print("Per-run OOD validation F1")
+    print("=" * 120)
+    rows = []
+    for cond, cruns in runs.items():
+        for r in cruns:
+            ood = r["ood"]
+            rows.append([
+                cond,
+                r["tag"],
+                ood.get("checkpoint") or "-",
+                _fmt_num(ood.get("toxic_f1")),
+                _fmt_num(ood.get("aegis_f1")),
+                _fmt_num(ood.get("ood_avg")),
+                ood.get("source") or "-",
+            ])
+    format_table(
+        ["condition", "tag", "checkpoint", "toxic", "aegis", "ood_avg", "source"],
+        rows,
+        widths=[22, 5, 18, 10, 10, 10, 10],
+    )
+    print()
+
+
+def _print_k10_ood_summary(runs: dict[str, list[dict]]) -> None:
+    print("Per-variant OOD validation summary across pools")
+    print("=" * 120)
+    rows = []
+    ranking = []
+    for cond, cruns in runs.items():
+        vals = [float(r["ood"]["ood_avg"]) for r in cruns if r["ood"].get("ood_avg") is not None]
+        summary = summarize_values(vals, len(K10_TAGS))
+        valid_runs = [r for r in cruns if r["ood"].get("ood_avg") is not None]
+        best_run = max(valid_runs, key=lambda r: r["ood"]["ood_avg"]) if valid_runs else None
+        rows.append([
+            cond,
+            summary["n"],
+            _fmt_num(summary["mean"]),
+            _fmt_num(summary["std"]),
+            _fmt_num(summary["min"]),
+            _fmt_num(summary["max"]),
+            best_run["tag"] if best_run else "-",
+            summary["missing"],
+        ])
+        if summary["mean"] is not None:
+            ranking.append((float(summary["mean"]), cond))
+    format_table(
+        ["condition", "n", "mean", "std", "min", "max", "best_tag", "missing"],
+        rows,
+        widths=[22, 5, 10, 10, 10, 10, 10, 8],
+    )
+
+    ranking.sort(reverse=True)
+    if ranking:
+        print("\nRanking by mean OOD validation avg")
+        for i, (mean, cond) in enumerate(ranking, 1):
+            print(f"{i:2d}. {cond:<22} mean={mean:.4f}")
+    print()
+
+
+def _print_k10_test_summary(runs: dict[str, list[dict]]) -> None:
+    print("Per-variant five-benchmark test summary across evaluable pools")
+    print("=" * 120)
+    rows = []
+    for cond, cruns in runs.items():
+        row = [cond]
+        for ds_key, _ in K10_EXT_DATASETS:
+            xs = [float(r["test"][ds_key]) for r in cruns if ds_key in r["test"]]
+            row.append(_fmt_num(statistics.mean(xs)) if xs else "-")
+        ext = [float(r["test"]["ext_avg"]) for r in cruns if "ext_avg" in r["test"]]
+        n_test = len(ext)
+        row.append(_fmt_num(statistics.mean(ext)) if ext else "-")
+        row.append(n_test)
+        if n_test == 0:
+            note = "OOD-only available"
+        elif n_test < len(K10_TAGS):
+            note = f"partial test ({n_test}/{len(K10_TAGS)})"
+        else:
+            note = "all test"
+        row.append(note)
+        rows.append(row)
+    format_table(
+        ["condition", *[name for _, name in K10_EXT_DATASETS], "ext-avg", "n_test", "note"],
+        rows,
+        widths=[22, 11, 10, 10, 10, 10, 10, 8, 22],
+    )
+
+    ext_rows = []
+    for cond, cruns in runs.items():
+        ext = [float(r["test"]["ext_avg"]) for r in cruns if "ext_avg" in r["test"]]
+        if not ext:
+            continue
+        summary = summarize_values(ext, len(K10_TAGS))
+        best = max((r for r in cruns if "ext_avg" in r["test"]), key=lambda r: r["test"]["ext_avg"])
+        ext_rows.append([
+            cond,
+            summary["n"],
+            _fmt_num(summary["mean"]),
+            _fmt_num(summary["std"]),
+            _fmt_num(summary["min"]),
+            _fmt_num(summary["max"]),
+            best["tag"],
+            summary["missing"],
+        ])
+    if ext_rows:
+        print("\nTest ext-avg variance summary")
+        format_table(
+            ["condition", "n", "mean", "std", "min", "max", "best_tag", "missing"],
+            ext_rows,
+            widths=[22, 5, 10, 10, 10, 10, 10, 8],
+        )
+    print()
+
+
+def _print_k10_best_rows(runs: dict[str, list[dict]]) -> None:
+    print("Best rows by OOD validation selection")
+    print("=" * 120)
+    rows = []
+    for cond, cruns in runs.items():
+        valid = [r for r in cruns if r["ood"].get("ood_avg") is not None]
+        if not valid:
+            rows.append([cond, "-", "-", "-", "-", "-", "-", "-", "-", "-"])
+            continue
+        best = max(valid, key=lambda r: r["ood"]["ood_avg"])
+        test = best["test"]
+        rows.append([
+            cond,
+            best["tag"],
+            best["ood"].get("checkpoint") or "-",
+            _fmt_num(best["ood"].get("ood_avg")),
+            _fmt_num(test.get("ext_avg")),
+            *[_fmt_num(test.get(ds_key)) for ds_key, _ in K10_EXT_DATASETS],
+        ])
+    format_table(
+        ["condition", "tag", "checkpoint", "ood_avg", "test_avg", *[name for _, name in K10_EXT_DATASETS]],
+        rows,
+        widths=[22, 5, 18, 10, 10, 11, 10, 10, 10, 10],
+    )
+    print()
+
+
+def _print_k10_hp_table(base: Path, ood_base: Path) -> None:
+    hp_runs = _discover_hp_runs(base)
+    print("Hyperparameter probe runs")
+    print("=" * 120)
+    if not hp_runs:
+        print("No k10 hyperparameter probe directories found under --base.")
+        print()
+        return
+
+    rows = []
+    for item in hp_runs:
+        ood = read_best_ood(base, item["run"], ood_base)
+        test = read_test_metrics(base, item["run"])
+        rows.append([
+            item["family"],
+            item["tag"],
+            item["beta"] or "-",
+            item["lr"] or "-",
+            item["run"],
+            ood.get("checkpoint") or "-",
+            _fmt_num(ood.get("ood_avg")),
+            _fmt_num(test.get("ext_avg")),
+        ])
+    format_table(
+        ["family", "tag", "beta", "lr", "run", "checkpoint", "ood_avg", "test_avg"],
+        rows,
+        widths=[18, 5, 8, 10, 62, 18, 10, 10],
+    )
+    print()
+
+
+def _discover_hp_runs(base: Path) -> list[dict[str, str | None]]:
+    items = []
+    pat = re.compile(
+        r"^llama31-8b-k10-(?P<tag>[a-j])-(?P<family>.+?)-hp-"
+        r"(?P<params>.+?)-s\d+$"
+    )
+    for p in sorted(base.glob("llama31-8b-k10-*-*-hp-*")):
+        if not p.is_dir() or p.name.endswith("_adapter"):
+            continue
+        m = pat.match(p.name)
+        if not m:
+            continue
+        params = m.group("params")
+        items.append({
+            "tag": m.group("tag"),
+            "family": m.group("family"),
+            "beta": _extract_param(params, r"b([0-9.]+)"),
+            "lr": _extract_param(params, r"lr([^-]+)"),
+            "run": p.name,
+        })
+    return items
+
+
+def _extract_param(text: str, pattern: str) -> str | None:
+    m = re.search(pattern, text)
+    return m.group(1) if m else None
 
 
 def summarize_k10(base: Path, ood_base: Path) -> None:
@@ -476,7 +843,8 @@ def summarize_k10_test(base: Path) -> None:
                             row += f"{'—':>{col_w}}"
                         else:
                             row += f"{f'{v:.4f}[{sel_t}]':>{col_w}}"
-                    row += f"{f'{sel_m['ext_avg']:.4f}[{sel_t}]':>{col_w}}"
+                    ext_cell = f"{sel_m['ext_avg']:.4f}[{sel_t}]"
+                    row += f"{ext_cell:>{col_w}}"
             row += f"{n_runs:>6d}"
             print(row)
 
