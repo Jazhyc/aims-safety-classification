@@ -130,7 +130,7 @@ openrouter:
 # Dataset configurations - cycles through all datasets
 datasets:
   - name: "annotated-intents"
-    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    dataset_name: "Jazhyc/aims-safety-intents"
     subset: null
     split: "validation+test"
     harm_column: "Annotator Harm"

@@ -23,7 +23,7 @@ lora:
 # Dataset configuration - evaluates on multiple datasets
 datasets:
   - name: "annotated-intents"
-    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    dataset_name: "Jazhyc/aims-safety-intents"
     subset: null
     split: "test"
     harm_column: "Annotator Harm"

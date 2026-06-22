@@ -4,11 +4,11 @@ We briefly document here our methodology regarding comparing the human annotated
 The relevant script can be found in `scripts/synthetic_comparison.py` which uses classes from the `comparison` module.
 
 ## WildGuard Annotated Intents
-The final wildguard-annotated-intents dataset is a curated subset of the **WildGuard** dataset containing human-annotated user prompts with labeled **intents**, **harm levels** (completely harmful, uncertain harmful, uncertain safe, completely safe). Each record pairs a text prompt with an intent label and metadata describing perceived harm and adversariality.
+The final aims-safety-intents dataset is a curated subset of the **WildGuard** dataset containing human-annotated user prompts with labeled **intents**, **harm levels** (completely harmful, uncertain harmful, uncertain safe, completely safe). Each record pairs a text prompt with an intent label and metadata describing perceived harm and adversariality.
 
 ---
 
-* **Dataset:** [Jazhyc/wildguard-annotated-intents](https://huggingface.co/datasets/Jazhyc/wildguard-annotated-intents)
+* **Dataset:** [Jazhyc/aims-safety-intents](https://huggingface.co/datasets/Jazhyc/aims-safety-intents)
 * **Size:** ~1.7K examples (train split only)
 
 ### Columns

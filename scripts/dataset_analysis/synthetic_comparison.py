@@ -9,7 +9,7 @@ Workflow:
 
 Usage:
     python run_intent_comparison.py \
-        --dataset Jazhyc/wildguard-annotated-intents \
+        --dataset Jazhyc/aims-safety-intents \
         --model RedHatAI/Qwen3-8B-quantized.w4a16 \
         --split train \
         --output-dir ./outputs
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate synthetic intents and evaluate against human-annotated harm labels"
     )
-    parser.add_argument("--dataset", type=str, default="Jazhyc/wildguard-annotated-intents", help="HuggingFace dataset name")
+    parser.add_argument("--dataset", type=str, default="Jazhyc/aims-safety-intents", help="HuggingFace dataset name")
     parser.add_argument("--model", type=str, default="RedHatAI/Qwen3-8B-quantized.w4a16", help="Model for generation/evaluation")
     parser.add_argument("--split", type=str, default="train", help="Dataset split")
     parser.add_argument("--max_samples", type=int, default=None, help="Maximum number of prompts to process")

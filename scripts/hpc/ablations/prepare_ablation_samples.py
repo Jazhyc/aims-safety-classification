@@ -47,7 +47,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from intention_jailbreak.dataset import load_wildguardmix
 
 
-ANNOTATED_DATASET = "Jazhyc/wildguard-annotated-intents"
+ANNOTATED_DATASET = "Jazhyc/aims-safety-intents"
 
 # Lower-case map for the `Dataset Harm` field on the annotated dataset, which
 # encodes the original WG label as "Harmful" / "Safe". WG itself uses

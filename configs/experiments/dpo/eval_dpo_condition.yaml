@@ -31,7 +31,7 @@ lora:
 
 datasets:
   - name: "annotated-intents"
-    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    dataset_name: "Jazhyc/aims-safety-intents"
     subset: null
     split: "test"
     harm_column: "Annotator Harm"
@@ -39,7 +39,7 @@ datasets:
     output_dir: "${paths.output_dir}/annotated_intents"
 
   - name: "annotated-intents-val"
-    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    dataset_name: "Jazhyc/aims-safety-intents"
     subset: null
     split: "validation"
     harm_column: "Annotator Harm"

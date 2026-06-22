@@ -154,7 +154,7 @@ Process and analyze the annotated data using the annotation analysis notebook:
   - Generates statistics about annotated intents
   - Outputs a cleaned parquet file
 
-**Note:** A processed parquet file is available at [Jazhyc/wildguard-annotated-intents](https://huggingface.co/datasets/Jazhyc/wildguard-annotated-intents) on Hugging Face.
+**Note:** A processed parquet file is available at [Jazhyc/aims-safety-intents](https://huggingface.co/datasets/Jazhyc/aims-safety-intents) on Hugging Face.
 
 ### 5. Intent Clustering
 

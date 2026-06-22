@@ -23,7 +23,7 @@ Fine-tuned (separate run, adapters must be present locally or in artifact regist
   finetuned_reasoning_generation      Distilled adapter (MODE E): reasoning + intent + harm
 
 Datasets:
-  Jazhyc/wildguard-annotated-intents  annotated test split (has human intents)
+  Jazhyc/aims-safety-intents  annotated test split (has human intents)
   allenai/wildguardmix (wildguardtest) WildGuardTest benchmark
   walledai/XSTest                     XSTest benchmark
 

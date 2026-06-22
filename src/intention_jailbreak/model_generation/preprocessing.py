@@ -2,8 +2,8 @@ from datasets import Dataset, load_dataset
 
 
 def load_raw_parquet(split: str = "train") -> Dataset:
-    print(f"Loading dataset from Hugging Face Hub: Jazhyc/wildguard-annotated-intents (split={split})")
-    ds = load_dataset("Jazhyc/wildguard-annotated-intents", split=split)
+    print(f"Loading dataset from Hugging Face Hub: Jazhyc/aims-safety-intents (split={split})")
+    ds = load_dataset("Jazhyc/aims-safety-intents", split=split)
     print("Raw dataset size:", len(ds))
     print("Columns:", ds.column_names)
     return ds

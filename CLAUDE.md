@@ -71,7 +71,7 @@ intention-jailbreak/
 | `notebooks/modernbert/` | ModernBERT classifier analysis | `intent_classifier_analysis.ipynb`, `test_results_analysis.ipynb` |
 | `notebooks/dataset_analysis/` | Old one-off notebooks for analysing the annotated dataset and its distribution | `annotation_analysis.ipynb`, `disagreement_analysis.ipynb`, `harm_labels_comparison.ipynb`, `harm_label_eval_4class_vs_binary.ipynb`, `wildguardmix_analysis.ipynb`, `clustering_analysis.ipynb`, `bert_harm_labels.ipynb` |
 
-## Primary Dataset: `Jazhyc/wildguard-annotated-intents`
+## Primary Dataset: `Jazhyc/aims-safety-intents`
 
 Human-annotated intents for ~1.7K WildGuardMix prompts. Loaded via HuggingFace `datasets`.
 

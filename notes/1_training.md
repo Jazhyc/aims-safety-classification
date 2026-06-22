@@ -38,4 +38,4 @@ The ensemble was evaluated on the annotation set using a calibration curve. The 
 
 ## Dataset
 
-The raw annotation set with the ensemble's confidence has been uploaded to Hugging Face: `Jazhyc/wildguard-annotated-intents`
+The raw annotation set with the ensemble's confidence has been uploaded to Hugging Face: `Jazhyc/aims-safety-intents`

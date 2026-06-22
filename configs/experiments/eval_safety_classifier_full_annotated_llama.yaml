@@ -21,7 +21,7 @@ model:
 
 datasets:
   - name: "annotated-intents-full"
-    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    dataset_name: "Jazhyc/aims-safety-intents"
     subset: null
     split: "train+validation+test"
     harm_column: "Annotator Harm"

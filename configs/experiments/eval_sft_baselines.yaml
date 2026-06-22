@@ -47,7 +47,7 @@ lora:
 # Dataset configurations — same set as the prompting baselines experiment
 datasets:
   - name: "annotated-intents"
-    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    dataset_name: "Jazhyc/aims-safety-intents"
     subset: null
     split: "validation+test"
     harm_column: "Annotator Harm"

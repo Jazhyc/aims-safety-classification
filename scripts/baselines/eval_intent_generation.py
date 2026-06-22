@@ -3,7 +3,7 @@ Evaluation script for intent generation from hyperparameter sweep model.
 
 This script:
 1. Loads a LORA model using VLLM
-2. Evaluates it on the test set of Jazhyc/wildguard-annotated-intents
+2. Evaluates it on the test set of Jazhyc/aims-safety-intents
 3. Generates predictions and extracts harm labels
 4. Saves results with prompts, generated intents, true intents, predicted labels, and true labels
 

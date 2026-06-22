@@ -102,7 +102,7 @@ We also observed the disagreement patterns between adversarial and non-adversari
 ## Usage
 
 This cleaned and deduplicated annotation dataset is available at:
-- **Hugging Face:** `Jazhyc/wildguard-annotated-intents` (parquet format)
+- **Hugging Face:** `Jazhyc/aims-safety-intents` (parquet format)
 
 The parquet file contains the following columns:
 - `ID`: Unique identifier for each annotation

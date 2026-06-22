@@ -301,7 +301,7 @@ def load_samples_for_split(data_cfg: dict, split: str) -> list:
     seed = data_cfg.get("seed", 42)
 
     ai_cfg = data_cfg.get("annotated_intents", {})
-    ai_name = ai_cfg.get("dataset_name", "Jazhyc/wildguard-annotated-intents")
+    ai_name = ai_cfg.get("dataset_name", "Jazhyc/aims-safety-intents")
     ai_subset = ai_cfg.get("subset")
     harm_column = ai_cfg.get("harm_column", "Annotator Harm")
 

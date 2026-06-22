@@ -42,7 +42,7 @@ conditions:
 # num_samples: null uses all available samples per split; set to an integer to subsample.
 dataset:
   annotated_intents:
-    dataset_name: "Jazhyc/wildguard-annotated-intents"
+    dataset_name: "Jazhyc/aims-safety-intents"
     subset: null
     harm_column: "Annotator Harm"
   num_samples: null
