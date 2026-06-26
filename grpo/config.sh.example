@@ -1,0 +1,29 @@
+# Copy this file to config.sh and fill in the values for your cluster.
+# config.sh is gitignored and never committed.
+
+# Absolute path to the built .sif container (see Step 1 in README)
+SIF_PATH=/path/to/verl_vllm017.sif
+
+# SLURM partitions (can be the same if your cluster uses one partition for everything)
+SLURM_PARTITION_DATA=your_partition
+SLURM_PARTITION_JUDGE=your_partition
+SLURM_PARTITION_TRAIN=your_partition
+
+# SLURM account (remove the --account flag from sbatch calls if not needed)
+SLURM_ACCOUNT=your_account
+
+# Directory containing large files (models, cache); bound into the container
+NLP_DIR=/path/to/your/large/files
+
+# Cache directories (derived from NLP_DIR; override individually if needed)
+HF_HOME=$NLP_DIR/.cache
+TORCH_COMPILE_CACHE_DIR=$NLP_DIR/.cache
+
+# Hostname of the node running the judge service (set after launching reward_fn_judge_api.sh)
+JUDGE_ADDRESS=your_judge_node_hostname
+
+# Root directory for saving training checkpoints
+CKPT_ROOT_PATH=/path/to/checkpoints
+
+# WandB API key
+WANDB_API_KEY=your_wandb_api_key

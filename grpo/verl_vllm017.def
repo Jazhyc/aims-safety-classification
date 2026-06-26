@@ -1,0 +1,32 @@
+Bootstrap: docker
+From: verlai/verl:vllm017.latest
+
+%post
+    # install verl itself — no deps needed, image has everything
+    git clone --depth 1 https://github.com/verl-project/verl /opt/verl
+    pip3 install --no-deps -e /opt/verl
+
+    # your extras
+    pip3 install jsonlines matplotlib scikit-learn tqdm
+    pip3 install sentence-transformers transformers
+
+    # jupyter
+    pip3 install jupyter ipykernel ipywidgets
+
+    rm -rf /root/.cache/pip
+
+    # version checks
+    echo "=== CUDA ===" && nvcc --version
+    echo "=== Python ===" && python3 --version
+    echo "=== Torch ===" && python3 -c "import torch; print(torch.__version__); print('CUDA available:', torch.cuda.is_available())"
+    echo "=== vLLM ===" && python3 -c "import vllm; print(vllm.__version__)"
+    echo "=== Ray ===" && python3 -c "import ray; print(ray.__version__)"
+    echo "=== verl ===" && python3 -c "import verl; print(verl.__version__)"
+    echo "=== Jupyter ===" && python3 -c "import jupyter; print('jupyter ok')"
+
+%environment
+    export PYTHONPATH=/opt/verl:$PYTHONPATH
+    # export VLLM_USE_V1=1
+
+%runscript
+    exec "$@"

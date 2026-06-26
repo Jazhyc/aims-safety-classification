@@ -228,3 +228,6 @@ scripts/cache
 scripts/outputs
 .vscode
 notebooks/clustering_analysis_copy.ipynb
+
+# script setting up local paths for the GRPO training (see grpo/config.sh.example)
+grpo/config.sh
