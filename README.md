@@ -56,8 +56,8 @@ AIMS is deliberately enriched for ambiguous, adversarial, and borderline prompts
 The project uses Python 3.12 and [uv](https://docs.astral.sh/uv/) for dependency management:
 
 ```bash
-git clone https://github.com/Jazhyc/intention-jailbreak.git
-cd intention-jailbreak
+git clone https://github.com/Jazhyc/aims-safety-classification.git
+cd aims-safety-classification
 uv sync
 source .venv/bin/activate
 ```
@@ -71,7 +71,7 @@ export HF_HOME=/scratch/$USER/huggingface
 ## Repository structure
 
 ```text
-intention-jailbreak/
+aims-safety-classification/
 ├── configs/experiments/       # Training, generation, and evaluation configurations
 ├── notebooks/                 # Analysis notebooks grouped by experiment family
 ├── scripts/
@@ -111,7 +111,7 @@ Large sweeps and evaluations are orchestrated through the scripts under `scripts
 
 ### GRPO training with veRL
 
-The original GRPO training pipeline is maintained on the [`grpo` branch](https://github.com/Jazhyc/intention-jailbreak/tree/grpo). It uses [veRL](https://github.com/verl-project/verl), Apptainer, SLURM, eight GPUs, and a separately served judge model. It remains separate from the main training stack because it has its own container and cluster configuration.
+The original GRPO training pipeline is maintained on the [`grpo` branch](https://github.com/Jazhyc/aims-safety-classification/tree/grpo). It uses [veRL](https://github.com/verl-project/verl), Apptainer, SLURM, eight GPUs, and a separately served judge model. It remains separate from the main training stack because it has its own container and cluster configuration.
 
 The `main` branch contains the GRPO model's evaluation integration and the analyses used in the paper.
 

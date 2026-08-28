@@ -1,7 +1,7 @@
 [project]
 name = "intention-jailbreak"
 version = "0.1.0"
-description = "Add your description here"
+description = "Intent-aware training and evaluation for LLM safety classification"
 readme = "README.md"
 requires-python = "==3.12.*"
 dependencies = [
@@ -35,6 +35,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+
+[project.urls]
+Homepage = "https://jazhyc.github.io/aims-safety/"
+Repository = "https://github.com/Jazhyc/aims-safety-classification"
+Paper = "https://arxiv.org/abs/2606.27210"
+Dataset = "https://huggingface.co/datasets/Jazhyc/aims-safety-intents"
 
 [build-system]
 requires = ["hatchling"]

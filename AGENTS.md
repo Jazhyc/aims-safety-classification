@@ -1,4 +1,4 @@
-# Intention Jailbreak — Project Guide
+# AIMS Safety Classification — Project Guide
 
 ## Overview
 
@@ -9,7 +9,7 @@ This is the detailed contributor and experiment guide. See `README.md` for the p
 ## Repository Structure
 
 ```
-intention-jailbreak/
+aims-safety-classification/
 ├── configs/                    # Hydra YAML configs for training and generation
 │   ├── train_config.yaml
 │   ├── prompt_templates.yaml
