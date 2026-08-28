@@ -239,3 +239,19 @@ notebooks/dpo/figures/
 logs/qualitative/
 
 qualitative/
+
+# LaTeX presentation build artifacts (keep main.tex, instructions.md, img/)
+presentation/*.aux
+presentation/*.log
+presentation/*.nav
+presentation/*.snm
+presentation/*.toc
+presentation/*.out
+presentation/*.vrb
+presentation/*.fls
+presentation/*.fdb_latexmk
+presentation/*.synctex.gz
+presentation/main.pdf
+
+# Independent Overleaf-synced thesis repository
+/thesis/
