@@ -1,8 +1,14 @@
-# Paved with True Intents
-
-Official repository for **Paved with True Intents: Intent-Aware Training Improves LLM Safety Classification Across Training Regimes**, accepted to **Findings of EMNLP 2026**.
-
-[Paper](https://arxiv.org/abs/2606.27210) · [Project page](https://jazhyc.github.io/aims-safety/) · [Hugging Face collection](https://huggingface.co/collections/Jazhyc/aims-intent-aware-safety-classification)
+<div align="center">
+  <h1>Paved with True Intents</h1>
+  <p><strong>Intent-Aware Training Improves LLM Safety Classification Across Training Regimes</strong></p>
+  <p>
+    <a href="https://arxiv.org/abs/2606.27210"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2606.27210-b31b1b?logo=arxiv&logoColor=white"></a>
+    <a href="https://arxiv.org/abs/2606.27210"><img alt="Findings of EMNLP 2026" src="https://img.shields.io/badge/Findings_of_EMNLP-2026-5d3fd3"></a>
+    <a href="https://jazhyc.github.io/aims-safety/"><img alt="Project page" src="https://img.shields.io/badge/Project-Page-2f80ed"></a>
+    <a href="https://huggingface.co/collections/Jazhyc/aims-intent-aware-safety-classification"><img alt="Hugging Face collection" src="https://img.shields.io/badge/Hugging_Face-AIMS_Collection-ffd21e?logo=huggingface&logoColor=black"></a>
+  </p>
+  <p>Official repository · Accepted to <strong>Findings of EMNLP 2026</strong></p>
+</div>
 
 ## Overview
 
