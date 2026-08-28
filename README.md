@@ -3,7 +3,6 @@
   <p><strong>Intent-Aware Training Improves LLM Safety Classification Across Training Regimes</strong></p>
   <p>
     <a href="https://arxiv.org/abs/2606.27210"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2606.27210-b31b1b?logo=arxiv&logoColor=white"></a>
-    <a href="https://arxiv.org/abs/2606.27210"><img alt="Findings of EMNLP 2026" src="https://img.shields.io/badge/Findings_of_EMNLP-2026-5d3fd3"></a>
     <a href="https://jazhyc.github.io/aims-safety/"><img alt="Project page" src="https://img.shields.io/badge/Project-Page-2f80ed"></a>
     <a href="https://huggingface.co/collections/Jazhyc/aims-intent-aware-safety-classification"><img alt="Hugging Face collection" src="https://img.shields.io/badge/Hugging_Face-AIMS_Collection-ffd21e?logo=huggingface&logoColor=black"></a>
   </p>
