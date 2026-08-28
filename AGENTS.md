@@ -4,6 +4,8 @@
 
 Research project on jailbreak detection using verbalized intent analysis. The core idea is to train models to reason about *why* a user is asking something (intent) and use that to classify harmfulness, rather than pure text-surface signals.
 
+This is the detailed contributor and experiment guide. See `README.md` for the public project overview, released resources, and citation.
+
 ## Repository Structure
 
 ```

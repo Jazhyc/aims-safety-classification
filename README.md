@@ -1,203 +1,139 @@
-# Intention Jailbreak
+# Paved with True Intents
 
-Research project for using verbalized intention analysis to improve jailbreak mitigation in large language models.
+Official repository for **Paved with True Intents: Intent-Aware Training Improves LLM Safety Classification Across Training Regimes**, accepted to **Findings of EMNLP 2026**.
 
-## Environment Setup
+[Paper](https://arxiv.org/abs/2606.27210) · [Project page](https://jazhyc.github.io/aims-safety/) · [Hugging Face collection](https://huggingface.co/collections/Jazhyc/aims-intent-aware-safety-classification)
 
-### Hugging Face Cache
+## Overview
 
-By default, Hugging Face downloads models and datasets to `~/.cache/huggingface`, which can fill up your home directory quickly. To redirect the cache to your scratch folder, set the `HF_HOME` environment variable before running any scripts:
+Safety classifiers often rely on surface features of a prompt. This project instead treats the user's underlying intent as an explicit supervision signal between the prompt and its harm label.
 
-```bash
-export HF_HOME=/scratch/$USER/hub
+We introduce **AIMS**, a dataset of 1,724 difficult safety prompts with human-written intent descriptions and harm annotations, and study intent-aware learning across four training regimes:
+
+- supervised fine-tuning (SFT);
+- label-error-driven direct preference optimization (LE-DPO);
+- reasoning distillation; and
+- group relative policy optimization (GRPO).
+
+Across five external safety benchmarks, intent-aware models improve the accuracy-efficiency trade-off over the evaluated prior-work classifiers. See the paper for the complete experimental setup, results, and limitations.
+
+## Released resources
+
+| Resource | Description |
+|---|---|
+| [AIMS dataset](https://huggingface.co/datasets/Jazhyc/aims-safety-intents) | Human-written intents and harm annotations for 1,724 difficult WildGuardMix prompts |
+| [SFT model](https://huggingface.co/Jazhyc/Llama-3.1-8B-aims-sft-generation) | Llama 3.1 8B trained to generate intent and harm labels |
+| [LE-DPO model](https://huggingface.co/Jazhyc/Llama-3.1-8B-aims-le-dpo) | Preference-trained model targeting label-flipping intent errors |
+| [Distilled model](https://huggingface.co/Jazhyc/Llama-3.1-8B-aims-distill-synthetic-intent) | Llama 3.1 8B distilled from synthetic-intent reasoning traces |
+| [GRPO model](https://huggingface.co/Jazhyc/Llama-3.1-8B-aims-grpo) | Model trained with an explicit intent-faithfulness reward |
+
+The Hugging Face [AIMS collection](https://huggingface.co/collections/Jazhyc/aims-intent-aware-safety-classification) groups the dataset and all released checkpoints.
+
+## Dataset
+
+Load the three official AIMS splits directly from Hugging Face:
+
+```python
+from datasets import load_dataset
+
+dataset = load_dataset("Jazhyc/aims-safety-intents")
+train = dataset["train"]
+validation = dataset["validation"]
+test = dataset["test"]
 ```
 
-To make this persistent, add it to your `~/.bashrc` or `~/.zshrc`:
+Prompts with duplicate text are restricted to the training split to prevent cross-split leakage. Validation and test contain only unique prompts and are stratified by the human harm annotation. Repository code should load these published splits through `preprocess_data()` rather than creating a new random split.
 
-```bash
-echo 'export HF_HOME=/scratch/$USER/hub' >> ~/.bashrc
-source ~/.bashrc
-```
-
-Alternatively, you can set it inline for a single command:
-
-```bash
-HF_HOME=/scratch/$USER/hub python scripts/train.py
-```
-
-> **Note:** `HF_HOME` controls all Hugging Face caches (models, datasets, tokenizers). The hub cache specifically lives at `$HF_HOME/hub`.
+AIMS is deliberately enriched for ambiguous, adversarial, and borderline prompts. It is useful for studying intent-aware safety classification, but it is English-only and is not representative of organic production traffic. See the dataset card for its full schema, provenance, license, and limitations.
 
 ## Installation
 
-This project uses [uv](https://github.com/astral-sh/uv) for Python package management.
-
-1. Run the following command to create a virtual environment and install the project along with all dependencies:
+The project uses Python 3.12 and [uv](https://docs.astral.sh/uv/) for dependency management:
 
 ```bash
+git clone https://github.com/Jazhyc/intention-jailbreak.git
+cd intention-jailbreak
 uv sync
-```
-
-This will install the `intention_jailbreak` package in editable mode, so changes to the source code are immediately reflected.
-
-2. Activate the virtual environment:
-
-```bash
 source .venv/bin/activate
 ```
 
-Alternatively, you can run commands directly with uv without activating the environment:
+The dependency set includes a Linux CUDA 12.8 / PyTorch 2.10 FlashAttention wheel and is intended primarily for GPU research environments. Model downloads can be redirected to scratch storage by setting `HF_HOME` before running a command:
 
 ```bash
-uv run python your_script.py
+export HF_HOME=/scratch/$USER/huggingface
 ```
 
-For faster training, it is strongly recommended to install flash attention when using ModernBERT. The pre-installed wheels can be found [here](https://github.com/Dao-AILab/flash-attention/releases/tag/v2.8.3).
+## Repository structure
 
-## Project Structure
-
-```
+```text
 intention-jailbreak/
-├── configs/                      # Hydra configuration
-│   ├── train_config.yaml
-│   └── sweep_config.yaml
-│
-├── data/                         # Data (gitignored)
-│   ├── annotations/
-│   ├── predictions/
-│   ├── predictions_with_harm/
-│   ├── test_predictions/
-│   ├── embeddings/
-│   └── cache/
-│
-├── logs/                         # Logs (gitignored)
-│   ├── hydra/
-│   └── wandb/
-│
-├── models/                       # Trained models (gitignored)
-│   ├── modernbert-classifier/
-│   └── modernbert-ensemble/
-│
-├── notebooks/                    # Analysis notebooks
-│   ├── clustering_analysis.ipynb
-│   ├── annotation_analysis.ipynb
-│   ├── test_results_analysis.ipynb
-│   └── wildguardmix_analysis.ipynb
-│
-├── notes/                        # Documentation
-├── scripts/                      # Training and evaluation
-├── src/intention_jailbreak/      # Main library
-└── tests/                        # Test scripts
+├── configs/experiments/       # Training, generation, and evaluation configurations
+├── notebooks/                 # Analysis notebooks grouped by experiment family
+├── scripts/
+│   ├── baselines/             # SFT and prompting baselines
+│   ├── distillation/          # Trace generation and student distillation
+│   ├── dpo/                   # Preference-data preparation and DPO training
+│   ├── dataset_generation/    # ModernBERT annotation-set classifier
+│   ├── dataset_analysis/      # Dataset analysis utilities
+│   ├── hpc/                   # SLURM submission and experiment orchestration
+│   └── report/                # Paper figure and table generators
+├── src/intention_jailbreak/   # Reusable dataset, training, inference, and analysis code
+├── tests/                     # Regression tests
+└── AGENTS.md                  # Detailed contributor and experiment guide
 ```
 
-## Workflow
+Generated data, model weights, checkpoints, and logs are intentionally gitignored.
 
-This project follows a multi-stage pipeline for training and analyzing intent classification models:
+## Core workflows
 
-### 1. Training
-
-Train the model using the main training script:
+Experiment behavior is configured with Hydra YAML files under `configs/experiments/`. Common entry points include:
 
 ```bash
-python scripts/train.py
+# Evaluate prompting, prior-work, or fine-tuned safety classifiers
+.venv/bin/python scripts/eval_safety_classifier.py \
+  --config-name=eval_safety_classifier
 
-# Override config parameters as needed
-python scripts/train.py training.per_device_train_batch_size=128
+# Train an SFT or reasoning-distilled generator
+.venv/bin/python scripts/baselines/train_generator.py \
+  --config-name=llm_sweep
+
+# Generate teacher reasoning traces
+.venv/bin/python scripts/distillation/generate_reasoning_traces.py \
+  --config-name=reasoning_traces
 ```
 
-**Important Configuration Options** (edit in `configs/train_config.yaml`):
-- `ensemble.enabled`: Enable/disable ensemble mode (multiple models)
-- `ensemble.num_models`: Number of models in the ensemble
-- `model.context_window`: Model context window size
-- `training.learning_rate`: Learning rate
-- `training.num_epochs`: Number of training epochs
+Large sweeps and evaluations are orchestrated through the scripts under `scripts/hpc/`. Review the selected YAML and shell submission script before launching a run: many workflows require multiple GPUs, external model access, W&B credentials, or paid API inference.
 
-**Logging:**
-- Training and validation results are logged to Weights & Biases (W&B)
-- Configure W&B settings in `configs/train_config.yaml` to run in offline mode if desired
-- Results are saved to `logs/` and `models/` directories
+### GRPO training with veRL
 
-**Note:** You might get graph breaks when using torch.compile. These can be safely ignored.
+The original GRPO training pipeline is maintained on the [`grpo` branch](https://github.com/Jazhyc/intention-jailbreak/tree/grpo). It uses [veRL](https://github.com/verl-project/verl), Apptainer, SLURM, eight GPUs, and a separately served judge model. It remains separate from the main training stack because it has its own container and cluster configuration.
 
-### 2. Test Set Evaluation
+The `main` branch contains the GRPO model's evaluation integration and the analyses used in the paper.
 
-Evaluate the trained model on the test set using the test script and analysis notebook:
+## Evaluation policy
 
-- **Script:** `scripts/evaluate_test.py`
-- **Notebook:** `notebooks/test_results_analysis.ipynb`
-- **Functionality:**
-  - Generates predictions on the test set
-  - Produces statistics on the annotation set and examines uncertain samples for annotation by sweeping the model's confidence intervals
-  - Exports results as a JSON file with the desired confidence interval
+Adapter selection uses external validation data from ToxicChat and Aegis rather than test-suite performance. Final evaluation covers five external safety benchmarks. Evaluation runs write prediction JSONL files, per-dataset metric sidecars, and suite summaries so downstream notebooks do not depend on W&B state.
 
-**Model Calibration:**
-- The ensemble of 3 models was evaluated on the annotation set using a calibration curve
-- The model was found to be mostly **underconfident** (predicted probabilities lower than actual accuracy)
-- Calibration error: **0.27** (refer to `scripts/plot_calibration.py` for visualization)
+The repository contains research pipelines and prompt-level safety classifiers. Their outputs should not be treated as the sole authority for high-stakes moderation decisions.
 
-### 3. Annotation with Label Studio
+## Contributing
 
-Use the JSON output from step 2 to annotate uncertain predictions:
+See [AGENTS.md](AGENTS.md) for the detailed repository map, experiment conventions, dataset split policy, artifact layout, validation workflow, and known pitfalls. Several subdirectories contain generated or independently versioned research artefacts, so check the relevant repository boundary before committing changes.
 
-1. Install and host a [Label Studio](https://labelstud.io/) instance
-2. Import the JSON file from step 2 into Label Studio
-3. Annotate the samples following the labeling guidelines (see annotation protocol in `/notes`)
-4. Export the annotated data and save to `data/annotations/`
+## Citation
 
-### 4. Annotation Analysis
+Please cite the arXiv paper:
 
-Process and analyze the annotated data using the annotation analysis notebook:
+```bibtex
+@misc{ferrao2026pavedtrueintentsintentaware,
+  title         = {Paved with True Intents: Intent-Aware Training Improves LLM Safety Classification Across Training Regimes},
+  author        = {Jeremias Ferrao and Niclas Müller-Hof and Iustin Sîrbu and Traian Rebedea and Yftah Ziser},
+  year          = {2026},
+  eprint        = {2606.27210},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL},
+  url           = {https://arxiv.org/abs/2606.27210}
+}
+```
 
-- **Notebook:** `notebooks/annotation_analysis.ipynb`
-- **Functionality:**
-  - Converts Label Studio JSON output to parquet format
-  - Applies data filtering by removing flagged samples
-  - Generates statistics about annotated intents
-  - Outputs a cleaned parquet file
-
-**Note:** A processed parquet file is available at [Jazhyc/aims-safety-intents](https://huggingface.co/datasets/Jazhyc/aims-safety-intents) on Hugging Face.
-
-### 5. Intent Clustering
-
-Analyze how intents are clustered using semantic embeddings:
-
-- **Notebook:** `notebooks/clustering_analysis.ipynb`
-- **Functionality:**
-  - Uses BERTopic for automatic topic discovery
-  - Provides an interactive interface for manual topic labeling
-  - Caches embeddings for efficient recomputation
-  - Produces a topic-label mapping saved as JSON
-
-### 6. Inter-Annotator Disagreement Analysis
-
-Analyze how consistently human annotators label and describe intents:
-
-- **Notebook:** `notebooks/disagreement_analysis.ipynb`
-- **Functionality:**
-  - Measures annotator agreement using label entropy, majority fraction, and score range
-  - Computes intent paraphrase similarity using TF-IDF and cosine similarity
-  - Identifies four types of prompts based on agreement patterns:
-    - **High similarity, low disagreement:** Clear and uncontroversial examples
-    - **High similarity, high disagreement:** Agreed intent, different harm assessments
-    - **Low similarity, high disagreement:** Ambiguous prompts with different interpretations
-    - **Low similarity, low disagreement:** Diverse phrasings with consistent harm judgment
-  - Provides concrete examples of each disagreement pattern
-
-### 7. Synthetic Intent Generation and Comparison to Human Annotators
-
-- **Script:** `scripts/synthetic_comparison.py` (more details in corresponding markdown file in `notes/`)
-- **Functionality:**
-  - Generate synthetic intents using an open source LLM
-  - Generate synthetic harm labels (completely harmful, uncertain harmful, uncertain safe, completely safe) using an open source LLM
-  - Apply BERTopic for automatic topic discovery on both the synthetic and human intents
-  - Visualize and compare human and synthetic intents
-  - Compute confusion matrix of synthetic harm labels w.r.t. human labels.
-
-### 8. Additional Analysis
-
-For detailed findings and insights from each step, refer to the `notes/` folder which documents:
-- Dataset analysis and statistics
-- Training and Hyperparameter setup
-- Intent Annotation Protocol
-- Analysis on the annotated intents
-- Comparison of synthetic intents to human annotated intents
-- And more detailed technical explorations
+The paper has been accepted to Findings of EMNLP 2026; the arXiv record remains the citation source until proceedings metadata is available.
